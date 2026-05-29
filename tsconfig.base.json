@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "baseUrl": ".",
+    "paths": {
+      "@stellar-agent/core": ["packages/core/src/index.ts"],
+      "@stellar-agent/policy": ["packages/policy/src/index.ts"],
+      "@stellar-agent/stellar": ["packages/stellar/src/index.ts"],
+      "@stellar-agent/testnet-suite": ["packages/testnet-suite/src/index.ts"],
+      "@stellar-agent/ledger-logger": ["packages/ledger-logger/src/index.ts"]
+    }
+  }
+}

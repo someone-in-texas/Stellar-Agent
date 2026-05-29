@@ -1,0 +1,22 @@
+{
+  "name": "@stellar-agent/policy",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@stellar-agent/core": "workspace:*",
+    "yaml": "^2.7.1",
+    "zod": "^3.25.46"
+  }
+}

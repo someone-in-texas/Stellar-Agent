@@ -1,0 +1,26 @@
+{
+  "name": "@stellar-agent/cli",
+  "version": "0.0.0",
+  "type": "module",
+  "bin": {
+    "stellar-agent": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@stellar-agent/core": "workspace:*",
+    "@stellar-agent/ledger-logger": "workspace:*",
+    "@stellar-agent/policy": "workspace:*",
+    "@stellar-agent/stellar": "workspace:*",
+    "@stellar-agent/testnet-suite": "workspace:*",
+    "commander": "^14.0.0",
+    "yaml": "^2.7.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.24"
+  }
+}

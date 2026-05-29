@@ -1,0 +1,37 @@
+{
+  "name": "stellar-agent-bridge",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.4",
+  "description": "CLI-first toolkit for safe agentic payments on Stellar.",
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "find packages -type d \\( -name dist -o -name .tsbuildinfo \\) -prune -exec rm -rf {} +",
+    "cli": "pnpm --filter @stellar-agent/cli exec stellar-agent",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "smoke": "pnpm build && node scripts/check-help.mjs",
+    "smoke:testnet": "pnpm build && node scripts/smoke-test-testnet.mjs",
+    "test:live:testnet": "LIVE_STELLAR_TESTNET=1 vitest run --project live-testnet"
+  },
+  "keywords": [
+    "stellar",
+    "agent",
+    "payments",
+    "cli",
+    "testnet"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@eslint/js": "^9.28.0",
+    "@types/node": "^22.15.24",
+    "eslint": "^9.28.0",
+    "prettier": "^3.5.3",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.33.0",
+    "vitest": "^3.1.4"
+  }
+}

@@ -1,0 +1,341 @@
+import {
+  MAINNET_PROFILE,
+  PaymentRequest,
+  StellarAgentError,
+  amountIsGreaterThan,
+  parseAmount,
+  parseAsset,
+  paymentRequestSchema,
+  redactSensitive
+} from "@stellar-agent/core";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { z } from "zod";
+
+export type PolicyDecisionStatus = "allowed" | "denied" | "requires_approval";
+
+export interface PolicyDecision {
+  status: PolicyDecisionStatus;
+  network: "testnet" | "mainnet" | "local";
+  realFunds: boolean;
+  matchedRules: string[];
+  reasons: string[];
+  approval?: {
+    required: boolean;
+    reason: string;
+  };
+}
+
+export interface SpendHistory {
+  dailyTotal?: string;
+  monthlyTotal?: string;
+  knownRecipients?: string[];
+  knownDomains?: string[];
+  unreadable?: boolean;
+}
+
+export const policySchema = z.object({
+  version: z.literal(1),
+  name: z.string().min(1),
+  network: z.enum(["testnet", "mainnet", "local"]),
+  assets: z.object({
+    allow: z.array(z.string().min(1)).default(["XLM"])
+  }),
+  limits: z.object({
+    perTransaction: z.string().min(1),
+    dailyTotal: z.string().min(1),
+    monthlyTotal: z.string().min(1)
+  }),
+  approval: z.object({
+    requireForAllPayments: z.boolean().default(false),
+    requireForNewRecipient: z.boolean().default(false),
+    requireForNewDomain: z.boolean().default(false),
+    requireAbove: z.string().min(1)
+  }),
+  x402: z
+    .object({
+      enabled: z.boolean().default(false),
+      allowDomains: z.array(z.string()).default([]),
+      maxPricePerRequest: z.string().min(1).default("1 XLM"),
+      bindPaymentToUrl: z.boolean().default(true),
+      denyRedirectPaymentChanges: z.boolean().default(true)
+    })
+    .default({
+      enabled: false,
+      allowDomains: [],
+      maxPricePerRequest: "1 XLM",
+      bindPaymentToUrl: true,
+      denyRedirectPaymentChanges: true
+    }),
+  safety: z
+    .object({
+      simulationRequired: z.boolean().default(false),
+      explainTransactionRequired: z.boolean().default(true),
+      blockBlindSigning: z.boolean().default(true),
+      blockOpaqueTransactions: z.boolean().default(true)
+    })
+    .optional(),
+  privacy: z.object({
+    redactUrlQueryParamsInLogs: z.boolean().default(true),
+    blockPiiInReason: z.boolean().default(true),
+    blockedMemoPatterns: z.array(z.string()).default(["ssn", "password", "secret", "api_key"])
+  }),
+  logging: z.object({
+    writeReceipts: z.boolean().default(true),
+    writeEventLog: z.boolean().default(true)
+  })
+});
+
+export type Policy = z.infer<typeof policySchema>;
+
+export const DEFAULT_TESTNET_POLICY: Policy = {
+  version: 1,
+  name: "default-testnet-policy",
+  network: "testnet",
+  assets: { allow: ["XLM"] },
+  limits: {
+    perTransaction: "10 XLM",
+    dailyTotal: "100 XLM",
+    monthlyTotal: "1000 XLM"
+  },
+  approval: {
+    requireForAllPayments: false,
+    requireForNewRecipient: false,
+    requireForNewDomain: false,
+    requireAbove: "5 XLM"
+  },
+  x402: {
+    enabled: false,
+    allowDomains: [],
+    maxPricePerRequest: "1 XLM",
+    bindPaymentToUrl: true,
+    denyRedirectPaymentChanges: true
+  },
+  privacy: {
+    redactUrlQueryParamsInLogs: true,
+    blockPiiInReason: true,
+    blockedMemoPatterns: ["ssn", "password", "secret", "api_key"]
+  },
+  logging: {
+    writeReceipts: true,
+    writeEventLog: true
+  }
+};
+
+export const DEFAULT_MAINNET_POLICY: Policy = {
+  version: 1,
+  name: "default-mainnet-policy",
+  network: "mainnet",
+  assets: { allow: ["XLM", "USDC"] },
+  limits: {
+    perTransaction: "0.05 XLM",
+    dailyTotal: "0.25 XLM",
+    monthlyTotal: "1 XLM"
+  },
+  approval: {
+    requireForAllPayments: true,
+    requireForNewRecipient: true,
+    requireForNewDomain: true,
+    requireAbove: "0 XLM"
+  },
+  x402: {
+    enabled: false,
+    allowDomains: [],
+    maxPricePerRequest: "0.05 XLM",
+    bindPaymentToUrl: true,
+    denyRedirectPaymentChanges: true
+  },
+  safety: {
+    simulationRequired: true,
+    explainTransactionRequired: true,
+    blockBlindSigning: true,
+    blockOpaqueTransactions: true
+  },
+  privacy: {
+    redactUrlQueryParamsInLogs: true,
+    blockPiiInReason: true,
+    blockedMemoPatterns: ["ssn", "password", "secret", "api_key"]
+  },
+  logging: {
+    writeReceipts: true,
+    writeEventLog: true
+  }
+};
+
+export function parsePolicyYaml(source: string): Policy {
+  try {
+    return policySchema.parse(parseYaml(source));
+  } catch (error) {
+    throw new StellarAgentError({
+      code: "POLICY_INVALID",
+      message: "Policy file is invalid.",
+      hint: "Run stellar-agent policy check to inspect validation failures.",
+      docs: "docs/troubleshooting.md#policy-denied",
+      details: error
+    });
+  }
+}
+
+export function policyToYaml(policy: Policy): string {
+  return stringifyYaml(policy);
+}
+
+export function defaultPolicyForNetwork(network: "testnet" | "mainnet" | "local"): Policy {
+  if (network === "mainnet") return DEFAULT_MAINNET_POLICY;
+  return DEFAULT_TESTNET_POLICY;
+}
+
+export function evaluatePaymentRequest(
+  policyInput: Policy,
+  requestInput: PaymentRequest,
+  history: SpendHistory = {}
+): PolicyDecision {
+  const policy = policySchema.parse(policyInput);
+  const request = paymentRequestSchema.parse(requestInput);
+  const decision: PolicyDecision = {
+    status: "allowed",
+    network: policy.network,
+    realFunds: policy.network === "mainnet" || MAINNET_PROFILE.name === policy.network,
+    matchedRules: [],
+    reasons: []
+  };
+
+  const deny = (rule: string, reason: string) => {
+    decision.status = "denied";
+    decision.matchedRules.push(rule);
+    decision.reasons.push(reason);
+  };
+
+  const requireApproval = (rule: string, reason: string) => {
+    if (decision.status !== "denied") {
+      decision.status = "requires_approval";
+      decision.approval ??= { required: true, reason: rule };
+    }
+    decision.matchedRules.push(rule);
+    decision.reasons.push(reason);
+  };
+
+  const note = (rule: string, reason: string) => {
+    decision.matchedRules.push(rule);
+    decision.reasons.push(reason);
+  };
+
+  let normalizedAmount: string;
+  try {
+    normalizedAmount = parseAmount(stripAssetSuffix(request.amount), request.asset).value;
+    parseAsset(request.asset);
+  } catch (error) {
+    deny("invalid_payment_request", error instanceof Error ? error.message : "Invalid payment request.");
+    return sanitizeDecision(policy, decision);
+  }
+
+  const requestedAsset = request.asset.toUpperCase();
+  if (!policy.assets.allow.map((asset) => asset.toUpperCase()).includes(requestedAsset)) {
+    deny("asset_not_allowed", `Asset ${requestedAsset} is not allowed by policy.`);
+  } else {
+    note("asset_allowed", `Asset ${requestedAsset} is allowed by policy.`);
+  }
+
+  if (amountIsGreaterThan(normalizedAmount, stripAssetSuffix(policy.limits.perTransaction))) {
+    deny("amount_over_per_transaction_limit", "Payment exceeds the per-transaction policy limit.");
+  } else {
+    note("amount_under_hard_limit", "Payment is under the per-transaction limit.");
+  }
+
+  if (history.unreadable) {
+    deny("spend_history_unreadable", "Local spend history could not be read, so payment fails closed.");
+  }
+
+  if (
+    history.dailyTotal &&
+    amountIsGreaterThan(
+      addAmountStrings(history.dailyTotal, normalizedAmount),
+      stripAssetSuffix(policy.limits.dailyTotal)
+    )
+  ) {
+    deny("daily_total_limit_exceeded", "Payment would exceed the daily total policy limit.");
+  }
+
+  if (
+    history.monthlyTotal &&
+    amountIsGreaterThan(
+      addAmountStrings(history.monthlyTotal, normalizedAmount),
+      stripAssetSuffix(policy.limits.monthlyTotal)
+    )
+  ) {
+    deny("monthly_total_limit_exceeded", "Payment would exceed the monthly total policy limit.");
+  }
+
+  if (containsBlockedMemo(request.memo, policy)) {
+    deny("memo_blocked_sensitive_pattern", "Payment memo contains a blocked sensitive pattern.");
+  }
+
+  if (request.domain) {
+    if (!policy.x402.enabled) {
+      deny("x402_or_domain_payments_disabled", "Domain-bound payments are disabled by policy.");
+    } else if (
+      policy.x402.allowDomains.length > 0 &&
+      !policy.x402.allowDomains.includes(request.domain)
+    ) {
+      deny("domain_not_allowlisted", "The requested payment domain is not allowlisted.");
+    }
+  }
+
+  if (policy.approval.requireForAllPayments) {
+    requireApproval("approval_required_for_all_payments", "Policy requires approval for all payments.");
+  }
+
+  if (amountIsGreaterThan(normalizedAmount, stripAssetSuffix(policy.approval.requireAbove))) {
+    requireApproval(
+      "amount_above_auto_approval_threshold",
+      "Payment is above the auto-approval threshold."
+    );
+  }
+
+  if (
+    policy.approval.requireForNewRecipient &&
+    !history.knownRecipients?.includes(request.destination)
+  ) {
+    requireApproval("new_recipient_requires_approval", "Recipient has no prior approved receipt.");
+  }
+
+  if (request.domain && policy.approval.requireForNewDomain && !history.knownDomains?.includes(request.domain)) {
+    requireApproval("new_domain_requires_approval", "Domain has no prior approved receipt.");
+  }
+
+  if (policy.network === "mainnet") {
+    requireApproval("mainnet_requires_approval", "Mainnet payments require explicit approval.");
+  }
+
+  if (decision.status === "allowed") {
+    note("policy_allowed", "Policy allows this payment without additional approval.");
+  }
+
+  return sanitizeDecision(policy, decision);
+}
+
+function sanitizeDecision(policy: Policy, decision: PolicyDecision): PolicyDecision {
+  if (!policy.privacy.redactUrlQueryParamsInLogs) return decision;
+  return {
+    ...decision,
+    reasons: decision.reasons.map((reason) => redactSensitive(reason))
+  };
+}
+
+function containsBlockedMemo(memo: string | undefined, policy: Policy): boolean {
+  if (!memo) return false;
+  const lowered = memo.toLowerCase();
+  return policy.privacy.blockedMemoPatterns.some((pattern) => lowered.includes(pattern.toLowerCase()));
+}
+
+function stripAssetSuffix(amount: string): string {
+  return amount.trim().split(/\s+/)[0] ?? amount;
+}
+
+function addAmountStrings(a: string, b: string): string {
+  const left = parseAmount(stripAssetSuffix(a)).stroops;
+  const right = parseAmount(stripAssetSuffix(b)).stroops;
+  const sum = left + right;
+  const whole = sum / 10_000_000n;
+  const fraction = (sum % 10_000_000n).toString().padStart(7, "0");
+  return `${whole}.${fraction}`;
+}

@@ -1,0 +1,11 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/policy" },
+    { "path": "packages/ledger-logger" },
+    { "path": "packages/stellar" },
+    { "path": "packages/testnet-suite" },
+    { "path": "packages/cli" }
+  ]
+}

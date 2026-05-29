@@ -1,0 +1,41 @@
+import { mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { appendEvent, latestReceipt, writeReceipt } from "../src/index.js";
+
+describe("ledger logger", () => {
+  it("writes JSONL events without secrets", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "stellar-agent-"));
+    const logPath = join(dir, "events.jsonl");
+    await appendEvent(logPath, {
+      event: "policy_decision",
+      status: "allowed",
+      profile: "testnet",
+      data: { secretKey: "S".padEnd(56, "A") }
+    });
+    const raw = await readFile(logPath, "utf8");
+    expect(raw).toContain("[REDACTED]");
+    expect(raw).not.toContain("SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+  });
+
+  it("writes and reads latest receipts", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "stellar-agent-"));
+    const { receipt } = await writeReceipt(dir, {
+      command: "testnet smoke-test",
+      profile: "testnet",
+      networkPassphrase: "Test SDF Network ; September 2015",
+      realFunds: false,
+      payment: {
+        source: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        destination: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        asset: "XLM",
+        amount: "1.0000000"
+      },
+      policyDecision: { status: "allowed", matchedRules: ["policy_allowed"] },
+      transaction: { hash: "abc", successful: true }
+    });
+    const latest = await latestReceipt(dir);
+    expect(latest?.receipt.id).toBe(receipt.id);
+  });
+});
