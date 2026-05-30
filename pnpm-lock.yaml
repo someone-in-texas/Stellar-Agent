@@ -33,14 +33,29 @@ importers:
         specifier: ^3.1.4
         version: 3.2.4(@types/node@22.19.19)(tsx@4.22.3)(yaml@2.9.0)
 
+  apps/paid-api-demo:
+    dependencies:
+      '@stellar-agent/mpp-client':
+        specifier: workspace:*
+        version: link:../../packages/mpp-client
+      '@stellar-agent/x402-client':
+        specifier: workspace:*
+        version: link:../../packages/x402-client
+
   packages/cli:
     dependencies:
       '@stellar-agent/core':
         specifier: workspace:*
         version: link:../core
+      '@stellar-agent/freighter-bridge':
+        specifier: workspace:*
+        version: link:../freighter-bridge
       '@stellar-agent/ledger-logger':
         specifier: workspace:*
         version: link:../ledger-logger
+      '@stellar-agent/mpp-client':
+        specifier: workspace:*
+        version: link:../mpp-client
       '@stellar-agent/policy':
         specifier: workspace:*
         version: link:../policy
@@ -50,9 +65,22 @@ importers:
       '@stellar-agent/testnet-suite':
         specifier: workspace:*
         version: link:../testnet-suite
+      '@stellar-agent/x402-client':
+        specifier: workspace:*
+        version: link:../x402-client
       commander:
         specifier: ^14.0.0
         version: 14.0.3
+      yaml:
+        specifier: ^2.7.1
+        version: 2.9.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.24
+        version: 22.19.19
+
+  packages/codex-plugin:
+    dependencies:
       yaml:
         specifier: ^2.7.1
         version: 2.9.0
@@ -67,11 +95,49 @@ importers:
         specifier: ^3.25.46
         version: 3.25.76
 
+  packages/freighter-bridge:
+    dependencies:
+      '@stellar-agent/core':
+        specifier: workspace:*
+        version: link:../core
+      '@stellar/stellar-sdk':
+        specifier: ^13.3.0
+        version: 13.3.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.24
+        version: 22.19.19
+
   packages/ledger-logger:
     dependencies:
       '@stellar-agent/core':
         specifier: workspace:*
         version: link:../core
+
+  packages/mcp-server:
+    dependencies:
+      '@stellar-agent/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.24
+        version: 22.19.19
+
+  packages/mpp-client:
+    dependencies:
+      '@stellar-agent/core':
+        specifier: workspace:*
+        version: link:../core
+      '@stellar-agent/ledger-logger':
+        specifier: workspace:*
+        version: link:../ledger-logger
+      '@stellar-agent/policy':
+        specifier: workspace:*
+        version: link:../policy
+      '@stellar-agent/stellar':
+        specifier: workspace:*
+        version: link:../stellar
 
   packages/policy:
     dependencies:
@@ -111,6 +177,21 @@ importers:
       yaml:
         specifier: ^2.7.1
         version: 2.9.0
+
+  packages/x402-client:
+    dependencies:
+      '@stellar-agent/core':
+        specifier: workspace:*
+        version: link:../core
+      '@stellar-agent/ledger-logger':
+        specifier: workspace:*
+        version: link:../ledger-logger
+      '@stellar-agent/policy':
+        specifier: workspace:*
+        version: link:../policy
+      '@stellar-agent/stellar':
+        specifier: workspace:*
+        version: link:../stellar
 
 packages:
 

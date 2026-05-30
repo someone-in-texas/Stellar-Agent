@@ -11,7 +11,8 @@
     { "path": "../policy" },
     { "path": "../stellar" },
     { "path": "../testnet-suite" },
-    { "path": "../ledger-logger" }
+    { "path": "../ledger-logger" },
+    { "path": "../freighter-bridge" }
   ],
   "include": ["src/**/*.ts"]
 }

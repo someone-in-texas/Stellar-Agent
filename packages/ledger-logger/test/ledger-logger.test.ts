@@ -38,4 +38,25 @@ describe("ledger logger", () => {
     const latest = await latestReceipt(dir);
     expect(latest?.receipt.id).toBe(receipt.id);
   });
+
+  it("writes operation receipts without payment metadata", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "stellar-agent-"));
+    const { receipt } = await writeReceipt(dir, {
+      command: "wallet trustline add",
+      profile: "testnet",
+      networkPassphrase: "Test SDF Network ; September 2015",
+      realFunds: false,
+      operation: {
+        type: "trustline.add",
+        account: "merchant",
+        source: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        asset: "USD:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        limit: "100.0000000"
+      },
+      policyDecision: { status: "allowed", matchedRules: ["testnet_operation"] },
+      transaction: { hash: "abc", successful: true }
+    });
+    expect(receipt.payment).toBeUndefined();
+    expect(receipt.operation).toMatchObject({ type: "trustline.add", account: "merchant" });
+  });
 });

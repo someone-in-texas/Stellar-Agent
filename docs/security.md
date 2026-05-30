@@ -22,4 +22,4 @@ Report vulnerabilities privately to maintainers.
 - No raw secret keys in output.
 - No Mainnet auto-signing.
 - Policy denial prevents signing and submission.
-- Placeholder features do not access secrets or submit transactions.
+- Unsupported production features fail closed and do not access secrets or submit transactions.

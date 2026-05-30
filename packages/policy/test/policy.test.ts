@@ -65,6 +65,38 @@ describe("policy evaluation", () => {
     expect(decision.matchedRules).toContain("spend_history_unreadable");
   });
 
+  it("allows domain-bound x402 requests only when enabled and under price limit", () => {
+    const policy = {
+      ...DEFAULT_TESTNET_POLICY,
+      x402: {
+        ...DEFAULT_TESTNET_POLICY.x402,
+        enabled: true,
+        allowDomains: ["127.0.0.1:3000"],
+        maxPricePerRequest: "0.01 XLM"
+      }
+    };
+    expect(
+      evaluatePaymentRequest(policy, {
+        destination,
+        amount: "0.001",
+        asset: "XLM",
+        network: "testnet",
+        domain: "127.0.0.1:3000",
+        url: "http://127.0.0.1:3000/paid-report"
+      }).status
+    ).toBe("allowed");
+    expect(
+      evaluatePaymentRequest(policy, {
+        destination,
+        amount: "0.02",
+        asset: "XLM",
+        network: "testnet",
+        domain: "127.0.0.1:3000",
+        url: "http://127.0.0.1:3000/paid-report"
+      }).matchedRules
+    ).toContain("x402_price_over_limit");
+  });
+
   it("round-trips default policy YAML", () => {
     expect(parsePolicyYaml(policyToYaml(DEFAULT_TESTNET_POLICY)).name).toBe("default-testnet-policy");
   });

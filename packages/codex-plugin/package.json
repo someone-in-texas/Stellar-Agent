@@ -1,0 +1,26 @@
+{
+  "name": "@stellar-agent/codex-plugin",
+  "version": "0.0.0",
+  "type": "module",
+  "bin": {
+    "stellar-agent-codex-plugin": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "yaml": "^2.7.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.24"
+  }
+}

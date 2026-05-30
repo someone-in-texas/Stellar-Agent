@@ -277,6 +277,10 @@ export function evaluatePaymentRequest(
       !policy.x402.allowDomains.includes(request.domain)
     ) {
       deny("domain_not_allowlisted", "The requested payment domain is not allowlisted.");
+    } else if (amountIsGreaterThan(normalizedAmount, stripAssetSuffix(policy.x402.maxPricePerRequest))) {
+      deny("x402_price_over_limit", "The requested x402 payment exceeds the max price per request.");
+    } else {
+      note("x402_domain_allowed", "Domain-bound payment is enabled and within the x402 price limit.");
     }
   }
 

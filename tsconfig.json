@@ -6,6 +6,11 @@
     { "path": "packages/ledger-logger" },
     { "path": "packages/stellar" },
     { "path": "packages/testnet-suite" },
+    { "path": "packages/x402-client" },
+    { "path": "packages/mpp-client" },
+    { "path": "packages/freighter-bridge" },
+    { "path": "packages/mcp-server" },
+    { "path": "packages/codex-plugin" },
     { "path": "packages/cli" }
   ]
 }

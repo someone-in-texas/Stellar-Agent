@@ -74,6 +74,7 @@ export type ErrorCode =
   | "APPROVAL_DENIED"
   | "WALLET_NOT_FOUND"
   | "WALLET_INVALID"
+  | "ACCOUNT_NOT_FOUND"
   | "SECRET_KEY_BLOCKED"
   | "FRIENDBOT_UNAVAILABLE"
   | "RPC_UNAVAILABLE"
@@ -83,8 +84,11 @@ export type ErrorCode =
   | "TRANSACTION_TIMEOUT"
   | "LEDGER_LOOKUP_FAILED"
   | "X402_NOT_IMPLEMENTED"
+  | "X402_RESOURCE_UNAVAILABLE"
   | "MPP_NOT_IMPLEMENTED"
+  | "MPP_RESOURCE_UNAVAILABLE"
   | "FREIGHTER_NOT_IMPLEMENTED"
+  | "STELLAR_CLI_UNAVAILABLE"
   | "INVALID_AMOUNT"
   | "INVALID_ASSET"
   | "INVALID_INPUT"
@@ -132,7 +136,7 @@ export function exitCodeForError(code: ErrorCode): number {
   if (code === "POLICY_DENIED") return EXIT_CODES.policyDenied;
   if (code === "APPROVAL_REQUIRED" || code === "APPROVAL_DENIED") return EXIT_CODES.approval;
   if (code === "CONFIG_INVALID" || code === "POLICY_INVALID") return EXIT_CODES.validation;
-  if (code === "CONFIG_NOT_FOUND" || code === "PROFILE_NOT_FOUND" || code === "INVALID_INPUT") {
+  if (code === "CONFIG_NOT_FOUND" || code === "PROFILE_NOT_FOUND" || code === "INVALID_INPUT" || code === "ACCOUNT_NOT_FOUND") {
     return EXIT_CODES.usage;
   }
   if (code.includes("UNAVAILABLE")) return EXIT_CODES.network;
@@ -391,6 +395,21 @@ export const testnetWalletSchema = z.object({
 
 export type TestnetWallet = z.infer<typeof testnetWalletSchema>;
 
+export const publicWalletSchema = z.object({
+  schemaVersion: z.literal("stellar-agent.publicWallet.v1"),
+  name: z.string().min(1),
+  network: z.enum(["testnet", "mainnet", "local"]),
+  publicKey: z.string().regex(gAddressPattern),
+  importedAt: z.string().datetime(),
+  source: z.literal("watch-only")
+});
+
+export type PublicWallet = z.infer<typeof publicWalletSchema>;
+
+export type WalletPublicView =
+  | Omit<TestnetWallet, "secretKey"> & { hasSecret: true; source: "generated-testnet" }
+  | (PublicWallet & { hasSecret: false });
+
 export const paymentRequestSchema = z.object({
   source: z.string().optional(),
   destination: z.string().regex(gAddressPattern),
@@ -419,7 +438,12 @@ export function redactSensitive<T>(value: T): T {
   if (typeof value === "object") {
     const redacted: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(value)) {
-      redacted[key] = sensitiveKeyPattern.test(key) ? "[REDACTED]" : redactSensitive(child);
+      redacted[key] =
+        key === "secretKeysIncluded" || key === "hasSecret"
+          ? child
+          : sensitiveKeyPattern.test(key)
+            ? "[REDACTED]"
+            : redactSensitive(child);
     }
     return redacted as T;
   }

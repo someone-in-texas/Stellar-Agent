@@ -1,0 +1,1 @@
+Run `stellar-agent testnet scenario issued-asset-payment --json`, then summarize the asset code, issuer, recipient, trustline transaction, payment transaction, recipient balance, and receipt paths. Stop if approval is required and never print secrets.

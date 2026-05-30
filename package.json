@@ -14,6 +14,8 @@
     "test": "vitest run",
     "smoke": "pnpm build && node scripts/check-help.mjs",
     "smoke:testnet": "pnpm build && node scripts/smoke-test-testnet.mjs",
+    "verify:live:testnet": "pnpm build && node scripts/verify-live-testnet.mjs",
+    "demo:x402": "pnpm build && node apps/paid-api-demo/server.mjs",
     "test:live:testnet": "LIVE_STELLAR_TESTNET=1 vitest run --project live-testnet"
   },
   "keywords": [

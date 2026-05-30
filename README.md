@@ -4,7 +4,7 @@
 
 ## Status
 
-This repository is an early v0 implementation. Core primitives, policy evaluation, local receipt logging, Testnet wallet creation, Friendbot funding, basic Testnet payment submission, and the CLI command surface are present. x402, MPP, Freighter, MCP, and Mainnet payment flows intentionally return stable placeholder errors until their safety work is complete.
+This repository is an early v0 implementation. Core primitives, policy evaluation, local receipt logging, Testnet wallet creation, Friendbot funding, basic Testnet payment submission, issued-asset trustlines, claimable balances, local approval bridge requests, local x402-style and MPP one-time Testnet demos, MCP tools, Codex plugin validation, and the CLI command surface are present. Mainnet payment submission intentionally remains blocked until real-funds approval work is complete.
 
 ## Safety First
 
@@ -31,6 +31,7 @@ pnpm build
 pnpm test
 pnpm cli -- testnet init --no-fund
 pnpm cli -- testnet smoke-test --dry-run --json
+LIVE_STELLAR_TESTNET=1 pnpm verify:live:testnet
 ```
 
 ## CLI Examples
@@ -39,9 +40,37 @@ pnpm cli -- testnet smoke-test --dry-run --json
 stellar-agent profile list --json
 stellar-agent testnet doctor
 stellar-agent wallet create-testnet agent --json
+stellar-agent wallet create-testnet funded-agent --fund --json
+stellar-agent wallet create-testnet merchant --json
+stellar-agent wallet import-public --name treasury --network mainnet --address G... --json
+stellar-agent wallet connect-freighter --json
+stellar-agent wallet trustline list --account merchant --json
+stellar-agent wallet trustline add --account merchant --asset USD:G... --json
+stellar-agent testnet scenario issued-asset-payment --json
 stellar-agent policy explain --to G... --amount 1 --asset XLM --json
 stellar-agent pay quote --to G... --amount 1 --asset XLM --json
+stellar-agent approval create-payment --to G... --amount 6 --json
+stellar-agent approval create-transaction --xdr AAAA... --summary "Sign contract transaction" --network testnet --json
+stellar-agent approval decide appr_... --approve --json
+stellar-agent tx request-payment-signature --from treasury --to G... --amount 1 --json
+stellar-agent tx submit-approval appr_... --json
 stellar-agent pay send --to G... --amount 1 --asset XLM --profile testnet
+stellar-agent pay send --from issuer --to G... --amount 1 --asset USD:G...ISSUER --json
+stellar-agent claimable create --to G... --amount 1 --json
+stellar-agent claimable claim --account merchant --balance-id 0000... --json
+stellar-agent ledger payments --account agent --json
+stellar-agent ledger export --output ./ledger-report.json
+stellar-agent contract doctor --json
+stellar-agent testnet scenario contract-asset-smoke --json
+stellar-agent contract invoke --id C... --source agent --fn hello --arg to=world --json
+stellar-agent contract upload --source agent --wasm ./contract.wasm --json
+stellar-agent contract deploy --source agent --wasm ./contract.wasm --json
+stellar-agent contract asset-deploy --source agent --asset native --json
+stellar-agent contract extend --source agent --id C... --ledgers-to-extend 535679 --json
+stellar-agent contract restore --source agent --id C... --json
+stellar-agent testnet scenario x402-payment --json
+stellar-agent pay x402 http://127.0.0.1:PORT/paid-report --allow-localhost-demo --json
+stellar-agent pay mpp http://127.0.0.1:PORT/mpp-report --allow-localhost-demo --json
 ```
 
 ## Agent Integration
@@ -57,8 +86,12 @@ The project is CLI-first with shared packages underneath:
 - `@stellar-agent/core` for types, amounts, errors, config, and redaction.
 - `@stellar-agent/policy` for policy schema and deterministic decisions.
 - `@stellar-agent/stellar` for Friendbot, Horizon, wallets, and Testnet payments.
+- `@stellar-agent/freighter-bridge` for local approval request storage and HTTP bridge APIs.
+- Stellar CLI integration for Soroban contract invocation when `stellar` is installed.
 - `@stellar-agent/testnet-suite` for reusable Testnet workflows.
 - `@stellar-agent/ledger-logger` for receipts and JSONL event logs.
+- `@stellar-agent/mcp-server` for MCP stdio tools that delegate to `stellar-agent --json`.
+- `@stellar-agent/codex-plugin` for bundled Codex plugin validation and manifests.
 - `@stellar-agent/cli` for command registration and terminal behavior.
 
 ## Mainnet
@@ -67,12 +100,9 @@ Mainnet uses real funds. It is disabled by default, requires explicit enablement
 
 ## Roadmap
 
-1. Harden Testnet suite and receipt export.
-2. Freighter Testnet approval bridge.
-3. Codex plugin packaging.
-4. Local x402 Testnet demo.
-5. MPP one-time Testnet demo.
-6. Guarded Mainnet readiness.
+1. Freighter browser-extension signing in the local approval UI.
+2. Production facilitator-backed x402/MPP support.
+3. Guarded Mainnet payment approval flow.
 
 ## Contributing
 

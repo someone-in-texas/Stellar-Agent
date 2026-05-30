@@ -14,10 +14,13 @@
   "dependencies": {
     "@stellar-agent/core": "workspace:*",
     "@stellar-agent/ledger-logger": "workspace:*",
+    "@stellar-agent/mpp-client": "workspace:*",
     "@stellar-agent/policy": "workspace:*",
     "@stellar-agent/stellar": "workspace:*",
     "@stellar-agent/testnet-suite": "workspace:*",
+    "@stellar-agent/x402-client": "workspace:*",
     "commander": "^14.0.0",
+    "@stellar-agent/freighter-bridge": "workspace:*",
     "yaml": "^2.7.1"
   },
   "devDependencies": {

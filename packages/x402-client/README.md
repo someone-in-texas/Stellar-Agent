@@ -1,5 +1,5 @@
 # @stellar-agent/x402-client
 
-Placeholder for x402 client support.
+Local x402-style client support for the Testnet demo.
 
-Current behavior is implemented through CLI placeholder commands that exit `8` and do not sign, submit, or read secret keys.
+This package implements a concrete local `402 -> policy -> Testnet payment -> retry with proof` flow. It is not a full facilitator-backed Soroban auth-entry x402 implementation yet.

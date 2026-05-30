@@ -61,4 +61,11 @@ describe("config and redaction", () => {
       note: "key [REDACTED_SECRET_KEY]"
     });
   });
+
+  it("preserves explicit redaction metadata booleans", () => {
+    expect(redactSensitive({ redactions: { secretKeysIncluded: false }, hasSecret: true })).toEqual({
+      redactions: { secretKeysIncluded: false },
+      hasSecret: true
+    });
+  });
 });

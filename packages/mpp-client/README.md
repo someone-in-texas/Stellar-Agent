@@ -1,5 +1,10 @@
 # @stellar-agent/mpp-client
 
-Placeholder for MPP one-time charge and session support.
+Local MPP one-time charge and session-budget client support for the Testnet demo.
 
-Current behavior is staged and not implemented.
+This package implements concrete local flows:
+
+- one-time `402 -> policy -> Testnet payment -> retry with proof`
+- session-budget `402 -> policy -> Testnet budget payment -> repeated proof requests`
+
+Production facilitator flows are not implemented yet.

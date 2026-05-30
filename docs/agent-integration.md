@@ -5,6 +5,19 @@ Agents should use JSON mode:
 ```bash
 stellar-agent testnet doctor --json
 stellar-agent pay quote --to G... --amount 1 --asset XLM --json
+stellar-agent wallet trustline add --account merchant --asset USD:G... --json
+stellar-agent testnet scenario issued-asset-payment --dry-run --json
+stellar-agent wallet import-public --name treasury --network mainnet --address G... --json
+stellar-agent claimable list --account merchant --json
+stellar-agent testnet scenario x402-payment --json
+stellar-agent pay x402 http://127.0.0.1:PORT/paid-report --allow-localhost-demo --json
+stellar-agent pay mpp http://127.0.0.1:PORT/mpp-report --allow-localhost-demo --json
+stellar-agent pay mpp-session http://127.0.0.1:PORT/mpp-session --requests 2 --allow-localhost-demo --json
+stellar-agent tx submit-approval appr_... --json
+stellar-agent testnet scenario contract-asset-smoke --dry-run --json
+stellar-agent contract deploy --source agent --wasm ./contract.wasm --json
+stellar-agent contract asset-deploy --source agent --asset native --json
+stellar-agent contract info --kind interface --id C... --json
 ```
 
 The standard success envelope is:

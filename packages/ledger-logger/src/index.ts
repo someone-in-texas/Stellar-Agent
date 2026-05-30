@@ -46,12 +46,26 @@ export interface PaymentReceipt {
     passphrase: string;
     realFunds: boolean;
   };
-  payment: {
+  payment?: {
     source: string;
     destination: string;
     asset: string;
     amount: string;
     memo?: string;
+  };
+  operation?: {
+    type: string;
+    source?: string;
+    account?: string;
+    asset?: string;
+    amount?: string;
+    destination?: string;
+    claimant?: string;
+    claimants?: string[];
+    balanceId?: string;
+    limit?: string;
+    predicate?: unknown;
+    details?: unknown;
   };
   policyDecision: ReceiptPolicyDecision;
   transaction: {
@@ -83,10 +97,11 @@ export interface ReceiptInput {
   profile: NetworkName;
   networkPassphrase: string;
   realFunds: boolean;
-  payment: Required<Pick<PaymentRequest, "destination" | "asset" | "amount">> & {
+  payment?: Required<Pick<PaymentRequest, "destination" | "asset" | "amount">> & {
     source: string;
     memo?: string;
   };
+  operation?: PaymentReceipt["operation"];
   policyDecision: ReceiptPolicyDecision;
   transaction: PaymentReceipt["transaction"];
   ledger?: PaymentReceipt["ledger"];
@@ -119,7 +134,8 @@ export async function writeReceipt(receiptsDir: string, input: ReceiptInput): Pr
       passphrase: input.networkPassphrase,
       realFunds: input.realFunds
     },
-    payment: redactSensitive(input.payment),
+    ...(input.payment ? { payment: redactSensitive(input.payment) } : {}),
+    ...(input.operation ? { operation: redactSensitive(input.operation) } : {}),
     policyDecision: {
       status: input.policyDecision.status,
       matchedRules: input.policyDecision.matchedRules
@@ -175,7 +191,7 @@ export function verifyReceipt(receipt: PaymentReceipt): true {
       message: "Receipt schema version is not supported."
     });
   }
-  if (!receipt.id || !receipt.createdAt || !receipt.transaction?.hash) {
+  if (!receipt.id || !receipt.createdAt || !receipt.transaction?.hash || (!receipt.payment && !receipt.operation)) {
     throw new StellarAgentError({
       code: "CONFIG_INVALID",
       message: "Receipt is missing required fields."

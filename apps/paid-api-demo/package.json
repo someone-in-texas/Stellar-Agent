@@ -1,0 +1,13 @@
+{
+  "name": "@stellar-agent/paid-api-demo",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@stellar-agent/mpp-client": "workspace:*",
+    "@stellar-agent/x402-client": "workspace:*"
+  }
+}
