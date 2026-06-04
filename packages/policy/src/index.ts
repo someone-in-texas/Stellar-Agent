@@ -336,10 +336,28 @@ function stripAssetSuffix(amount: string): string {
 }
 
 function addAmountStrings(a: string, b: string): string {
-  const left = parseAmount(stripAssetSuffix(a)).stroops;
-  const right = parseAmount(stripAssetSuffix(b)).stroops;
+  const left = parseNonNegativeAmount(stripAssetSuffix(a));
+  const right = parseNonNegativeAmount(stripAssetSuffix(b));
   const sum = left + right;
   const whole = sum / 10_000_000n;
   const fraction = (sum % 10_000_000n).toString().padStart(7, "0");
   return `${whole}.${fraction}`;
+}
+
+function parseNonNegativeAmount(input: string): bigint {
+  const trimmed = input.trim();
+  if (!/^(0|[1-9]\d*)(\.\d+)?$/.test(trimmed)) {
+    throw new StellarAgentError({
+      code: "INVALID_AMOUNT",
+      message: "Amount must be a decimal string."
+    });
+  }
+  const [wholeRaw, fractionRaw = ""] = trimmed.split(".");
+  if (fractionRaw.length > 7) {
+    throw new StellarAgentError({
+      code: "INVALID_AMOUNT",
+      message: "Stellar amounts support at most 7 decimal places."
+    });
+  }
+  return BigInt(wholeRaw ?? "0") * 10_000_000n + BigInt(fractionRaw.padEnd(7, "0"));
 }

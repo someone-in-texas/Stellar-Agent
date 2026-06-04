@@ -4,7 +4,20 @@ on:
   workflow_dispatch:
 
 jobs:
-  placeholder:
+  preflight:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Release automation will be enabled after package publishing decisions are made."
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm smoke
+      - run: pnpm --filter @stellar-agent/cli pack --dry-run
+      - run: echo "Publishing remains manual until package names, provenance, and workspace package order are finalized."

@@ -1,5 +1,28 @@
 # Ledger Logging
 
+## Receipt Verification
+
+`stellar-agent receipts verify <path>` validates the receipt schema and checks that the receipt does not contain secret keys.
+
+For online audit evidence, add `--ledger`:
+
+```bash
+stellar-agent receipts verify ./receipt.json --ledger --json
+```
+
+This looks up the receipt transaction hash on the receipt profile's Horizon endpoint and compares the returned hash, ledger number, and success status with the local receipt.
+
+## Spend History
+
+Payment policy decisions read local receipts before signing or submitting payment work. Successful allowed payment receipts are used to compute:
+
+- Daily total for the current UTC day.
+- Monthly total for the current UTC month.
+- Known recipients.
+- Known paid-resource domains.
+
+If local receipt history cannot be read, payment policy evaluation fails closed with `spend_history_unreadable`. This keeps `dailyTotal`, `monthlyTotal`, `requireForNewRecipient`, and `requireForNewDomain` meaningful for agent-driven commands instead of relying only on per-transaction limits.
+
 Receipts use schema version `stellar-agent.receipt.v1`.
 
 Event logs are JSONL using schema version `stellar-agent.event.v1`.

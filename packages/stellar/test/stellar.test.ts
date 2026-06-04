@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Account, Asset, BASE_FEE, Keypair, Networks, Operation, TransactionBuilder } from "@stellar/stellar-sdk";
 import {
   accountPayments,
   buildClaimableBalancePredicate,
@@ -55,7 +56,7 @@ describe("stellar operations", () => {
     });
   });
 
-  it("blocks unsigned payment transaction XDR building on real-funds profiles", async () => {
+  it("requires explicit approval before building unsigned payment XDR on real-funds profiles", async () => {
     await expect(
       buildPaymentTransactionXdr({
         sourcePublicKey: wallet.publicKey,
@@ -65,6 +66,25 @@ describe("stellar operations", () => {
         profile: { ...testnetProfile(), name: "mainnet", network: "mainnet", realFunds: true }
       })
     ).rejects.toMatchObject({ code: "MAINNET_NOT_ENABLED" });
+  });
+
+  it("builds unsigned payment transaction XDR on real-funds profiles when explicitly allowed", async () => {
+    await expect(
+      buildPaymentTransactionXdr({
+        sourcePublicKey: wallet.publicKey,
+        destination: wallet.publicKey,
+        amount: "1",
+        sourceSequence: "1",
+        profile: { ...testnetProfile(), name: "mainnet", network: "public", networkPassphrase: Networks.PUBLIC, realFunds: true },
+        allowRealFunds: true
+      })
+    ).resolves.toMatchObject({
+      source: wallet.publicKey,
+      destination: wallet.publicKey,
+      amount: "1.0000000",
+      networkPassphrase: Networks.PUBLIC,
+      xdr: expect.any(String)
+    });
   });
 
   it("rejects native XLM trustlines before network access", async () => {
@@ -511,13 +531,51 @@ describe("stellar operations", () => {
     });
   });
 
-  it("blocks signed transaction XDR submission on real-funds profiles", async () => {
+  it("requires explicit approval before signed transaction XDR submission on real-funds profiles", async () => {
     await expect(
       submitTransactionXdr({
         xdr: "AAAAAgSIGNED",
-        profile: { ...testnetProfile(), name: "mainnet", network: "mainnet", realFunds: true }
+        profile: { ...testnetProfile(), name: "mainnet", network: "public", networkPassphrase: Networks.PUBLIC, realFunds: true }
       })
     ).rejects.toMatchObject({ code: "MAINNET_NOT_ENABLED" });
+  });
+
+  it("submits signed transaction XDR on real-funds profiles when explicitly allowed", async () => {
+    let requestedUrl = "";
+    const signedXdr = signedPaymentXdrFixture();
+    const result = await submitTransactionXdr({
+      xdr: signedXdr,
+      profile: { ...testnetProfile(), name: "mainnet", network: "public", networkPassphrase: Networks.PUBLIC, realFunds: true, horizonUrl: "https://horizon.stellar.org" },
+      allowRealFunds: true,
+      fetchImpl: async (input) => {
+        requestedUrl = String(input);
+        return new Response(
+          JSON.stringify({
+            hash: "mainnet123",
+            ledger: 789,
+            successful: true,
+            fee_charged: "100"
+          })
+        );
+      }
+    });
+
+    expect(requestedUrl).toBe("https://horizon.stellar.org/transactions");
+    expect(result).toMatchObject({ hash: "mainnet123", ledger: 789, successful: true });
+  });
+
+  it("rejects unsigned transaction XDR on real-funds profiles", async () => {
+    const unsignedXdr = unsignedPaymentXdrFixture();
+    await expect(
+      submitTransactionXdr({
+        xdr: unsignedXdr,
+        profile: { ...testnetProfile(), name: "mainnet", network: "public", networkPassphrase: Networks.PUBLIC, realFunds: true },
+        allowRealFunds: true
+      })
+    ).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      message: "Mainnet signed-XDR submission requires at least one transaction signature."
+    });
   });
 
   it("fetches Horizon payment collections", async () => {
@@ -577,6 +635,47 @@ function testnetProfile() {
     defaultAsset: "XLM",
     realFunds: false
   };
+}
+
+function unsignedPaymentXdrFixture(): string {
+  const signer = Keypair.random();
+  const destination = Keypair.random().publicKey();
+  const account = new Account(signer.publicKey(), "1");
+  return new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.PUBLIC
+  })
+    .addOperation(
+      Operation.payment({
+        destination,
+        asset: Asset.native(),
+        amount: "1"
+      })
+    )
+    .setTimeout(60)
+    .build()
+    .toXDR();
+}
+
+function signedPaymentXdrFixture(): string {
+  const signer = Keypair.random();
+  const destination = Keypair.random().publicKey();
+  const account = new Account(signer.publicKey(), "1");
+  const transaction = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.PUBLIC
+  })
+    .addOperation(
+      Operation.payment({
+        destination,
+        asset: Asset.native(),
+        amount: "1"
+      })
+    )
+    .setTimeout(60)
+    .build();
+  transaction.sign(signer);
+  return transaction.toXDR();
 }
 
 async function fakeStellarBinary(): Promise<string> {

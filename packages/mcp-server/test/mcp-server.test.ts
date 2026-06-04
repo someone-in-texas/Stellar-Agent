@@ -47,6 +47,27 @@ describe("mcp server", () => {
     ).toEqual(["--config", "/tmp/config.yaml", "--json", "tx", "submit-approval", "appr_123"]);
   });
 
+  it("builds CLI arguments for guarded Mainnet signed-XDR submission", () => {
+    expect(
+      buildCliArgs("stellar_tx_submit_xdr", {
+        profile: "mainnet",
+        xdr: "AAAA...",
+        allowRealFunds: true,
+        iUnderstandRealFunds: true
+      })
+    ).toEqual([
+      "--profile",
+      "mainnet",
+      "--json",
+      "tx",
+      "submit-xdr",
+      "--xdr",
+      "AAAA...",
+      "--allow-real-funds",
+      "--i-understand-real-funds"
+    ]);
+  });
+
   it("builds CLI arguments for funded Testnet wallet spin-up", () => {
     expect(
       buildCliArgs("stellar_wallet_create_testnet", {

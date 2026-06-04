@@ -7,7 +7,7 @@ import {
   parseAmount
 } from "@stellar-agent/core";
 import { appendEvent, writeReceipt } from "@stellar-agent/ledger-logger";
-import { Policy, evaluatePaymentRequest } from "@stellar-agent/policy";
+import { Policy, SpendHistory, evaluatePaymentRequest } from "@stellar-agent/policy";
 import { sendPayment } from "@stellar-agent/stellar";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
@@ -49,6 +49,7 @@ export interface X402PaymentResult {
   };
   receiptPath?: string;
   responseBody?: string;
+  paidResourceDelivered?: boolean;
 }
 
 export async function runX402Payment(args: {
@@ -60,9 +61,13 @@ export async function runX402Payment(args: {
   eventLog: string;
   command: string;
   dryRun?: boolean;
+  spendHistory?: SpendHistory;
+  loadSpendHistory?: (request: PaymentRequest) => Promise<SpendHistory>;
   fetchImpl?: typeof fetch;
+  sendPaymentImpl?: typeof sendPayment;
 }): Promise<X402PaymentResult> {
   const fetchImpl = args.fetchImpl ?? fetch;
+  const sendPaymentImpl = args.sendPaymentImpl ?? sendPayment;
   const first = await fetchResource(fetchImpl, args.url);
   if (first.status !== 402) {
     return {
@@ -91,7 +96,8 @@ export async function runX402Payment(args: {
     domain: new URL(args.url).host,
     url: args.url
   };
-  const policyDecision = evaluatePaymentRequest(args.policy, request);
+  const history = args.loadSpendHistory ? await args.loadSpendHistory(request) : args.spendHistory;
+  const policyDecision = evaluatePaymentRequest(args.policy, request, history);
   await appendEvent(args.eventLog, {
     event: "policy_decision",
     status: policyDecision.status,
@@ -118,7 +124,7 @@ export async function runX402Payment(args: {
     return { firstStatus: 402, finalStatus: 402, requirement, policyDecision };
   }
 
-  const transaction = await sendPayment({
+  const transaction = await sendPaymentImpl({
     source: args.source,
     destination: requirement.recipient,
     amount: requirement.amount,
@@ -145,6 +151,7 @@ export async function runX402Payment(args: {
     }
   });
   const responseBody = await paid.text();
+  const paidResourceDelivered = paid.status >= 200 && paid.status < 300;
   const { path: receiptPath } = await writeReceipt(args.receiptsDir, {
     command: args.command,
     profile: "testnet",
@@ -155,6 +162,8 @@ export async function runX402Payment(args: {
       destination: requirement.recipient,
       asset: requirement.asset,
       amount: requirement.amount,
+      domain: new URL(args.url).host,
+      url: args.url,
       ...(requirement.memo === undefined ? {} : { memo: requirement.memo })
     },
     policyDecision,
@@ -164,10 +173,10 @@ export async function runX402Payment(args: {
   });
   await appendEvent(args.eventLog, {
     event: "receipt_written",
-    status: "success",
+    status: paidResourceDelivered ? "success" : "paid_resource_failed",
     command: args.command,
     profile: "testnet",
-    data: { receiptPath, transactionHash: transaction.hash, finalStatus: paid.status }
+    data: { receiptPath, transactionHash: transaction.hash, finalStatus: paid.status, paidResourceDelivered }
   });
   return {
     firstStatus: 402,
@@ -176,7 +185,8 @@ export async function runX402Payment(args: {
     policyDecision,
     transaction,
     receiptPath,
-    responseBody
+    responseBody,
+    paidResourceDelivered
   };
 }
 

@@ -4,11 +4,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createRequire } from "node:module";
 import { stringify } from "yaml";
 import { buildProgram } from "../src/index.js";
 
 const transactionHash = "a".repeat(64);
 const contractId = "CB7Y2XA3ULT62HEH6DPAUGVGUTSVL7JO5T5VOYUW6UVZI6SG72UOKSYR";
+const require = createRequire(import.meta.url);
+const { Account, Asset, BASE_FEE, Keypair, Networks, Operation, TransactionBuilder } = require("../../stellar/node_modules/@stellar/stellar-sdk");
 
 describe("CLI contract receipts", () => {
   afterEach(() => {
@@ -92,11 +95,145 @@ describe("CLI contract receipts", () => {
     expect(output.data.transactionHash).toBeUndefined();
     expect(output.data.receiptPath).toBeUndefined();
   });
+
+  it("blocks Mainnet contract submissions unless guarded Mainnet mode is enabled", async () => {
+    const { configPath, stellarBinary } = await createCliFixture({
+      stdout: `${contractId}\n`,
+      stderr: `Signing transaction: ${transactionHash}\n`
+    });
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "contract",
+      "asset-deploy",
+      "--source",
+      "agent",
+      "--asset",
+      "native",
+      "--network",
+      "mainnet",
+      "--stellar-binary",
+      stellarBinary
+    ]);
+
+    expect(output).toMatchObject({
+      ok: false,
+      error: {
+        code: "MAINNET_NOT_ENABLED",
+        message: "Mainnet contract operations require mainnet enablement."
+      }
+    });
+  });
+
+  it("refuses local generated Testnet wallet secrets for guarded Mainnet contract submissions", async () => {
+    const { configPath, stellarBinary } = await createCliFixture(
+      {
+        stdout: `${contractId}\n`,
+        stderr: `Signing transaction: ${transactionHash}\n`
+      },
+      { mainnetEnabled: true }
+    );
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "contract",
+      "asset-deploy",
+      "--source",
+      "agent",
+      "--asset",
+      "native",
+      "--network",
+      "mainnet",
+      "--allow-real-funds",
+      "--i-understand-real-funds",
+      "--stellar-binary",
+      stellarBinary
+    ]);
+
+    expect(output).toMatchObject({
+      ok: false,
+      error: {
+        code: "MAINNET_NOT_ENABLED",
+        message: "Local generated Testnet wallets cannot be used for Mainnet contract operations."
+      }
+    });
+  });
+
+  it("submits externally signed Mainnet XDR only with explicit real-funds flags and writes a receipt", async () => {
+    const { configPath } = await createCliFixture(
+      {
+        stdout: `${contractId}\n`,
+        stderr: `Signing transaction: ${transactionHash}\n`
+      },
+      { mainnetEnabled: true }
+    );
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          hash: transactionHash,
+          ledger: 12345,
+          successful: true,
+          fee_charged: "100"
+        })
+      )
+    );
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--profile",
+      "mainnet",
+      "--json",
+      "tx",
+      "submit-xdr",
+      "--xdr",
+      signedPaymentXdrFixture(),
+      "--allow-real-funds",
+      "--i-understand-real-funds"
+    ]);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "https://horizon.stellar.org/transactions",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        transaction: { hash: transactionHash, ledger: 12345, successful: true },
+        receiptPath: expect.any(String),
+        realFunds: true
+      }
+    });
+    const receipt = JSON.parse(await readFile(output.data.receiptPath, "utf8"));
+    expect(receipt).toMatchObject({
+      command: "tx submit-xdr",
+      profile: "mainnet",
+      network: { realFunds: true },
+      operation: {
+        type: "tx.submit_xdr"
+      },
+      policyDecision: {
+        status: "requires_approval",
+        matchedRules: ["signed_xdr_external_wallet", "real_funds_acknowledged"]
+      },
+      transaction: {
+        hash: transactionHash,
+        ledger: 12345,
+        successful: true
+      }
+    });
+    expect(JSON.stringify(receipt)).not.toContain("\"S");
+  });
 });
 
-async function createCliFixture(args: { stdout: string; stderr: string }) {
+async function createCliFixture(args: { stdout: string; stderr: string }, options: { mainnetEnabled?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), "stellar-agent-cli-test-"));
   const config = createDefaultConfig(root);
+  if (options.mainnetEnabled && config.profiles.mainnet) config.profiles.mainnet.enabled = true;
   const configPath = join(root, "config.yaml");
   await mkdir(config.storage.walletsDir, { recursive: true });
   await ensureWallet(config, "agent");
@@ -131,4 +268,25 @@ async function runCli(args: string[]) {
 
 function escapeSingleQuotedShell(value: string): string {
   return value.replaceAll("'", "'\\''");
+}
+
+function signedPaymentXdrFixture(): string {
+  const signer = Keypair.random();
+  const destination = Keypair.random().publicKey();
+  const account = new Account(signer.publicKey(), "1");
+  const transaction = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.PUBLIC
+  })
+    .addOperation(
+      Operation.payment({
+        destination,
+        asset: Asset.native(),
+        amount: "1"
+      })
+    )
+    .setTimeout(60)
+    .build();
+  transaction.sign(signer);
+  return transaction.toXDR();
 }

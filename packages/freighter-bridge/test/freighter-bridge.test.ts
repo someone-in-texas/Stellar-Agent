@@ -106,19 +106,27 @@ describe("freighter bridge approvals", () => {
   it("serves approval requests over HTTP", async () => {
     const approvalsDir = await mkdtemp(join(tmpdir(), "stellar-agent-approval-bridge-"));
     const bridge = await startApprovalBridge({ approvalsDir });
+    const headers = { "content-type": "application/json", authorization: `Bearer ${bridge.authToken}` };
     try {
+      const unauthorized = await fetch(`${bridge.url}/api/requests`);
+      expect(unauthorized.status).toBe(400);
+      await expect(unauthorized.json()).resolves.toMatchObject({
+        ok: false,
+        error: { code: "APPROVAL_DENIED" }
+      });
+
       const createResponse = await fetch(`${bridge.url}/api/requests`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers,
         body: JSON.stringify({ payment })
       });
       expect(createResponse.status).toBe(201);
       const created: any = await createResponse.json();
-      const listResponse = await fetch(`${bridge.url}/api/requests`);
+      const listResponse = await fetch(`${bridge.url}/api/requests`, { headers });
       await expect(listResponse.json()).resolves.toMatchObject({ requests: [{ id: created.id, status: "pending" }] });
       const decisionResponse = await fetch(`${bridge.url}/api/requests/${created.id}/decision`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers,
         body: JSON.stringify({ approved: false })
       });
       await expect(decisionResponse.json()).resolves.toMatchObject({ id: created.id, status: "denied" });
@@ -127,6 +135,7 @@ describe("freighter bridge approvals", () => {
       const html = await htmlResponse.text();
       expect(html).toContain("signTransaction");
       expect(html).toContain("Sign With Freighter");
+      expect(html).toContain(bridge.authToken);
     } finally {
       await bridge.close();
     }

@@ -2,6 +2,8 @@
 import {
   EXIT_CODES,
   NetworkName,
+  NetworkProfile,
+  PaymentRequest,
   StellarAgentConfig,
   StellarAgentError,
   configSchema,
@@ -19,6 +21,7 @@ import {
   latestReceipt,
   listReceipts,
   readReceipt,
+  spendHistoryFromReceipts,
   verifyReceipt,
   writeReceipt
 } from "@stellar-agent/ledger-logger";
@@ -721,9 +724,11 @@ function addApprovalCommands(program: Command): void {
         port: options.port
       });
       if (parent.json) {
-        process.stdout.write(`${JSON.stringify(ok({ url: bridge.url, approvalsDir: context.config.storage.approvalsDir }))}\n`);
+        process.stdout.write(`${JSON.stringify(ok({ url: bridge.url, authToken: bridge.authToken, approvalsDir: context.config.storage.approvalsDir }))}\n`);
       } else {
         process.stdout.write(`Approval bridge listening at ${bridge.url}\n`);
+        process.stdout.write("Approval bridge API requires the printed session token for non-browser requests.\n");
+        process.stdout.write(`Session token: ${bridge.authToken}\n`);
       }
       await new Promise<void>((resolveStop) => {
         process.once("SIGINT", resolveStop);
@@ -734,42 +739,64 @@ function addApprovalCommands(program: Command): void {
 }
 
 function addTransactionCommands(program: Command): void {
-  const tx = program.command("tx").description("Build and submit transaction XDR on Testnet.");
+  const tx = program.command("tx").description("Build and submit transaction XDR on Testnet or guarded Mainnet.");
   tx
     .command("build-payment")
-    .description("Build unsigned payment transaction XDR for browser-wallet signing on Testnet.")
+    .description("Build unsigned payment transaction XDR for browser-wallet signing.")
     .requiredOption("--to <address>", "Destination public key")
     .requiredOption("--amount <amount>", "Payment amount")
     .option("--asset <asset>", "Asset", "XLM")
     .option("--from <accountOrAddress>", "Local wallet name, watch-only wallet name, or source public key", "agent")
     .option("--memo <memo>", "Memo")
+    .option("--allow-real-funds", "Permit guarded Mainnet payment-XDR building")
+    .option("--i-understand-real-funds", "Acknowledge this payment uses real funds")
     .action(
-      withContext(async (context, options: { to: string; amount: string; asset: string; from: string; memo?: string }) => {
-        if (context.profileName !== "testnet") {
+      withContext(async (context, options: { to: string; amount: string; asset: string; from: string; memo?: string; allowRealFunds?: boolean; iUnderstandRealFunds?: boolean }) => {
+        const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
+        assertGuardedRealFundsProfile(context, profile, {
+          allowRealFunds: Boolean(options.allowRealFunds),
+          acknowledgeRealFunds: Boolean(options.iUnderstandRealFunds),
+          action: "payment-XDR building"
+        });
+        const { buildPaymentTransactionXdr } = await import("@stellar-agent/stellar");
+        const sourcePublicKey = await resolvePaymentSourcePublicKey(context, options.from, { realFunds: profile.realFunds });
+        const request = paymentRequestSchema.parse({
+          source: sourcePublicKey,
+          destination: options.to,
+          amount: options.amount,
+          asset: options.asset,
+          memo: options.memo,
+          network: profile.name
+        });
+        const policy = await loadPolicy(context);
+        const history = await loadSpendHistory(context, request);
+        const policyDecision = evaluatePaymentRequest(policy, request, history);
+        if (policyDecision.status === "denied") throw policyDeniedError();
+        if (profile.realFunds && policyDecision.status === "requires_approval") {
           throw new StellarAgentError({
-            code: "MAINNET_NOT_ENABLED",
-            message: "Payment-XDR building is only enabled for the Testnet profile in this build.",
+            code: "APPROVAL_REQUIRED",
+            message: "Mainnet payment-XDR building requires a transaction approval request.",
+            hint: "Use tx request-payment-signature so the unsigned XDR is recorded for human approval.",
             docs: "docs/mainnet-safety.md#signed-xdr-submission"
           });
         }
-        const { buildPaymentTransactionXdr } = await import("@stellar-agent/stellar");
-        const sourcePublicKey = await resolvePaymentSourcePublicKey(context, options.from);
         const built = await buildPaymentTransactionXdr({
           sourcePublicKey,
           destination: options.to,
           amount: options.amount,
           asset: options.asset,
           ...(options.memo === undefined ? {} : { memo: options.memo }),
-          profile: context.config.profiles.testnet
+          profile,
+          allowRealFunds: profile.realFunds
         });
         await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
           event: "transaction_built",
           status: "unsigned_payment_xdr",
           command: "tx build-payment",
-          profile: "testnet",
-          data: { source: sourcePublicKey, destination: options.to, asset: options.asset, amount: built.amount }
+          profile: profile.name,
+          data: { source: sourcePublicKey, destination: options.to, asset: options.asset, amount: built.amount, policyDecision }
         });
-        return built;
+        return { ...built, policyDecision, spendHistory: history, realFunds: profile.realFunds };
       }, "Unsigned payment transaction built.")
     );
   tx
@@ -781,83 +808,113 @@ function addTransactionCommands(program: Command): void {
     .option("--from <accountOrAddress>", "Local wallet name, watch-only wallet name, or source public key", "agent")
     .option("--memo <memo>", "Memo")
     .option("--summary <summary>", "Human-readable signing summary")
+    .option("--allow-real-funds", "Permit a guarded Mainnet payment signature request")
+    .option("--i-understand-real-funds", "Acknowledge this payment uses real funds")
     .action(
       withContext(
         async (
           context,
-          options: { to: string; amount: string; asset: string; from: string; memo?: string; summary?: string }
+          options: { to: string; amount: string; asset: string; from: string; memo?: string; summary?: string; allowRealFunds?: boolean; iUnderstandRealFunds?: boolean }
         ) => {
-          if (context.profileName !== "testnet") {
-            throw new StellarAgentError({
-              code: "MAINNET_NOT_ENABLED",
-              message: "Payment signature requests are only enabled for the Testnet profile in this build.",
-              docs: "docs/mainnet-safety.md#signed-xdr-submission"
-            });
-          }
+          const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
+          assertGuardedRealFundsProfile(context, profile, {
+            allowRealFunds: Boolean(options.allowRealFunds),
+            acknowledgeRealFunds: Boolean(options.iUnderstandRealFunds),
+            action: "payment signature request"
+          });
           const { createTransactionXdrApprovalRequest } = await import("@stellar-agent/freighter-bridge");
           const { buildPaymentTransactionXdr } = await import("@stellar-agent/stellar");
-          const sourcePublicKey = await resolvePaymentSourcePublicKey(context, options.from);
+          const sourcePublicKey = await resolvePaymentSourcePublicKey(context, options.from, { realFunds: profile.realFunds });
+          const request = paymentRequestSchema.parse({
+            source: sourcePublicKey,
+            destination: options.to,
+            amount: options.amount,
+            asset: options.asset,
+            memo: options.memo,
+            network: profile.name
+          });
+          const policy = await loadPolicy(context);
+          const history = await loadSpendHistory(context, request);
+          const policyDecision = evaluatePaymentRequest(policy, request, history);
+          if (policyDecision.status === "denied") throw policyDeniedError();
           const built = await buildPaymentTransactionXdr({
             sourcePublicKey,
             destination: options.to,
             amount: options.amount,
             asset: options.asset,
             ...(options.memo === undefined ? {} : { memo: options.memo }),
-            profile: context.config.profiles.testnet
+            profile,
+            allowRealFunds: profile.realFunds
           });
           const approval = await createTransactionXdrApprovalRequest({
             approvalsDir: context.config.storage.approvalsDir,
-            network: "testnet",
+            network: profile.name,
             transactionXdr: built.xdr,
-            summary: options.summary ?? `Sign ${built.amount} ${built.asset} payment to ${options.to} on testnet`
+            summary: options.summary ?? `Sign ${built.amount} ${built.asset} payment to ${options.to} on ${profile.name}`
           });
           await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
             event: "approval_requested",
             status: "pending",
             command: "tx request-payment-signature",
-            profile: "testnet",
+            profile: profile.name,
             requestId: approval.id,
-            data: { approval, source: sourcePublicKey, destination: options.to, asset: options.asset, amount: built.amount }
+            data: { approval, source: sourcePublicKey, destination: options.to, asset: options.asset, amount: built.amount, policyDecision }
           });
-          return { approval, built };
+          return { approval, built, policyDecision, spendHistory: history, realFunds: profile.realFunds };
         },
         "Payment signature approval request created."
       )
     );
   tx
     .command("submit-xdr")
-    .description("Submit signed transaction XDR to Horizon on Testnet.")
+    .description("Submit signed transaction XDR to Horizon.")
     .requiredOption("--xdr <base64>", "Signed transaction XDR")
+    .option("--allow-real-funds", "Permit guarded Mainnet signed-XDR submission")
+    .option("--i-understand-real-funds", "Acknowledge this transaction uses real funds")
     .action(
-      withContext(async (context, options: { xdr: string }) => {
-        if (context.profileName !== "testnet") {
-          throw new StellarAgentError({
-            code: "MAINNET_NOT_ENABLED",
-            message: "Signed-XDR submission is only enabled for the Testnet profile in this build.",
-            docs: "docs/mainnet-safety.md#signed-xdr-submission"
-          });
-        }
+      withContext(async (context, options: { xdr: string; allowRealFunds?: boolean; iUnderstandRealFunds?: boolean }) => {
+        const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
+        assertGuardedRealFundsProfile(context, profile, {
+          allowRealFunds: Boolean(options.allowRealFunds),
+          acknowledgeRealFunds: Boolean(options.iUnderstandRealFunds),
+          action: "signed-XDR submission"
+        });
         const { submitTransactionXdr } = await import("@stellar-agent/stellar");
         const transaction = await submitTransactionXdr({
           xdr: options.xdr,
-          profile: context.config.profiles.testnet
+          profile,
+          allowRealFunds: profile.realFunds
         });
         await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
           event: "transaction_confirmed",
           status: "signed_xdr_submitted",
           command: "tx submit-xdr",
-          profile: "testnet",
+          profile: profile.name,
           data: { transaction }
         });
-        return { transaction };
+        const receiptPath = await writeSubmittedXdrReceipt(context, {
+          command: "tx submit-xdr",
+          profile,
+          operation: {
+            type: "tx.submit_xdr",
+            details: {
+              source: "external_signed_xdr",
+              realFundsAcknowledged: profile.realFunds
+            }
+          },
+          transaction
+        });
+        return { transaction, receiptPath, realFunds: profile.realFunds };
       }, "Signed transaction submitted.")
     );
   tx
     .command("submit-approval")
     .description("Submit signed transaction XDR recorded on a local approval request.")
     .argument("<id>", "Approval request id")
+    .option("--allow-real-funds", "Permit guarded Mainnet signed approval submission")
+    .option("--i-understand-real-funds", "Acknowledge this transaction uses real funds")
     .action(
-      withContext(async (context, id: string) => {
+      withContext(async (context, id: string, options: { allowRealFunds?: boolean; iUnderstandRealFunds?: boolean }) => {
         const { readApprovalRequest } = await import("@stellar-agent/freighter-bridge");
         const approval = await readApprovalRequest(context.config.storage.approvalsDir, id);
         if (approval.kind !== "transaction_xdr") {
@@ -867,10 +924,10 @@ function addTransactionCommands(program: Command): void {
             docs: "docs/mainnet-safety.md#signed-xdr-submission"
           });
         }
-        if (approval.network !== "testnet" || context.profileName !== "testnet") {
+        if (approval.network !== context.profileName) {
           throw new StellarAgentError({
             code: "MAINNET_NOT_ENABLED",
-            message: "Submitting signed approval XDR is only enabled for Testnet in this build.",
+            message: "The active profile must match the approval request network.",
             docs: "docs/mainnet-safety.md#signed-xdr-submission"
           });
         }
@@ -882,16 +939,23 @@ function addTransactionCommands(program: Command): void {
             docs: "docs/mainnet-safety.md#local-approval-bridge"
           });
         }
+        const profile = resolveNetworkProfile(approval.network, context.config.profiles);
+        assertGuardedRealFundsProfile(context, profile, {
+          allowRealFunds: Boolean(options.allowRealFunds),
+          acknowledgeRealFunds: Boolean(options.iUnderstandRealFunds),
+          action: "signed approval submission"
+        });
         const { submitTransactionXdr } = await import("@stellar-agent/stellar");
         const transaction = await submitTransactionXdr({
           xdr: approval.decision.signedTransactionXdr,
-          profile: context.config.profiles.testnet
+          profile,
+          allowRealFunds: profile.realFunds
         });
         await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
           event: "transaction_confirmed",
           status: "signed_approval_submitted",
           command: "tx submit-approval",
-          profile: "testnet",
+          profile: profile.name,
           requestId: approval.id,
           data: {
             approvalId: approval.id,
@@ -899,7 +963,20 @@ function addTransactionCommands(program: Command): void {
             transaction
           }
         });
-        return { approvalId: approval.id, signerPublicKey: approval.decision.signerPublicKey, transaction };
+        const receiptPath = await writeSubmittedXdrReceipt(context, {
+          command: "tx submit-approval",
+          profile,
+          operation: {
+            type: "tx.submit_approval",
+            details: {
+              approvalId: approval.id,
+              signerPublicKey: approval.decision.signerPublicKey,
+              realFundsAcknowledged: profile.realFunds
+            }
+          },
+          transaction
+        });
+        return { approvalId: approval.id, signerPublicKey: approval.decision.signerPublicKey, transaction, receiptPath, realFunds: profile.realFunds };
       }, "Signed approval transaction submitted.")
     );
 }
@@ -923,10 +1000,12 @@ function addPayCommands(program: Command): void {
           memo: options.memo,
           network: context.profileName
         });
+        const history = await loadSpendHistory(context, request);
         return {
           request,
           estimatedFee: "100 stroops",
-          policyDecision: evaluatePaymentRequest(policy, request),
+          policyDecision: evaluatePaymentRequest(policy, request, history),
+          spendHistory: history,
           profile: context.profileName
         };
       }, "Payment quote complete.")
@@ -960,8 +1039,9 @@ function addPayCommands(program: Command): void {
           memo: options.memo,
           network: "testnet"
         });
-        const decision = evaluatePaymentRequest(policy, request);
-        if (options.dryRun) return { request, policyDecision: decision, dryRun: true };
+        const history = await loadSpendHistory(context, request);
+        const decision = evaluatePaymentRequest(policy, request, history);
+        if (options.dryRun) return { request, policyDecision: decision, spendHistory: history, dryRun: true };
         if (decision.status === "denied") {
           throw new StellarAgentError({
             code: "POLICY_DENIED",
@@ -1075,6 +1155,7 @@ function addPayCommands(program: Command): void {
             receiptsDir: context.config.storage.receiptsDir,
             eventLog: join(context.config.storage.logsDir, "events.jsonl"),
             command: "pay x402",
+            loadSpendHistory: (request) => loadSpendHistory(context, request),
             ...(options.dryRun === undefined ? {} : { dryRun: options.dryRun })
           });
         },
@@ -1107,6 +1188,7 @@ function addPayCommands(program: Command): void {
             receiptsDir: context.config.storage.receiptsDir,
             eventLog: join(context.config.storage.logsDir, "events.jsonl"),
             command: "pay mpp",
+            loadSpendHistory: (request) => loadSpendHistory(context, request),
             ...(options.dryRun === undefined ? {} : { dryRun: options.dryRun })
           });
         },
@@ -1141,6 +1223,7 @@ function addPayCommands(program: Command): void {
             eventLog: join(context.config.storage.logsDir, "events.jsonl"),
             command: "pay mpp-session",
             requestCount: options.requests,
+            loadSpendHistory: (request) => loadSpendHistory(context, request),
             ...(options.dryRun === undefined ? {} : { dryRun: options.dryRun })
           });
         },
@@ -1273,6 +1356,8 @@ function addContractCommands(program: Command): void {
     .requiredOption("--fn <functionName>", "Contract function name")
     .option("--arg <key=value>", "Contract argument; repeat for multiple args", collectArg, [])
     .option("--network <network>", "Stellar CLI network name", "testnet")
+    .option("--allow-real-funds", "Permit a guarded Mainnet contract operation")
+    .option("--i-understand-real-funds", "Acknowledge this contract operation may use real funds")
     .option("--stellar-binary <path>", "Path to stellar CLI binary", "stellar")
     .option("--stellar-config-dir <path>", "Stellar CLI config directory")
     .option("--stellar-no-cache", "Pass --no-cache to Stellar CLI")
@@ -1286,13 +1371,20 @@ function addContractCommands(program: Command): void {
             fn: string;
             arg: string[];
             network: string;
+            allowRealFunds?: boolean;
+            iUnderstandRealFunds?: boolean;
             stellarBinary: string;
             stellarConfigDir?: string;
             stellarNoCache?: boolean;
           }
         ) => {
           const { invokeContractWithStellarCli } = await import("@stellar-agent/stellar");
-          const source = await resolveContractSource(context, options.source);
+          const contractContext = resolveContractExecutionContext(context, options.network, {
+            mutating: true,
+            allowRealFunds: Boolean(options.allowRealFunds),
+            acknowledgeRealFunds: Boolean(options.iUnderstandRealFunds)
+          });
+          const source = await resolveContractSource(context, options.source, { realFunds: contractContext.realFunds });
           const contractArgs = parseKeyValueArgs(options.arg);
           const result = await invokeContractWithStellarCli({
             contractId: options.id,
@@ -1300,8 +1392,8 @@ function addContractCommands(program: Command): void {
             functionName: options.fn,
             contractArgs,
             network: options.network,
-            rpcUrl: context.config.profiles.testnet.rpcUrl,
-            networkPassphrase: context.config.profiles.testnet.networkPassphrase,
+            rpcUrl: contractContext.rpcUrl,
+            networkPassphrase: contractContext.networkPassphrase,
             stellarBinary: options.stellarBinary,
             ...(options.stellarConfigDir === undefined ? {} : { stellarConfigDir: options.stellarConfigDir }),
             ...(options.stellarNoCache === undefined ? {} : { noCache: options.stellarNoCache })
@@ -1333,6 +1425,8 @@ function addContractCommands(program: Command): void {
     .option("--alias <alias>", "Stellar CLI alias for deployed contract")
     .option("--arg <key=value>", "Constructor argument; repeat for multiple args", collectArg, [])
     .option("--network <network>", "Stellar CLI network name", "testnet")
+    .option("--allow-real-funds", "Permit a guarded Mainnet contract operation")
+    .option("--i-understand-real-funds", "Acknowledge this contract operation may use real funds")
     .option("--stellar-binary <path>", "Path to stellar CLI binary", "stellar")
     .option("--stellar-config-dir <path>", "Stellar CLI config directory")
     .option("--stellar-no-cache", "Pass --no-cache to Stellar CLI")
@@ -1347,6 +1441,8 @@ function addContractCommands(program: Command): void {
             alias?: string;
             arg: string[];
             network: string;
+            allowRealFunds?: boolean;
+            iUnderstandRealFunds?: boolean;
             stellarBinary: string;
             stellarConfigDir?: string;
             stellarNoCache?: boolean;
@@ -1360,7 +1456,12 @@ function addContractCommands(program: Command): void {
             });
           }
           const { deployContractWithStellarCli } = await import("@stellar-agent/stellar");
-          const source = await resolveContractSource(context, options.source);
+          const contractContext = resolveContractExecutionContext(context, options.network, {
+            mutating: true,
+            allowRealFunds: Boolean(options.allowRealFunds),
+            acknowledgeRealFunds: Boolean(options.iUnderstandRealFunds)
+          });
+          const source = await resolveContractSource(context, options.source, { realFunds: contractContext.realFunds });
           const constructorArgs = parseKeyValueArgs(options.arg);
           const result = await deployContractWithStellarCli({
             source,
@@ -1369,8 +1470,8 @@ function addContractCommands(program: Command): void {
             ...(options.alias === undefined ? {} : { alias: options.alias }),
             constructorArgs,
             network: options.network,
-            rpcUrl: context.config.profiles.testnet.rpcUrl,
-            networkPassphrase: context.config.profiles.testnet.networkPassphrase,
+            rpcUrl: contractContext.rpcUrl,
+            networkPassphrase: contractContext.networkPassphrase,
             stellarBinary: options.stellarBinary,
             ...(options.stellarConfigDir === undefined ? {} : { stellarConfigDir: options.stellarConfigDir }),
             ...(options.stellarNoCache === undefined ? {} : { noCache: options.stellarNoCache })
@@ -1401,20 +1502,27 @@ function addContractCommands(program: Command): void {
     .requiredOption("--source <source>", "Stellar CLI identity, local wallet name, raw public key, or Testnet secret key")
     .requiredOption("--wasm <path>", "Wasm file path")
     .option("--network <network>", "Stellar CLI network name", "testnet")
+    .option("--allow-real-funds", "Permit a guarded Mainnet contract operation")
+    .option("--i-understand-real-funds", "Acknowledge this contract operation may use real funds")
     .option("--stellar-binary <path>", "Path to stellar CLI binary", "stellar")
     .option("--stellar-config-dir <path>", "Stellar CLI config directory")
     .option("--stellar-no-cache", "Pass --no-cache to Stellar CLI")
     .action(
       withContext(
-        async (context, options: { source: string; wasm: string; network: string; stellarBinary: string; stellarConfigDir?: string; stellarNoCache?: boolean }) => {
+        async (context, options: { source: string; wasm: string; network: string; allowRealFunds?: boolean; iUnderstandRealFunds?: boolean; stellarBinary: string; stellarConfigDir?: string; stellarNoCache?: boolean }) => {
           const { uploadContractWasmWithStellarCli } = await import("@stellar-agent/stellar");
-          const source = await resolveContractSource(context, options.source);
+          const contractContext = resolveContractExecutionContext(context, options.network, {
+            mutating: true,
+            allowRealFunds: Boolean(options.allowRealFunds),
+            acknowledgeRealFunds: Boolean(options.iUnderstandRealFunds)
+          });
+          const source = await resolveContractSource(context, options.source, { realFunds: contractContext.realFunds });
           const result = await uploadContractWasmWithStellarCli({
             source,
             wasm: options.wasm,
             network: options.network,
-            rpcUrl: context.config.profiles.testnet.rpcUrl,
-            networkPassphrase: context.config.profiles.testnet.networkPassphrase,
+            rpcUrl: contractContext.rpcUrl,
+            networkPassphrase: contractContext.networkPassphrase,
             stellarBinary: options.stellarBinary,
             ...(options.stellarConfigDir === undefined ? {} : { stellarConfigDir: options.stellarConfigDir }),
             ...(options.stellarNoCache === undefined ? {} : { noCache: options.stellarNoCache })
@@ -1443,6 +1551,8 @@ function addContractCommands(program: Command): void {
     .requiredOption("--asset <asset>", "Asset as native or CODE:G... issuer")
     .option("--alias <alias>", "Stellar CLI alias for deployed asset contract")
     .option("--network <network>", "Stellar CLI network name", "testnet")
+    .option("--allow-real-funds", "Permit a guarded Mainnet contract operation")
+    .option("--i-understand-real-funds", "Acknowledge this contract operation may use real funds")
     .option("--stellar-binary <path>", "Path to stellar CLI binary", "stellar")
     .option("--stellar-config-dir <path>", "Stellar CLI config directory")
     .option("--stellar-no-cache", "Pass --no-cache to Stellar CLI")
@@ -1450,17 +1560,22 @@ function addContractCommands(program: Command): void {
       withContext(
         async (
           context,
-          options: { source: string; asset: string; alias?: string; network: string; stellarBinary: string; stellarConfigDir?: string; stellarNoCache?: boolean }
+          options: { source: string; asset: string; alias?: string; network: string; allowRealFunds?: boolean; iUnderstandRealFunds?: boolean; stellarBinary: string; stellarConfigDir?: string; stellarNoCache?: boolean }
         ) => {
           const { deployAssetContractWithStellarCli } = await import("@stellar-agent/stellar");
-          const source = await resolveContractSource(context, options.source);
+          const contractContext = resolveContractExecutionContext(context, options.network, {
+            mutating: true,
+            allowRealFunds: Boolean(options.allowRealFunds),
+            acknowledgeRealFunds: Boolean(options.iUnderstandRealFunds)
+          });
+          const source = await resolveContractSource(context, options.source, { realFunds: contractContext.realFunds });
           const result = await deployAssetContractWithStellarCli({
             source,
             asset: options.asset,
             ...(options.alias === undefined ? {} : { alias: options.alias }),
             network: options.network,
-            rpcUrl: context.config.profiles.testnet.rpcUrl,
-            networkPassphrase: context.config.profiles.testnet.networkPassphrase,
+            rpcUrl: contractContext.rpcUrl,
+            networkPassphrase: contractContext.networkPassphrase,
             stellarBinary: options.stellarBinary,
             ...(options.stellarConfigDir === undefined ? {} : { stellarConfigDir: options.stellarConfigDir }),
             ...(options.stellarNoCache === undefined ? {} : { noCache: options.stellarNoCache })
@@ -1498,11 +1613,12 @@ function addContractCommands(program: Command): void {
           options: { asset: string; network: string; stellarBinary: string; stellarConfigDir?: string; stellarNoCache?: boolean }
         ) => {
           const { assetContractIdWithStellarCli } = await import("@stellar-agent/stellar");
+          const contractContext = resolveContractExecutionContext(context, options.network, { mutating: false });
           return assetContractIdWithStellarCli({
             asset: options.asset,
             network: options.network,
-            rpcUrl: context.config.profiles.testnet.rpcUrl,
-            networkPassphrase: context.config.profiles.testnet.networkPassphrase,
+            rpcUrl: contractContext.rpcUrl,
+            networkPassphrase: contractContext.networkPassphrase,
             stellarBinary: options.stellarBinary,
             ...(options.stellarConfigDir === undefined ? {} : { stellarConfigDir: options.stellarConfigDir }),
             ...(options.stellarNoCache === undefined ? {} : { noCache: options.stellarNoCache })
@@ -1552,14 +1668,15 @@ function addContractCommands(program: Command): void {
             });
           }
           const { contractInfoWithStellarCli } = await import("@stellar-agent/stellar");
+          const contractContext = resolveContractExecutionContext(context, options.network, { mutating: false });
           return contractInfoWithStellarCli({
             kind: options.kind,
             ...(options.id === undefined ? {} : { contractId: options.id }),
             ...(options.wasm === undefined ? {} : { wasm: options.wasm }),
             ...(options.wasmHash === undefined ? {} : { wasmHash: options.wasmHash }),
             network: options.network,
-            rpcUrl: context.config.profiles.testnet.rpcUrl,
-            networkPassphrase: context.config.profiles.testnet.networkPassphrase,
+            rpcUrl: contractContext.rpcUrl,
+            networkPassphrase: contractContext.networkPassphrase,
             stellarBinary: options.stellarBinary,
             ...(options.stellarConfigDir === undefined ? {} : { stellarConfigDir: options.stellarConfigDir }),
             ...(options.stellarNoCache === undefined ? {} : { noCache: options.stellarNoCache })
@@ -1603,6 +1720,7 @@ function addContractCommands(program: Command): void {
           validateDurability(options.durability);
           validateContractReadOutput(options.output);
           const { readContractWithStellarCli } = await import("@stellar-agent/stellar");
+          const contractContext = resolveContractExecutionContext(context, options.network, { mutating: false });
           return readContractWithStellarCli({
             ...(options.id === undefined ? {} : { contractId: options.id }),
             ...(options.key === undefined ? {} : { key: options.key }),
@@ -1612,8 +1730,8 @@ function addContractCommands(program: Command): void {
             durability: options.durability,
             output: options.output,
             network: options.network,
-            rpcUrl: context.config.profiles.testnet.rpcUrl,
-            networkPassphrase: context.config.profiles.testnet.networkPassphrase,
+            rpcUrl: contractContext.rpcUrl,
+            networkPassphrase: contractContext.networkPassphrase,
             stellarBinary: options.stellarBinary,
             ...(options.stellarConfigDir === undefined ? {} : { stellarConfigDir: options.stellarConfigDir }),
             ...(options.stellarNoCache === undefined ? {} : { noCache: options.stellarNoCache })
@@ -1654,13 +1772,14 @@ function addContractCommands(program: Command): void {
             });
           }
           const { fetchContractWasmWithStellarCli } = await import("@stellar-agent/stellar");
+          const contractContext = resolveContractExecutionContext(context, options.network, { mutating: false });
           return fetchContractWasmWithStellarCli({
             ...(options.id === undefined ? {} : { contractId: options.id }),
             ...(options.wasmHash === undefined ? {} : { wasmHash: options.wasmHash }),
             ...(options.outFile === undefined ? {} : { outFile: options.outFile }),
             network: options.network,
-            rpcUrl: context.config.profiles.testnet.rpcUrl,
-            networkPassphrase: context.config.profiles.testnet.networkPassphrase,
+            rpcUrl: contractContext.rpcUrl,
+            networkPassphrase: contractContext.networkPassphrase,
             stellarBinary: options.stellarBinary,
             ...(options.stellarConfigDir === undefined ? {} : { stellarConfigDir: options.stellarConfigDir }),
             ...(options.stellarNoCache === undefined ? {} : { noCache: options.stellarNoCache })
@@ -1682,6 +1801,8 @@ function addContractCommands(program: Command): void {
     .option("--durability <durability>", "persistent or temporary", "persistent")
     .option("--ttl-ledger-only", "Only print the new TTL ledger")
     .option("--network <network>", "Stellar CLI network name", "testnet")
+    .option("--allow-real-funds", "Permit a guarded Mainnet contract operation")
+    .option("--i-understand-real-funds", "Acknowledge this contract operation may use real funds")
     .option("--stellar-binary <path>", "Path to stellar CLI binary", "stellar")
     .option("--stellar-config-dir <path>", "Stellar CLI config directory")
     .option("--stellar-no-cache", "Pass --no-cache to Stellar CLI")
@@ -1700,6 +1821,8 @@ function addContractCommands(program: Command): void {
             durability: "persistent" | "temporary";
             ttlLedgerOnly?: boolean;
             network: string;
+            allowRealFunds?: boolean;
+            iUnderstandRealFunds?: boolean;
             stellarBinary: string;
             stellarConfigDir?: string;
             stellarNoCache?: boolean;
@@ -1707,7 +1830,12 @@ function addContractCommands(program: Command): void {
         ) => {
           validateDurability(options.durability);
           const { extendContractWithStellarCli } = await import("@stellar-agent/stellar");
-          const source = await resolveContractSource(context, options.source);
+          const contractContext = resolveContractExecutionContext(context, options.network, {
+            mutating: true,
+            allowRealFunds: Boolean(options.allowRealFunds),
+            acknowledgeRealFunds: Boolean(options.iUnderstandRealFunds)
+          });
+          const source = await resolveContractSource(context, options.source, { realFunds: contractContext.realFunds });
           const result = await extendContractWithStellarCli({
             source,
             ledgersToExtend: options.ledgersToExtend,
@@ -1719,8 +1847,8 @@ function addContractCommands(program: Command): void {
             durability: options.durability,
             ...(options.ttlLedgerOnly === undefined ? {} : { ttlLedgerOnly: options.ttlLedgerOnly }),
             network: options.network,
-            rpcUrl: context.config.profiles.testnet.rpcUrl,
-            networkPassphrase: context.config.profiles.testnet.networkPassphrase,
+            rpcUrl: contractContext.rpcUrl,
+            networkPassphrase: contractContext.networkPassphrase,
             stellarBinary: options.stellarBinary,
             ...(options.stellarConfigDir === undefined ? {} : { stellarConfigDir: options.stellarConfigDir }),
             ...(options.stellarNoCache === undefined ? {} : { noCache: options.stellarNoCache })
@@ -1759,6 +1887,8 @@ function addContractCommands(program: Command): void {
     .option("--wasm-hash <hash>", "Wasm hash")
     .option("--durability <durability>", "persistent or temporary", "persistent")
     .option("--network <network>", "Stellar CLI network name", "testnet")
+    .option("--allow-real-funds", "Permit a guarded Mainnet contract operation")
+    .option("--i-understand-real-funds", "Acknowledge this contract operation may use real funds")
     .option("--stellar-binary <path>", "Path to stellar CLI binary", "stellar")
     .option("--stellar-config-dir <path>", "Stellar CLI config directory")
     .option("--stellar-no-cache", "Pass --no-cache to Stellar CLI")
@@ -1775,6 +1905,8 @@ function addContractCommands(program: Command): void {
             wasmHash?: string;
             durability: "persistent" | "temporary";
             network: string;
+            allowRealFunds?: boolean;
+            iUnderstandRealFunds?: boolean;
             stellarBinary: string;
             stellarConfigDir?: string;
             stellarNoCache?: boolean;
@@ -1782,7 +1914,12 @@ function addContractCommands(program: Command): void {
         ) => {
           validateDurability(options.durability);
           const { restoreContractWithStellarCli } = await import("@stellar-agent/stellar");
-          const source = await resolveContractSource(context, options.source);
+          const contractContext = resolveContractExecutionContext(context, options.network, {
+            mutating: true,
+            allowRealFunds: Boolean(options.allowRealFunds),
+            acknowledgeRealFunds: Boolean(options.iUnderstandRealFunds)
+          });
+          const source = await resolveContractSource(context, options.source, { realFunds: contractContext.realFunds });
           const result = await restoreContractWithStellarCli({
             source,
             ...(options.id === undefined ? {} : { contractId: options.id }),
@@ -1792,8 +1929,8 @@ function addContractCommands(program: Command): void {
             ...(options.wasmHash === undefined ? {} : { wasmHash: options.wasmHash }),
             durability: options.durability,
             network: options.network,
-            rpcUrl: context.config.profiles.testnet.rpcUrl,
-            networkPassphrase: context.config.profiles.testnet.networkPassphrase,
+            rpcUrl: contractContext.rpcUrl,
+            networkPassphrase: contractContext.networkPassphrase,
             stellarBinary: options.stellarBinary,
             ...(options.stellarConfigDir === undefined ? {} : { stellarConfigDir: options.stellarConfigDir }),
             ...(options.stellarNoCache === undefined ? {} : { noCache: options.stellarNoCache })
@@ -1863,7 +2000,8 @@ function addPolicyCommands(program: Command): void {
           ? JSON.parse(await readFile(resolvePath(options.request), "utf8"))
           : { destination: options.to, amount: options.amount, asset: options.asset, memo: options.memo, network: context.profileName };
         const request = paymentRequestSchema.parse(raw);
-        return evaluatePaymentRequest(policy, request);
+        const history = await loadSpendHistory(context, request);
+        return { ...evaluatePaymentRequest(policy, request, history), spendHistory: history };
       }, "Policy explanation complete.")
     );
   policy
@@ -1992,10 +2130,13 @@ function addReceiptCommands(program: Command): void {
     .command("verify")
     .description("Verify a receipt file.")
     .argument("<path>", "Receipt path")
+    .option("--ledger", "Also verify the receipt transaction against Horizon")
     .action(
-      withContext(async (_context, path: string) => {
-        verifyReceipt(await readReceipt(path));
-        return { valid: true, path: resolvePath(path) };
+      withContext(async (context, path: string, options: { ledger?: boolean }) => {
+        const receipt = await readReceipt(path);
+        verifyReceipt(receipt);
+        const ledger = options.ledger ? await verifyReceiptAgainstLedger(context, receipt) : undefined;
+        return { valid: true, path: resolvePath(path), ...(ledger === undefined ? {} : { ledger }) };
       }, "Receipt valid.")
     );
   receipts
@@ -2142,6 +2283,81 @@ async function loadPolicy(context: CliContext, explicitPath?: string) {
     if (error?.code === "ENOENT") return defaultPolicyForNetwork(context.profileName);
     throw error;
   }
+}
+
+async function loadSpendHistory(context: CliContext, request: PaymentRequest) {
+  return spendHistoryFromReceipts(context.config.storage.receiptsDir, {
+    profile: request.network,
+    asset: request.asset
+  });
+}
+
+function policyDeniedError(): StellarAgentError {
+  return new StellarAgentError({
+    code: "POLICY_DENIED",
+    message: "Payment request was denied by policy.",
+    hint: "Run policy explain to inspect the matched rules.",
+    docs: "docs/troubleshooting.md#policy-denied"
+  });
+}
+
+function assertGuardedRealFundsProfile(
+  context: CliContext,
+  profile: NetworkProfile,
+  options: { allowRealFunds: boolean; acknowledgeRealFunds: boolean; action: string }
+): void {
+  if (!profile.realFunds) return;
+  if (!context.config.profiles.mainnet?.enabled) {
+    throw new StellarAgentError({
+      code: "MAINNET_NOT_ENABLED",
+      message: `Mainnet ${options.action} requires mainnet enablement.`,
+      hint: "Run stellar-agent mainnet enable --i-understand-real-funds first.",
+      docs: "docs/mainnet-safety.md#signed-xdr-submission"
+    });
+  }
+  if (!options.allowRealFunds || !options.acknowledgeRealFunds) {
+    throw new StellarAgentError({
+      code: "MAINNET_NOT_ENABLED",
+      message: `Mainnet ${options.action} requires --allow-real-funds and --i-understand-real-funds.`,
+      hint: "Use signed XDR from a human-controlled Mainnet wallet; stellar-agent will not auto-sign Mainnet transactions.",
+      docs: "docs/mainnet-safety.md#signed-xdr-submission"
+    });
+  }
+}
+
+async function verifyReceiptAgainstLedger(context: CliContext, receipt: Awaited<ReturnType<typeof readReceipt>>) {
+  const transaction = (await lookupTransaction(
+    receipt.transaction.hash,
+    resolveNetworkProfile(receipt.profile, context.config.profiles)
+  )) as { hash?: string; ledger?: number; successful?: boolean; fee_charged?: string | number };
+  if (transaction.hash !== receipt.transaction.hash) {
+    throw new StellarAgentError({
+      code: "LEDGER_LOOKUP_FAILED",
+      message: "Ledger transaction hash did not match the receipt.",
+      docs: "docs/ledger-logging.md#receipt-verification"
+    });
+  }
+  if (receipt.transaction.ledger !== undefined && transaction.ledger !== receipt.transaction.ledger) {
+    throw new StellarAgentError({
+      code: "LEDGER_LOOKUP_FAILED",
+      message: "Ledger transaction number did not match the receipt.",
+      docs: "docs/ledger-logging.md#receipt-verification"
+    });
+  }
+  if (receipt.transaction.successful !== undefined && transaction.successful !== receipt.transaction.successful) {
+    throw new StellarAgentError({
+      code: "LEDGER_LOOKUP_FAILED",
+      message: "Ledger transaction success status did not match the receipt.",
+      docs: "docs/ledger-logging.md#receipt-verification"
+    });
+  }
+  return {
+    verified: true,
+    hash: transaction.hash,
+    ledger: transaction.ledger,
+    successful: transaction.successful,
+    feeCharged: transaction.fee_charged?.toString()
+  };
 }
 
 function printSuccess(options: CliOptions, data: unknown, humanMessage: string): void {
@@ -2311,6 +2527,47 @@ async function writeOperationReceipt(
   return receiptPath;
 }
 
+async function writeSubmittedXdrReceipt(
+  context: CliContext,
+  args: {
+    command: string;
+    profile: NetworkProfile;
+    operation: NonNullable<Parameters<typeof writeReceipt>[1]["operation"]>;
+    transaction: {
+      hash: string;
+      ledger?: number;
+      successful: boolean;
+      feeCharged?: string;
+    };
+  }
+): Promise<string> {
+  const eventLog = join(context.config.storage.logsDir, "events.jsonl");
+  const { path: receiptPath } = await writeReceipt(context.config.storage.receiptsDir, {
+    command: args.command,
+    profile: args.profile.name,
+    networkPassphrase: args.profile.networkPassphrase,
+    realFunds: args.profile.realFunds,
+    operation: args.operation,
+    policyDecision: {
+      status: args.profile.realFunds ? "requires_approval" : "allowed",
+      matchedRules: args.profile.realFunds
+        ? ["signed_xdr_external_wallet", "real_funds_acknowledged"]
+        : ["signed_xdr_external_wallet"]
+    },
+    transaction: args.transaction,
+    ...(args.transaction.ledger === undefined ? {} : { ledger: { confirmedLedger: args.transaction.ledger } }),
+    eventLog
+  });
+  await appendEvent(eventLog, {
+    event: "receipt_written",
+    status: "success",
+    command: args.command,
+    profile: args.profile.name,
+    data: { receiptPath }
+  });
+  return receiptPath;
+}
+
 async function attachContractSubmissionReceipt<T extends { stderr: string; stdout: string }>(
   context: CliContext,
   args: {
@@ -2394,7 +2651,84 @@ function enableX402ForUrl(policy: Policy, url: string): Policy {
   };
 }
 
-async function resolveContractSource(context: CliContext, source: string): Promise<string> {
+interface ContractExecutionContext {
+  realFunds: boolean;
+  rpcUrl: string | null;
+  networkPassphrase: string;
+}
+
+function resolveContractExecutionContext(
+  context: CliContext,
+  network: string,
+  options: { mutating: boolean; allowRealFunds?: boolean; acknowledgeRealFunds?: boolean }
+): ContractExecutionContext {
+  const realFunds = isRealFundsContractNetwork(network);
+  const profile = realFunds ? context.config.profiles.mainnet : context.config.profiles.testnet;
+  if (!profile) {
+    throw new StellarAgentError({
+      code: "PROFILE_NOT_FOUND",
+      message: `${realFunds ? "Mainnet" : "Testnet"} profile is not configured.`
+    });
+  }
+  if (realFunds) {
+    if (!profile.enabled) {
+      throw new StellarAgentError({
+        code: "MAINNET_NOT_ENABLED",
+        message: "Mainnet contract operations require mainnet enablement.",
+        hint: "Run stellar-agent mainnet enable --i-understand-real-funds first.",
+        docs: "docs/mainnet-safety.md#mainnet-contracts"
+      });
+    }
+    if (options.mutating && (!options.allowRealFunds || !options.acknowledgeRealFunds)) {
+      throw new StellarAgentError({
+        code: "MAINNET_NOT_ENABLED",
+        message: "Mainnet contract operations require --allow-real-funds and --i-understand-real-funds.",
+        hint: "Use an external Stellar CLI identity or browser-wallet signing flow; stellar-agent will not import Mainnet secret keys.",
+        docs: "docs/mainnet-safety.md#mainnet-contracts"
+      });
+    }
+  }
+  return {
+    realFunds,
+    rpcUrl: profile.rpcUrl,
+    networkPassphrase: profile.networkPassphrase
+  };
+}
+
+function isRealFundsContractNetwork(network: string): boolean {
+  return ["mainnet", "public", "pubnet"].includes(network.toLowerCase());
+}
+
+async function resolveContractSource(
+  context: CliContext,
+  source: string,
+  options: { realFunds?: boolean } = {}
+): Promise<string> {
+  if (options.realFunds) {
+    if (/^S[A-Z2-7]{55}$/.test(source)) {
+      throw new StellarAgentError({
+        code: "SECRET_KEY_BLOCKED",
+        message: "Raw secret keys are not accepted for Mainnet contract operations.",
+        hint: "Use a Stellar CLI identity or browser-wallet signing flow for Mainnet.",
+        docs: "docs/mainnet-safety.md#mainnet-contracts"
+      });
+    }
+    try {
+      const wallet = await loadWalletPublic(context.config, source);
+      if (wallet.hasSecret) {
+        throw new StellarAgentError({
+          code: "MAINNET_NOT_ENABLED",
+          message: "Local generated Testnet wallets cannot be used for Mainnet contract operations.",
+          hint: "Use a Stellar CLI identity or a watch-only Mainnet public wallet.",
+          docs: "docs/mainnet-safety.md#mainnet-contracts"
+        });
+      }
+      return wallet.publicKey;
+    } catch (error) {
+      if (error instanceof StellarAgentError && error.code !== "WALLET_NOT_FOUND") throw error;
+    }
+    return source;
+  }
   if (/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(source)) {
     try {
       const wallet = await loadWallet(context.config, source);
@@ -2406,9 +2740,29 @@ async function resolveContractSource(context: CliContext, source: string): Promi
   return source;
 }
 
-async function resolvePaymentSourcePublicKey(context: CliContext, source: string): Promise<string> {
+async function resolvePaymentSourcePublicKey(
+  context: CliContext,
+  source: string,
+  options: { realFunds?: boolean } = {}
+): Promise<string> {
   if (/^G[A-Z2-7]{55}$/.test(source)) return source;
+  if (options.realFunds && /^S[A-Z2-7]{55}$/.test(source)) {
+    throw new StellarAgentError({
+      code: "SECRET_KEY_BLOCKED",
+      message: "Raw secret keys are not accepted for Mainnet payment-XDR workflows.",
+      hint: "Import a watch-only Mainnet public wallet or pass a raw public key.",
+      docs: "docs/mainnet-safety.md#signed-xdr-submission"
+    });
+  }
   const wallet = await loadWalletPublic(context.config, source);
+  if (options.realFunds && wallet.hasSecret) {
+    throw new StellarAgentError({
+      code: "MAINNET_NOT_ENABLED",
+      message: "Local generated Testnet wallets cannot be used for Mainnet payment-XDR workflows.",
+      hint: "Import a watch-only Mainnet public wallet or pass a raw public key.",
+      docs: "docs/mainnet-safety.md#signed-xdr-submission"
+    });
+  }
   return wallet.publicKey;
 }
 

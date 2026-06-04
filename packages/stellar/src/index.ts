@@ -419,12 +419,13 @@ export async function buildPaymentTransactionXdr(args: {
   memo?: string;
   profile?: NetworkProfile;
   sourceSequence?: string;
+  allowRealFunds?: boolean;
 }): Promise<BuiltPaymentTransactionXdr> {
   const profile = args.profile ?? TESTNET_PROFILE;
-  if (profile.realFunds) {
+  if (profile.realFunds && !args.allowRealFunds) {
     throw new StellarAgentError({
       code: "MAINNET_NOT_ENABLED",
-      message: "Mainnet payment-XDR building is blocked in this build.",
+      message: "Mainnet payment-XDR building requires explicit real-funds approval.",
       docs: "docs/mainnet-safety.md"
     });
   }
@@ -464,14 +465,15 @@ export async function buildPaymentTransactionXdr(args: {
 export async function submitTransactionXdr(args: {
   xdr: string;
   profile?: NetworkProfile;
+  allowRealFunds?: boolean;
   fetchImpl?: typeof fetch;
 }): Promise<SubmittedTransaction> {
   const profile = args.profile ?? TESTNET_PROFILE;
-  if (profile.realFunds) {
+  if (profile.realFunds && !args.allowRealFunds) {
     throw new StellarAgentError({
       code: "MAINNET_NOT_ENABLED",
-      message: "Mainnet signed-XDR submission is blocked in this build.",
-      hint: "Use an explicit human-controlled Mainnet broadcaster outside stellar-agent.",
+      message: "Mainnet signed-XDR submission requires explicit real-funds approval.",
+      hint: "Use a signed transaction from a human-controlled Mainnet wallet.",
       docs: "docs/mainnet-safety.md"
     });
   }
@@ -489,6 +491,7 @@ export async function submitTransactionXdr(args: {
       docs: "docs/mainnet-safety.md#signed-xdr-submission"
     });
   }
+  if (profile.realFunds) assertSignedTransactionXdr(xdr);
 
   const fetchImpl = args.fetchImpl ?? fetch;
   const response = await fetchImpl(`${profile.horizonUrl.replace(/\/$/, "")}/transactions`, {
@@ -521,6 +524,35 @@ export async function submitTransactionXdr(args: {
     successful: parsed?.successful ?? true,
     feeCharged: parsed?.fee_charged?.toString()
   };
+}
+
+function assertSignedTransactionXdr(rawXdr: string): void {
+  let envelope: xdr.TransactionEnvelope;
+  try {
+    envelope = xdr.TransactionEnvelope.fromXDR(rawXdr, "base64");
+  } catch {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Signed transaction XDR is not a valid Stellar transaction envelope.",
+      docs: "docs/mainnet-safety.md#signed-xdr-submission"
+    });
+  }
+  const type = envelope.switch().name;
+  const signatures =
+    type === "envelopeTypeTx"
+      ? envelope.v1().signatures().length
+      : type === "envelopeTypeTxV0"
+        ? envelope.v0().signatures().length
+        : type === "envelopeTypeTxFeeBump"
+          ? envelope.feeBump().signatures().length
+          : 0;
+  if (signatures < 1) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Mainnet signed-XDR submission requires at least one transaction signature.",
+      docs: "docs/mainnet-safety.md#signed-xdr-submission"
+    });
+  }
 }
 
 export async function listClaimableBalances(

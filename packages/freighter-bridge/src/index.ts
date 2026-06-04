@@ -9,7 +9,7 @@ import {
   redactSensitive,
   resolvePath
 } from "@stellar-agent/core";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createServer, IncomingMessage, Server, ServerResponse } from "node:http";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -48,6 +48,7 @@ export interface ApprovalStore {
 
 export interface ApprovalBridge {
   url: string;
+  authToken: string;
   close(): Promise<void>;
 }
 
@@ -222,10 +223,14 @@ export async function startApprovalBridge(args: {
   approvalsDir: string;
   host?: string;
   port?: number;
+  authToken?: string;
+  maxBodyBytes?: number;
 }): Promise<ApprovalBridge> {
   const host = args.host ?? "127.0.0.1";
+  const authToken = args.authToken ?? randomBytes(32).toString("base64url");
+  const maxBodyBytes = args.maxBodyBytes ?? 1024 * 1024;
   const server = createServer((request, response) => {
-    void handleRequest(args.approvalsDir, request, response);
+    void handleRequest(args.approvalsDir, request, response, { authToken, maxBodyBytes });
   });
   await new Promise<void>((resolveReady, reject) => {
     server.once("error", reject);
@@ -235,6 +240,7 @@ export async function startApprovalBridge(args: {
   const port = typeof address === "object" && address ? address.port : args.port;
   return {
     url: `http://${host}:${port}`,
+    authToken,
     close: () => closeServer(server)
   };
 }
@@ -247,16 +253,22 @@ function summarizePayment(payment: PaymentRequest): string {
   return `Approve ${payment.amount} ${payment.asset} payment to ${payment.destination} on ${payment.network}`;
 }
 
-async function handleRequest(approvalsDir: string, request: IncomingMessage, response: ServerResponse): Promise<void> {
+async function handleRequest(
+  approvalsDir: string,
+  request: IncomingMessage,
+  response: ServerResponse,
+  options: { authToken: string; maxBodyBytes: number }
+): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   try {
     if (request.method === "GET" && url.pathname === "/health") return json(response, { ok: true });
-    if (request.method === "GET" && url.pathname === "/") return html(response, approvalHtml);
+    if (request.method === "GET" && url.pathname === "/") return html(response, approvalHtml(options.authToken));
+    if (url.pathname.startsWith("/api/")) assertAuthorizedBridgeRequest(request, options.authToken);
     if (request.method === "GET" && url.pathname === "/api/requests") {
       return json(response, { requests: await listApprovalRequests(approvalsDir) });
     }
     if (request.method === "POST" && url.pathname === "/api/requests") {
-      const body = await readJson(request);
+      const body = await readJson(request, options.maxBodyBytes);
       const approval = body.transactionXdr
         ? await createTransactionXdrApprovalRequest({
             approvalsDir,
@@ -270,7 +282,7 @@ async function handleRequest(approvalsDir: string, request: IncomingMessage, res
     const match = /^\/api\/requests\/([^/]+)(?:\/decision)?$/.exec(url.pathname);
     if (match?.[1] && request.method === "GET") return json(response, await readApprovalRequest(approvalsDir, match[1]));
     if (match?.[1] && request.method === "POST" && url.pathname.endsWith("/decision")) {
-      const body = await readJson(request);
+      const body = await readJson(request, options.maxBodyBytes);
       return json(
         response,
         await decideApprovalRequest({
@@ -286,6 +298,30 @@ async function handleRequest(approvalsDir: string, request: IncomingMessage, res
     return json(response, { ok: false, error: "not_found" }, 404);
   } catch (error) {
     return json(response, { ok: false, error: redactSensitive(error) }, 400);
+  }
+}
+
+function assertAuthorizedBridgeRequest(request: IncomingMessage, authToken: string): void {
+  const authorization = request.headers.authorization;
+  const token = authorization?.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : undefined;
+  if (token !== authToken) {
+    throw new StellarAgentError({
+      code: "APPROVAL_DENIED",
+      message: "Approval bridge request is missing a valid session token.",
+      docs: "docs/mainnet-safety.md#local-approval-bridge"
+    });
+  }
+
+  const origin = request.headers.origin;
+  if (origin) {
+    const host = request.headers.host;
+    if (!host || new URL(origin).host !== host) {
+      throw new StellarAgentError({
+        code: "APPROVAL_DENIED",
+        message: "Approval bridge request origin is not allowed.",
+        docs: "docs/mainnet-safety.md#local-approval-bridge"
+      });
+    }
   }
 }
 
@@ -310,9 +346,21 @@ function approvalPath(approvalsDir: string, id: string): string {
   return join(resolvePath(approvalsDir), `${id}.json`);
 }
 
-async function readJson(request: IncomingMessage): Promise<any> {
+async function readJson(request: IncomingMessage, maxBodyBytes: number): Promise<any> {
   const chunks: Buffer[] = [];
-  for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.byteLength;
+    if (size > maxBodyBytes) {
+      throw new StellarAgentError({
+        code: "INVALID_INPUT",
+        message: "Approval bridge request body is too large.",
+        docs: "docs/mainnet-safety.md#local-approval-bridge"
+      });
+    }
+    chunks.push(buffer);
+  }
   return chunks.length === 0 ? {} : JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
@@ -382,7 +430,8 @@ function comparableEnvelope(rawXdr: string, label: string): { type: string; tran
   });
 }
 
-const approvalHtml = `<!doctype html>
+function approvalHtml(authToken: string): string {
+  return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -414,6 +463,12 @@ const approvalHtml = `<!doctype html>
     <div id="requests"></div>
   </main>
   <script>
+    const authToken = ${JSON.stringify(authToken)};
+    function apiFetch(url, options) {
+      const init = options || {};
+      init.headers = Object.assign({}, init.headers || {}, { authorization: 'Bearer ' + authToken });
+      return fetch(url, init);
+    }
     let freighterAddress = '';
     function escapeHtml(value) {
       return String(value).replace(/[&<>"']/g, function (char) {
@@ -439,7 +494,7 @@ const approvalHtml = `<!doctype html>
       }
     }
     async function decide(id, approved) {
-      await fetch('/api/requests/' + id + '/decision', {
+      await apiFetch('/api/requests/' + id + '/decision', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ approved })
@@ -452,7 +507,7 @@ const approvalHtml = `<!doctype html>
         document.getElementById('freighter').textContent = 'Freighter signTransaction API is unavailable.';
         return;
       }
-      const response = await fetch('/api/requests/' + id);
+      const response = await apiFetch('/api/requests/' + id);
       const request = await response.json();
       try {
         const result = await api.signTransaction(request.transactionXdr, {
@@ -463,7 +518,7 @@ const approvalHtml = `<!doctype html>
         if (result && result.error) throw new Error(result.error);
         const signedTransactionXdr = result.signedTxXdr || result.signedTransactionXdr;
         const signerPublicKey = result.signerAddress || result.address || freighterAddress;
-        await fetch('/api/requests/' + id + '/decision', {
+        await apiFetch('/api/requests/' + id + '/decision', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ approved: true, signerPublicKey, signedTransactionXdr })
@@ -474,7 +529,7 @@ const approvalHtml = `<!doctype html>
       }
     }
     async function load() {
-      const response = await fetch('/api/requests');
+      const response = await apiFetch('/api/requests');
       const data = await response.json();
       document.getElementById('requests').innerHTML = data.requests.map((request) => {
         const actions = request.status === 'pending'
@@ -487,3 +542,4 @@ const approvalHtml = `<!doctype html>
   </script>
 </body>
 </html>`;
+}

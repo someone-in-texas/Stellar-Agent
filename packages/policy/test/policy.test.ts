@@ -65,6 +65,63 @@ describe("policy evaluation", () => {
     expect(decision.matchedRules).toContain("spend_history_unreadable");
   });
 
+  it("denies payments that would exceed history-backed daily and monthly limits", () => {
+    const daily = evaluatePaymentRequest(
+      DEFAULT_TESTNET_POLICY,
+      { destination, amount: "1", asset: "XLM", network: "testnet" },
+      { dailyTotal: "100.0000000", monthlyTotal: "1.0000000" }
+    );
+    expect(daily.status).toBe("denied");
+    expect(daily.matchedRules).toContain("daily_total_limit_exceeded");
+
+    const monthly = evaluatePaymentRequest(
+      DEFAULT_TESTNET_POLICY,
+      { destination, amount: "1", asset: "XLM", network: "testnet" },
+      { dailyTotal: "1.0000000", monthlyTotal: "1000.0000000" }
+    );
+    expect(monthly.status).toBe("denied");
+    expect(monthly.matchedRules).toContain("monthly_total_limit_exceeded");
+  });
+
+  it("allows zero historical totals while still evaluating the requested payment amount", () => {
+    const decision = evaluatePaymentRequest(
+      DEFAULT_TESTNET_POLICY,
+      { destination, amount: "0.0000001", asset: "XLM", network: "testnet" },
+      { dailyTotal: "0.0000000", monthlyTotal: "0.0000000" }
+    );
+    expect(decision.status).toBe("allowed");
+  });
+
+  it("requires approval for new recipients and domains when history lacks prior receipts", () => {
+    const policy = {
+      ...DEFAULT_TESTNET_POLICY,
+      approval: {
+        ...DEFAULT_TESTNET_POLICY.approval,
+        requireForNewRecipient: true,
+        requireForNewDomain: true
+      },
+      x402: {
+        ...DEFAULT_TESTNET_POLICY.x402,
+        enabled: true,
+        allowDomains: ["api.example.test"]
+      }
+    };
+    const decision = evaluatePaymentRequest(
+      policy,
+      {
+        destination,
+        amount: "1",
+        asset: "XLM",
+        network: "testnet",
+        domain: "api.example.test"
+      },
+      { knownRecipients: [], knownDomains: [] }
+    );
+    expect(decision.status).toBe("requires_approval");
+    expect(decision.matchedRules).toContain("new_recipient_requires_approval");
+    expect(decision.matchedRules).toContain("new_domain_requires_approval");
+  });
+
   it("allows domain-bound x402 requests only when enabled and under price limit", () => {
     const policy = {
       ...DEFAULT_TESTNET_POLICY,

@@ -203,13 +203,14 @@ export const MCP_TOOLS: McpTool[] = [
     signedTransactionXdr: { type: "string" },
     reason: { type: "string" }
   }),
-  tool("stellar_tx_submit_xdr", "Submit signed transaction XDR to Horizon on Testnet.", { xdr: true }, (input) => [
+  tool("stellar_tx_submit_xdr", "Submit signed transaction XDR to Horizon on Testnet or guarded Mainnet.", { xdr: true }, (input) => [
     "tx",
     "submit-xdr",
     "--xdr",
-    requiredString(input, "xdr")
-  ], { xdr: { type: "string" } }),
-  tool("stellar_tx_build_payment", "Build unsigned payment transaction XDR for browser-wallet signing on Testnet.", { to: true, amount: true }, (input) => [
+    requiredString(input, "xdr"),
+    ...realFundsFlags(input)
+  ], { xdr: { type: "string" }, ...realFundsProperties() }),
+  tool("stellar_tx_build_payment", "Build unsigned payment transaction XDR for browser-wallet signing on Testnet or guarded Mainnet.", { to: true, amount: true }, (input) => [
     "tx",
     "build-payment",
     "--to",
@@ -220,8 +221,9 @@ export const MCP_TOOLS: McpTool[] = [
     string(input, "asset") ?? "XLM",
     "--from",
     string(input, "from") ?? "agent",
-    ...option(input, "memo", "--memo")
-  ], { ...paymentProperties(), from: { type: "string" } }),
+    ...option(input, "memo", "--memo"),
+    ...realFundsFlags(input)
+  ], { ...paymentProperties(), from: { type: "string" }, ...realFundsProperties() }),
   tool("stellar_tx_request_payment_signature", "Build payment XDR and create a transaction approval request.", { to: true, amount: true }, (input) => [
     "tx",
     "request-payment-signature",
@@ -234,13 +236,15 @@ export const MCP_TOOLS: McpTool[] = [
     "--from",
     string(input, "from") ?? "agent",
     ...option(input, "memo", "--memo"),
-    ...option(input, "summary", "--summary")
-  ], { ...paymentProperties(), from: { type: "string" }, summary: { type: "string" } }),
-  tool("stellar_tx_submit_approval", "Submit signed transaction XDR from a local approval request on Testnet.", { id: true }, (input) => [
+    ...option(input, "summary", "--summary"),
+    ...realFundsFlags(input)
+  ], { ...paymentProperties(), from: { type: "string" }, summary: { type: "string" }, ...realFundsProperties() }),
+  tool("stellar_tx_submit_approval", "Submit signed transaction XDR from a local approval request on Testnet or guarded Mainnet.", { id: true }, (input) => [
     "tx",
     "submit-approval",
-    requiredString(input, "id")
-  ], { id: { type: "string" } }),
+    requiredString(input, "id"),
+    ...realFundsFlags(input)
+  ], { id: { type: "string" }, ...realFundsProperties() }),
   tool("stellar_pay_quote", "Quote and policy-check a payment without submitting it.", { to: true, amount: true }, (input) => [
     "pay",
     "quote",
@@ -577,6 +581,13 @@ function httpPaymentProperties(): Record<string, unknown> {
   };
 }
 
+function realFundsProperties(): Record<string, unknown> {
+  return {
+    allowRealFunds: { type: "boolean" },
+    iUnderstandRealFunds: { type: "boolean" }
+  };
+}
+
 function contractProperties(flags: Record<string, boolean>): Record<string, unknown> {
   return {
     ...(flags.id ? { id: { type: "string" } } : {}),
@@ -612,6 +623,13 @@ function contractProperties(flags: Record<string, boolean>): Record<string, unkn
 function option(input: Record<string, unknown>, key: string, flag: string): string[] {
   const value = string(input, key);
   return value === undefined ? [] : [flag, value];
+}
+
+function realFundsFlags(input: Record<string, unknown>): string[] {
+  return [
+    ...(bool(input, "allowRealFunds") ? ["--allow-real-funds"] : []),
+    ...(bool(input, "iUnderstandRealFunds") ? ["--i-understand-real-funds"] : [])
+  ];
 }
 
 function networkAndStellarBinary(input: Record<string, unknown>): string[] {

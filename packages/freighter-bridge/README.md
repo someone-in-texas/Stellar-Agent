@@ -26,4 +26,4 @@ stellar-agent pay send --to G... --amount 6 --approval-id appr_... --json
 stellar-agent tx submit-approval appr_... --json
 ```
 
-The UI uses Freighter's browser API when available. It posts `signedTransactionXdr` and `signerPublicKey` back to the bridge without exposing secrets to the CLI. The bridge accepts signed transaction XDR only when it has at least one signature and its transaction body matches the original approval request. Signed transaction approvals can then be submitted to Testnet with `tx submit-approval`; Mainnet submission remains blocked.
+The UI uses Freighter's browser API when available. It posts `signedTransactionXdr` and `signerPublicKey` back to the bridge without exposing secrets to the CLI. The bridge accepts signed transaction XDR only when it has at least one signature and its transaction body matches the original approval request. Signed transaction approvals can then be submitted to Testnet with `tx submit-approval`. Mainnet submission is available only with Mainnet enabled, an active Mainnet profile, and `--allow-real-funds --i-understand-real-funds`; the CLI still never imports or stores Mainnet secret keys.

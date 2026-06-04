@@ -2,7 +2,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { appendEvent, latestReceipt, writeReceipt } from "../src/index.js";
+import { appendEvent, latestReceipt, spendHistoryFromReceipts, writeReceipt } from "../src/index.js";
 
 describe("ledger logger", () => {
   it("writes JSONL events without secrets", async () => {
@@ -58,5 +58,45 @@ describe("ledger logger", () => {
     });
     expect(receipt.payment).toBeUndefined();
     expect(receipt.operation).toMatchObject({ type: "trustline.add", account: "merchant" });
+  });
+
+  it("computes spend history from successful allowed payment receipts", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "stellar-agent-"));
+    await writeReceipt(dir, {
+      command: "pay send",
+      profile: "testnet",
+      networkPassphrase: "Test SDF Network ; September 2015",
+      realFunds: false,
+      payment: {
+        source: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        destination: "GBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        asset: "XLM",
+        amount: "1.5000000",
+        domain: "127.0.0.1:3000"
+      },
+      policyDecision: { status: "allowed", matchedRules: ["policy_allowed"] },
+      transaction: { hash: "abc", successful: true }
+    });
+    await writeReceipt(dir, {
+      command: "pay send",
+      profile: "testnet",
+      networkPassphrase: "Test SDF Network ; September 2015",
+      realFunds: false,
+      payment: {
+        source: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        destination: "GCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        asset: "XLM",
+        amount: "2.0000000"
+      },
+      policyDecision: { status: "requires_approval", matchedRules: ["amount_above_auto_approval_threshold"] },
+      transaction: { hash: "def", successful: true }
+    });
+
+    await expect(spendHistoryFromReceipts(dir, { profile: "testnet", asset: "XLM" })).resolves.toMatchObject({
+      dailyTotal: "1.5000000",
+      monthlyTotal: "1.5000000",
+      knownRecipients: ["GBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"],
+      knownDomains: ["127.0.0.1:3000"]
+    });
   });
 });

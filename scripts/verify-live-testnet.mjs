@@ -86,8 +86,12 @@ try {
   if (paymentReceipt.data.transaction.hash !== paymentHash) {
     throw new Error(`Receipt transaction hash did not match payment hash: ${paymentReceipt.data.transaction.hash}`);
   }
-  const receiptVerification = runCli(["receipts", "verify", payment.data.receiptPath]);
-  step("receipt.verify", { path: receiptVerification.data.path, valid: receiptVerification.data.valid });
+  const receiptVerification = runCli(["receipts", "verify", payment.data.receiptPath, "--ledger"]);
+  step("receipt.verify", {
+    path: receiptVerification.data.path,
+    valid: receiptVerification.data.valid,
+    ledger: receiptVerification.data.ledger
+  });
 
   const trustAsset = `${uniqueCode("TL")}:${issuer.publicKey}`;
   const trustAdd = runCli(["wallet", "trustline", "add", "--account", "merchant", "--asset", trustAsset]);

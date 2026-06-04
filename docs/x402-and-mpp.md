@@ -20,6 +20,8 @@ stellar-agent pay x402 http://127.0.0.1:PORT/paid-report --allow-localhost-demo 
 
 This is not yet a full facilitator-backed Soroban auth-entry x402 implementation.
 
+The receipt records the ledger payment. The command result also includes `paidResourceDelivered`, which is `true` only when the paid-resource retry returns a 2xx HTTP status. If payment succeeds but the paid API still fails, the event log marks the receipt write as `paid_resource_failed` so agents do not confuse settlement with content delivery.
+
 This build also includes local MPP one-time charge and session-budget demos. `stellar-agent pay mpp <url>` can pay compatible localhost MPP demo resources:
 
 ```bash
@@ -69,6 +71,8 @@ One-time charge flow:
 
 One-time MPP demo proofs are bound to the charge id and resource, require payer metadata, and are accepted only once per transaction hash.
 
+The command result includes `paidResourceDelivered` with the same meaning as the x402 demo.
+
 ## Local MPP Session Demo
 
 Session-budget flow:
@@ -81,5 +85,7 @@ Session-budget flow:
 6. Write a receipt for the budget transaction and log session request counts.
 
 The demo paid API under `apps/paid-api-demo` starts x402, one-time MPP, and MPP session endpoints.
+
+For MPP sessions, `paidResourceDelivered` is `true` only when every requested session call returns a 2xx status after the budget payment.
 
 Production facilitator support is still future work. A production session flow should add facilitator verification, stronger anti-replay guarantees, explicit session budget approval, and per-request spending logs across processes.

@@ -4,30 +4,32 @@
 
 ## Status
 
-This repository is an early v0 implementation. Core primitives, policy evaluation, local receipt logging, Testnet wallet creation, Friendbot funding, basic Testnet payment submission, issued-asset trustlines, claimable balances, local approval bridge requests, local x402-style and MPP one-time Testnet demos, MCP tools, Codex plugin validation, and the CLI command surface are present. Mainnet payment submission intentionally remains blocked until real-funds approval work is complete.
+This repository is an early v0 implementation. Core primitives, policy evaluation, local receipt logging, Testnet wallet creation, Friendbot funding, basic Testnet payment submission, issued-asset trustlines, claimable balances, local approval bridge requests, local x402-style and MPP one-time Testnet demos, MCP tools, Codex plugin validation, and the CLI command surface are present. Mainnet local auto-signing remains blocked; guarded Mainnet submission is limited to externally signed XDR and explicitly acknowledged real-funds contract operations.
 
 ## Safety First
 
 - Testnet is the default.
 - Mainnet is disabled by default and cannot auto-sign payments.
+- Guarded Mainnet usage requires external signing, explicit real-funds flags, and receipts.
 - Secret keys are redacted from CLI output, logs, and receipts.
 - Policy evaluation runs before payment submission.
 - Staged features exit with code `8` instead of attempting hidden payment work.
 
 ## 10-Minute Quickstart
 
-```bash
-npm install -g stellar-agent-bridge
-stellar-agent testnet init
-stellar-agent testnet smoke-test
-stellar-agent receipts latest
-```
-
-Local checkout workflow:
+Package publishing is not enabled yet for this workspace. Until the release checklist in [docs/distribution.md](docs/distribution.md) is complete, use the local checkout workflow:
 
 ```bash
 pnpm install
 pnpm build
+pnpm cli -- testnet init
+pnpm cli -- testnet smoke-test
+pnpm cli -- receipts latest
+```
+
+Useful verification commands:
+
+```bash
 pnpm test
 pnpm cli -- testnet init --no-fund
 pnpm cli -- testnet smoke-test --dry-run --json
@@ -96,13 +98,13 @@ The project is CLI-first with shared packages underneath:
 
 ## Mainnet
 
-Mainnet uses real funds. It is disabled by default, requires explicit enablement, and payment submission remains blocked in v0. See [docs/mainnet-safety.md](docs/mainnet-safety.md).
+Mainnet uses real funds. It is disabled by default, requires explicit enablement, refuses local Mainnet secret-key storage, and supports only guarded externally signed XDR or explicitly acknowledged contract operations. See [docs/mainnet-safety.md](docs/mainnet-safety.md).
 
 ## Roadmap
 
-1. Freighter browser-extension signing in the local approval UI.
-2. Production facilitator-backed x402/MPP support.
-3. Guarded Mainnet payment approval flow.
+1. Production facilitator-backed x402/MPP support.
+2. Publishable package metadata, provenance, and workspace release order.
+3. Broader Mainnet approval UX hardening without local Mainnet secret custody.
 
 ## Contributing
 

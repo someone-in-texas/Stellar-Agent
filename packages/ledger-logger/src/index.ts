@@ -2,8 +2,10 @@ import {
   NetworkName,
   PaymentRequest,
   StellarAgentError,
+  formatStroops,
   makeId,
   nowIso,
+  parseAmount,
   redactSensitive,
   resolvePath
 } from "@stellar-agent/core";
@@ -52,6 +54,8 @@ export interface PaymentReceipt {
     asset: string;
     amount: string;
     memo?: string;
+    domain?: string;
+    url?: string;
   };
   operation?: {
     type: string;
@@ -100,12 +104,28 @@ export interface ReceiptInput {
   payment?: Required<Pick<PaymentRequest, "destination" | "asset" | "amount">> & {
     source: string;
     memo?: string;
+    domain?: string;
+    url?: string;
   };
   operation?: PaymentReceipt["operation"];
   policyDecision: ReceiptPolicyDecision;
   transaction: PaymentReceipt["transaction"];
   ledger?: PaymentReceipt["ledger"];
   eventLog?: string;
+}
+
+export interface ReceiptSpendHistory {
+  dailyTotal?: string;
+  monthlyTotal?: string;
+  knownRecipients?: string[];
+  knownDomains?: string[];
+  unreadable?: boolean;
+}
+
+export interface ReceiptSpendHistoryOptions {
+  profile?: NetworkName;
+  asset?: string;
+  now?: Date;
 }
 
 export async function appendEvent(logPath: string, entry: Omit<EventLogEntry, "schemaVersion" | "at">): Promise<void> {
@@ -182,6 +202,47 @@ export async function latestReceipt(receiptsDir: string): Promise<{ path: string
   const [path] = await listReceipts(receiptsDir);
   if (!path) return null;
   return { path, receipt: await readReceipt(path) };
+}
+
+export async function spendHistoryFromReceipts(
+  receiptsDir: string,
+  options: ReceiptSpendHistoryOptions = {}
+): Promise<ReceiptSpendHistory> {
+  try {
+    const paths = await listReceipts(receiptsDir);
+    const now = options.now ?? new Date();
+    const dayPrefix = now.toISOString().slice(0, 10);
+    const monthPrefix = now.toISOString().slice(0, 7);
+    let dailyStroops = 0n;
+    let monthlyStroops = 0n;
+    const knownRecipients = new Set<string>();
+    const knownDomains = new Set<string>();
+
+    for (const path of paths) {
+      const receipt = await readReceipt(path);
+      if (!receipt.payment || receipt.transaction.successful !== true || receipt.policyDecision.status !== "allowed") {
+        continue;
+      }
+      if (options.profile && receipt.profile !== options.profile) continue;
+      if (options.asset && receipt.payment.asset.toUpperCase() !== options.asset.toUpperCase()) continue;
+
+      knownRecipients.add(receipt.payment.destination);
+      if (receipt.payment.domain) knownDomains.add(receipt.payment.domain);
+
+      const stroops = parseAmount(receipt.payment.amount, receipt.payment.asset).stroops;
+      if (receipt.createdAt.startsWith(dayPrefix)) dailyStroops += stroops;
+      if (receipt.createdAt.startsWith(monthPrefix)) monthlyStroops += stroops;
+    }
+
+    return {
+      dailyTotal: formatStroops(dailyStroops),
+      monthlyTotal: formatStroops(monthlyStroops),
+      knownRecipients: Array.from(knownRecipients),
+      knownDomains: Array.from(knownDomains)
+    };
+  } catch {
+    return { unreadable: true };
+  }
 }
 
 export function verifyReceipt(receipt: PaymentReceipt): true {

@@ -38,4 +38,11 @@ Example agent prompt:
 
 > Run `stellar-agent pay quote --json` before any payment, stop if approval is required, and never print secrets.
 
+Mainnet agent rule:
+
+- Treat `MAINNET_NOT_ENABLED`, `APPROVAL_REQUIRED`, and `POLICY_DENIED` as stop conditions.
+- Do not add `--allow-real-funds` or `--i-understand-real-funds` unless the user explicitly asks for that exact Mainnet action.
+- Do not ask for or pass Mainnet secret keys. Use watch-only public wallets, browser-wallet approvals, Stellar CLI identities, or signed XDR.
+- For Mainnet signed-XDR submission, include the real-funds flags only after confirming the signed XDR came from a human-controlled Mainnet wallet.
+
 Receipts are JSON files under `~/.stellar-agent/receipts`.

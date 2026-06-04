@@ -8,7 +8,7 @@ import {
   parseAmount
 } from "@stellar-agent/core";
 import { appendEvent, writeReceipt } from "@stellar-agent/ledger-logger";
-import { Policy, evaluatePaymentRequest } from "@stellar-agent/policy";
+import { Policy, SpendHistory, evaluatePaymentRequest } from "@stellar-agent/policy";
 import { sendPayment } from "@stellar-agent/stellar";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
@@ -50,6 +50,7 @@ export interface MppPaymentResult {
   };
   receiptPath?: string;
   responseBody?: string;
+  paidResourceDelivered?: boolean;
 }
 
 export interface MppSessionRequirement {
@@ -94,6 +95,7 @@ export interface MppSessionResult {
     feeCharged?: string;
   };
   receiptPath?: string;
+  paidResourceDelivered?: boolean;
   responses: Array<{
     status: number;
     body: string;
@@ -109,9 +111,13 @@ export async function runMppPayment(args: {
   eventLog: string;
   command: string;
   dryRun?: boolean;
+  spendHistory?: SpendHistory;
+  loadSpendHistory?: (request: PaymentRequest) => Promise<SpendHistory>;
   fetchImpl?: typeof fetch;
+  sendPaymentImpl?: typeof sendPayment;
 }): Promise<MppPaymentResult> {
   const fetchImpl = args.fetchImpl ?? fetch;
+  const sendPaymentImpl = args.sendPaymentImpl ?? sendPayment;
   const first = await fetchResource(fetchImpl, args.url);
   if (first.status !== 402) {
     return {
@@ -140,7 +146,8 @@ export async function runMppPayment(args: {
     domain: new URL(args.url).host,
     url: args.url
   };
-  const policyDecision = evaluatePaymentRequest(args.policy, request);
+  const history = args.loadSpendHistory ? await args.loadSpendHistory(request) : args.spendHistory;
+  const policyDecision = evaluatePaymentRequest(args.policy, request, history);
   await appendEvent(args.eventLog, {
     event: "policy_decision",
     status: policyDecision.status,
@@ -167,7 +174,7 @@ export async function runMppPayment(args: {
     return { firstStatus: 402, finalStatus: 402, charge, policyDecision };
   }
 
-  const transaction = await sendPayment({
+  const transaction = await sendPaymentImpl({
     source: args.source,
     destination: charge.recipient,
     amount: charge.amount,
@@ -194,6 +201,7 @@ export async function runMppPayment(args: {
     }
   });
   const responseBody = await paid.text();
+  const paidResourceDelivered = paid.status >= 200 && paid.status < 300;
   const { path: receiptPath } = await writeReceipt(args.receiptsDir, {
     command: args.command,
     profile: "testnet",
@@ -204,6 +212,8 @@ export async function runMppPayment(args: {
       destination: charge.recipient,
       asset: charge.asset,
       amount: charge.amount,
+      domain: new URL(args.url).host,
+      url: args.url,
       ...(charge.memo === undefined ? {} : { memo: charge.memo })
     },
     policyDecision,
@@ -213,10 +223,10 @@ export async function runMppPayment(args: {
   });
   await appendEvent(args.eventLog, {
     event: "receipt_written",
-    status: "success",
+    status: paidResourceDelivered ? "success" : "paid_resource_failed",
     command: args.command,
     profile: "testnet",
-    data: { receiptPath, transactionHash: transaction.hash, finalStatus: paid.status, chargeId: charge.chargeId }
+    data: { receiptPath, transactionHash: transaction.hash, finalStatus: paid.status, chargeId: charge.chargeId, paidResourceDelivered }
   });
   return {
     firstStatus: 402,
@@ -225,7 +235,8 @@ export async function runMppPayment(args: {
     policyDecision,
     transaction,
     receiptPath,
-    responseBody
+    responseBody,
+    paidResourceDelivered
   };
 }
 
@@ -239,7 +250,10 @@ export async function runMppSession(args: {
   command: string;
   requestCount?: number;
   dryRun?: boolean;
+  spendHistory?: SpendHistory;
+  loadSpendHistory?: (request: PaymentRequest) => Promise<SpendHistory>;
   fetchImpl?: typeof fetch;
+  sendPaymentImpl?: typeof sendPayment;
 }): Promise<MppSessionResult> {
   const requestCount = args.requestCount ?? 2;
   if (!Number.isInteger(requestCount) || requestCount < 1) {
@@ -250,6 +264,7 @@ export async function runMppSession(args: {
     });
   }
   const fetchImpl = args.fetchImpl ?? fetch;
+  const sendPaymentImpl = args.sendPaymentImpl ?? sendPayment;
   const first = await fetchResource(fetchImpl, args.url);
   if (first.status !== 402) {
     return {
@@ -280,7 +295,8 @@ export async function runMppSession(args: {
     domain: new URL(args.url).host,
     url: args.url
   };
-  const policyDecision = evaluatePaymentRequest(args.policy, request);
+  const history = args.loadSpendHistory ? await args.loadSpendHistory(request) : args.spendHistory;
+  const policyDecision = evaluatePaymentRequest(args.policy, request, history);
   await appendEvent(args.eventLog, {
     event: "policy_decision",
     status: policyDecision.status,
@@ -315,7 +331,7 @@ export async function runMppSession(args: {
     };
   }
 
-  const transaction = await sendPayment({
+  const transaction = await sendPaymentImpl({
     source: args.source,
     destination: session.recipient,
     amount: session.budget,
@@ -349,6 +365,7 @@ export async function runMppSession(args: {
   }
   const finalStatus = responses.at(-1)?.status ?? 402;
   const successfulRequests = responses.filter((response) => response.status >= 200 && response.status < 300).length;
+  const paidResourceDelivered = successfulRequests === requestCount;
   const { path: receiptPath } = await writeReceipt(args.receiptsDir, {
     command: args.command,
     profile: "testnet",
@@ -359,6 +376,8 @@ export async function runMppSession(args: {
       destination: session.recipient,
       asset: session.asset,
       amount: session.budget,
+      domain: new URL(args.url).host,
+      url: args.url,
       ...(session.memo === undefined ? {} : { memo: session.memo })
     },
     policyDecision,
@@ -368,7 +387,7 @@ export async function runMppSession(args: {
   });
   await appendEvent(args.eventLog, {
     event: "receipt_written",
-    status: "success",
+    status: paidResourceDelivered ? "success" : "paid_resource_failed",
     command: args.command,
     profile: "testnet",
     data: {
@@ -377,7 +396,8 @@ export async function runMppSession(args: {
       finalStatus,
       sessionId: session.sessionId,
       successfulRequests,
-      requestCount
+      requestCount,
+      paidResourceDelivered
     }
   });
   return {
@@ -390,6 +410,7 @@ export async function runMppSession(args: {
     policyDecision,
     transaction,
     receiptPath,
+    paidResourceDelivered,
     responses
   };
 }

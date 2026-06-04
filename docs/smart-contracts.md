@@ -186,6 +186,8 @@ The live Testnet verifier deploys a Stellar Asset Contract, verifies the deploy 
 
 ## Safety
 
-- Mainnet contract execution is not wired into project policy yet.
-- Prefer Testnet while this integration is being hardened.
-- Do not paste Mainnet secret keys into agent prompts.
+- Testnet remains the default and recommended development network.
+- Mainnet contract operations require `mainnet enable --i-understand-real-funds`, `--allow-real-funds`, and `--i-understand-real-funds`.
+- Mainnet contract operations refuse raw secret keys and generated local Testnet wallet secrets.
+- Use a Stellar CLI identity, browser-wallet flow, raw public key, or watch-only Mainnet wallet reference for Mainnet custody.
+- Mainnet examples must include real-funds disclaimers and must not imply autonomous spending.

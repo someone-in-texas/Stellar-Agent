@@ -1,13 +1,16 @@
 # Quickstart
 
-Goal: install to first Testnet payment in 10 minutes.
+Goal: local checkout to first Testnet payment in 10 minutes.
 
 ```bash
-npm install -g stellar-agent-bridge
-stellar-agent testnet init
-stellar-agent testnet smoke-test
-stellar-agent receipts latest
+pnpm install
+pnpm build
+pnpm cli -- testnet init
+pnpm cli -- testnet smoke-test
+pnpm cli -- receipts latest
 ```
+
+Package publishing is not enabled yet for this workspace. See `docs/distribution.md` for the release gate.
 
 Expected shape:
 
@@ -24,11 +27,9 @@ Expected shape:
 }
 ```
 
-For local development:
+For a dry-run smoke check:
 
 ```bash
-pnpm install
-pnpm build
 pnpm cli -- testnet init --no-fund
 pnpm cli -- testnet smoke-test --dry-run --json
 ```

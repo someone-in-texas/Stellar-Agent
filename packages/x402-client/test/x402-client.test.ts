@@ -116,6 +116,65 @@ describe("x402 client", () => {
     }
   });
 
+  it("marks paid resource delivery false when retry fails after settlement", async () => {
+    const root = await mkdtemp(join(tmpdir(), "stellar-agent-x402-delivery-"));
+    const url = "http://api.example.test/paid-report";
+    const policy = {
+      ...DEFAULT_TESTNET_POLICY,
+      x402: {
+        ...DEFAULT_TESTNET_POLICY.x402,
+        enabled: true,
+        allowDomains: [new URL(url).host]
+      }
+    };
+    let calls = 0;
+    const result = await runX402Payment({
+      url,
+      source,
+      policy,
+      profile: {
+        name: "testnet",
+        network: "testnet",
+        networkPassphrase: "Test SDF Network ; September 2015",
+        horizonUrl: "https://horizon-testnet.stellar.org",
+        rpcUrl: "https://soroban-testnet.stellar.org",
+        friendbotUrl: "https://friendbot.stellar.org",
+        defaultAsset: "XLM",
+        realFunds: false
+      },
+      receiptsDir: join(root, "receipts"),
+      eventLog: join(root, "logs", "events.jsonl"),
+      command: "test",
+      sendPaymentImpl: async () => ({ hash: "a".repeat(64), successful: true, ledger: 123 }),
+      fetchImpl: async () => {
+        calls += 1;
+        if (calls === 1) {
+          return new Response(
+            JSON.stringify({
+              protocol: "stellar-agent-local-x402",
+              version: 1,
+              network: "testnet",
+              asset: "XLM",
+              amount: "0.0000001",
+              recipient,
+              resource: url,
+              nonce: "x402_req_1"
+            }),
+            { status: 402 }
+          );
+        }
+        return new Response(JSON.stringify({ ok: false }), { status: 500 });
+      }
+    });
+
+    expect(result).toMatchObject({
+      finalStatus: 500,
+      paidResourceDelivered: false,
+      transaction: { hash: "a".repeat(64), successful: true },
+      receiptPath: expect.any(String)
+    });
+  });
+
   it("rejects payment requirements for a different resource", async () => {
     const root = await mkdtemp(join(tmpdir(), "stellar-agent-x402-resource-"));
     await expect(
