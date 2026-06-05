@@ -45,6 +45,10 @@ Before starting a release:
   - core Stellar liquidity mutation runs policy before submission
   - Mainnet liquidity mutation cannot auto-sign locally
   - Soroban AMM mutation reports `adapter_required` without a protocol adapter
+- Codex plugin guidance is current:
+  - every release headline workflow is represented in a bundled `SKILL.md` or documented as intentionally out of scope
+  - `plugins/codex/plugin.yaml`, `plugins/codex/README.md`, and `docs/codex-plugin.md` describe the same skill set
+  - safety-sensitive skills name the required preflight, mutation boundary, Mainnet limitation, and receipt expectations
 - User-facing docs distinguish GitHub artifacts from npm publication.
 
 ## Local Preflight
@@ -76,6 +80,7 @@ The release gate verifies:
 - package and plugin versions are aligned
 - package metadata is publishable
 - Mainnet safety invariants are present in docs, tests, and CLI behavior
+- bundled Codex plugin guidance still covers the current workflow families
 - third-party protocol SDKs remain isolated to approved adapter packages
 - production dependencies have no known advisories from `pnpm audit --prod`
 - npm tarballs are generated with internal `workspace:*` ranges rewritten to the release version
@@ -107,6 +112,8 @@ The live verifier creates temporary Testnet accounts and submits real Testnet tr
 ## Codex Plugin Release
 
 The bundled Codex plugin lives under `plugins/codex`.
+
+Before a release, review the plugin as an agent-facing product surface, not only as a packaged artifact. If a release adds a new CLI workflow family, update an existing `SKILL.md` or add a new skill before tagging. If a feature should not be agent-guided yet, document that boundary explicitly.
 
 Release packaging:
 

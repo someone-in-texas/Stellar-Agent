@@ -26,5 +26,5 @@ Rules:
 - Never enable Mainnet unless the user explicitly asks.
 - Treat x402 and MPP as local Testnet demos unless production facilitator support is explicitly added.
 - Run `contract doctor` before Stellar CLI-backed contract commands.
-- Treat market liquidity commands as investigation and policy-gated Testnet workflows, not profitability guarantees.
+- Treat market liquidity commands as investigation and policy-gated Testnet workflows, not a profitability guarantee.
 - For liquidity-pool mutation, run `market lp preflight` first and require an existing Horizon-visible core pool.

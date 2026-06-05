@@ -16,6 +16,16 @@ const securityPolicy = await readFile(join(rootDir, "SECURITY.md"), "utf8");
 const securityGuide = await readFile(join(rootDir, "docs", "security.md"), "utf8");
 const mainnetSafety = await readFile(join(rootDir, "docs", "mainnet-safety.md"), "utf8");
 const readme = await readFile(join(rootDir, "README.md"), "utf8");
+const releaseGuide = await readFile(join(rootDir, "RELEASE.md"), "utf8");
+const codexPluginDocs = await readFile(join(rootDir, "docs", "codex-plugin.md"), "utf8");
+const codexPluginReadme = await readFile(join(rootDir, "plugins", "codex", "README.md"), "utf8");
+const codexPluginYaml = await readFile(join(rootDir, "plugins", "codex", "plugin.yaml"), "utf8");
+const codexTestnetSkill = await readFile(join(rootDir, "plugins", "codex", "skills", "stellar-agent-testnet", "SKILL.md"), "utf8");
+const codexPaymentsSkill = await readFile(join(rootDir, "plugins", "codex", "skills", "stellar-agent-payments", "SKILL.md"), "utf8");
+const codexMarketSkill = await readFile(
+  join(rootDir, "plugins", "codex", "skills", "stellar-agent-market-liquidity", "SKILL.md"),
+  "utf8"
+);
 const rootPackage = await readFile(join(rootDir, "package.json"), "utf8");
 const cliSource = await readFile(join(rootDir, "packages", "cli", "src", "index.ts"), "utf8");
 const coreTests = await readFile(join(rootDir, "packages", "core", "test", "core.test.ts"), "utf8");
@@ -52,6 +62,46 @@ requireText("README.md", readme, [
   "Mainnet is disabled by default and cannot auto-sign payments.",
   "Secret keys are redacted from CLI output, logs, and receipts.",
   "Policy evaluation runs before payment submission."
+]);
+requireText("RELEASE.md", releaseGuide, [
+  "Codex plugin guidance is current",
+  "every release headline workflow is represented in a bundled `SKILL.md`",
+  "review the plugin as an agent-facing product surface"
+]);
+requireText("docs/codex-plugin.md", codexPluginDocs, [
+  "stellar-agent-testnet",
+  "stellar-agent-payments",
+  "stellar-agent-market-liquidity",
+  "Maintenance checklist",
+  "Run `pnpm release:safety` before release prep"
+]);
+requireText("plugins/codex/plugin.yaml", codexPluginYaml, [
+  "skills/stellar-agent-testnet",
+  "skills/stellar-agent-payments",
+  "skills/stellar-agent-market-liquidity"
+]);
+requireText("plugins/codex/README.md", codexPluginReadme, [
+  "market-liquidity investigation",
+  "For liquidity-pool mutation, run `market lp preflight` first",
+  "not a profitability guarantee"
+]);
+requireText("plugins/codex/skills/stellar-agent-testnet/SKILL.md", codexTestnetSkill, [
+  "testnet doctor",
+  "issued-asset-payment",
+  "contract-asset-smoke",
+  "claimable balances"
+]);
+requireText("plugins/codex/skills/stellar-agent-payments/SKILL.md", codexPaymentsSkill, [
+  "pay quote",
+  "approval create-transaction",
+  "pay x402",
+  "pay mpp-session"
+]);
+requireText("plugins/codex/skills/stellar-agent-market-liquidity/SKILL.md", codexMarketSkill, [
+  "market lp preflight",
+  "market listen price",
+  "strategy investigate liquidity",
+  "adapter-required"
 ]);
 requireText("packages/cli/src/index.ts", cliSource, [
   "resolveContractExecutionContext",
@@ -97,7 +147,7 @@ if (enableEnvelope.ok !== false || enableEnvelope.error?.code !== "MAINNET_NOT_E
 for (const [label, body] of [
   ["README.md", readme],
   ["docs/mainnet-safety.md", mainnetSafety],
-  ["plugins/codex/README.md", await readFile(join(rootDir, "plugins", "codex", "README.md"), "utf8")]
+  ["plugins/codex/README.md", codexPluginReadme]
 ]) {
   if (/S[A-Z2-7]{55}/.test(body)) {
     errors.push(`${label} contains a raw Stellar secret-like value`);

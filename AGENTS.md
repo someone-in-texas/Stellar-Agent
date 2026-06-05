@@ -18,6 +18,18 @@
 - Add or update policy tests.
 - Run `pnpm test`.
 
+## Before adding or changing CLI workflows
+
+- Update user-facing docs for command changes.
+- Check whether `plugins/codex/README.md` and `plugins/codex/skills/*/SKILL.md` need updates.
+- Add or update a Codex skill when a new workflow family needs agent-specific safety rules or command sequencing.
+
+## Before preparing a release
+
+- Run `pnpm release:preflight`.
+- Check the Codex plugin with `node packages/codex-plugin/dist/cli.js validate plugins/codex`.
+- Confirm every release headline feature is represented in either an existing Codex skill or a deliberately documented non-skill boundary.
+
 ## Do not
 
 - Add Mainnet auto-signing.
