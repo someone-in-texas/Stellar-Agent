@@ -1,6 +1,7 @@
 import { redactSensitive } from "@stellar-agent/core";
 import { Buffer } from "node:buffer";
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 
 export interface JsonSchema {
   type: "object";
@@ -47,6 +48,9 @@ const commonProperties = {
   profile: { type: "string", enum: ["testnet", "mainnet", "local"], description: "Network profile name." },
   policyPath: { type: "string", description: "Optional path to a policy YAML file." }
 };
+
+const require = createRequire(import.meta.url);
+const { version: MCP_VERSION } = require("../package.json") as { version: string };
 
 export const MCP_TOOLS: McpTool[] = [
   tool("stellar_testnet_doctor", "Run Testnet readiness checks.", {}, (input) => [
@@ -479,7 +483,7 @@ export async function handleMcpRequest(request: McpRequest, runner: CliRunner): 
     return response(request, {
       protocolVersion: "2024-11-05",
       capabilities: { tools: {} },
-      serverInfo: { name: "stellar-agent-mcp", version: "0.0.0" }
+      serverInfo: { name: "stellar-agent-mcp", version: MCP_VERSION }
     });
   }
   if (request.method === "tools/list") {

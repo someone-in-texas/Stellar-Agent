@@ -1,17 +1,29 @@
 import { createDefaultConfig } from "@stellar-agent/core";
 import { ensureWallet } from "@stellar-agent/testnet-suite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { stringify } from "yaml";
-import { buildProgram } from "../src/index.js";
+import { buildProgram, isCliEntrypoint } from "../src/index.js";
 
 const transactionHash = "a".repeat(64);
 const contractId = "CB7Y2XA3ULT62HEH6DPAUGVGUTSVL7JO5T5VOYUW6UVZI6SG72UOKSYR";
 const require = createRequire(import.meta.url);
 const { Account, Asset, BASE_FEE, Keypair, Networks, Operation, TransactionBuilder } = require("../../stellar/node_modules/@stellar/stellar-sdk");
+
+describe("CLI package entrypoint", () => {
+  it("treats npm .bin symlinks as executable entrypoints", async () => {
+    const root = await mkdtemp(join(tmpdir(), "stellar-agent-cli-entrypoint-"));
+    const sourcePath = fileURLToPath(new URL("../src/index.ts", import.meta.url));
+    const symlinkPath = join(root, "stellar-agent");
+    await symlink(sourcePath, symlinkPath);
+
+    expect(isCliEntrypoint(symlinkPath, pathToFileURL(sourcePath).href)).toBe(true);
+  });
+});
 
 describe("CLI contract receipts", () => {
   afterEach(() => {

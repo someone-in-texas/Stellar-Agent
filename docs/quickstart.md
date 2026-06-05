@@ -10,7 +10,7 @@ pnpm cli -- testnet smoke-test
 pnpm cli -- receipts latest
 ```
 
-Package publishing is not enabled yet for this workspace. See `docs/distribution.md` for the release gate.
+GitHub releases include verified package tarballs, but npm publication remains a separate manual provenance-backed step. See `docs/distribution.md` for the release and install-artifact policy.
 
 Expected shape:
 

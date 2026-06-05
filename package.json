@@ -1,6 +1,6 @@
 {
   "name": "stellar-agent-bridge",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@9.15.4",
@@ -15,7 +15,12 @@
     "smoke": "pnpm build && node scripts/check-help.mjs",
     "smoke:testnet": "pnpm build && node scripts/smoke-test-testnet.mjs",
     "verify:live:testnet": "pnpm build && node scripts/verify-live-testnet.mjs",
-    "release:preflight": "pnpm build && pnpm lint && pnpm test && pnpm smoke && NPM_CONFIG_CACHE=/tmp/stellar-agent-npm-cache pnpm --filter @stellar-agent/cli exec npm pack --dry-run",
+    "release:check-versions": "node scripts/check-version-consistency.mjs",
+    "release:safety": "node scripts/check-release-safety.mjs",
+    "release:pack": "node scripts/pack-release.mjs",
+    "release:verify-artifacts": "node scripts/verify-release-artifacts.mjs",
+    "release:notes": "node scripts/write-github-release-notes.mjs",
+    "release:preflight": "pnpm build && pnpm lint && pnpm test && pnpm smoke && pnpm release:check-versions && pnpm release:safety && pnpm release:pack && pnpm release:verify-artifacts && pnpm release:notes",
     "demo:x402": "pnpm build && node apps/paid-api-demo/server.mjs",
     "test:live:testnet": "LIVE_STELLAR_TESTNET=1 vitest run --project live-testnet"
   },

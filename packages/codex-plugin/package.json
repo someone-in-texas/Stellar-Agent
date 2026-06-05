@@ -1,7 +1,21 @@
 {
   "name": "@stellar-agent/codex-plugin",
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "Validation and manifest tooling for the Stellar Agent Bridge Codex plugin artifact.",
   "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/someone-in-texas/Stellar-Agent.git",
+    "directory": "packages/codex-plugin"
+  },
+  "bugs": {
+    "url": "https://github.com/someone-in-texas/Stellar-Agent/issues"
+  },
+  "homepage": "https://github.com/someone-in-texas/Stellar-Agent#readme",
+  "engines": {
+    "node": ">=22"
+  },
   "bin": {
     "stellar-agent-codex-plugin": "./dist/cli.js"
   },
@@ -13,6 +27,9 @@
       "import": "./dist/index.js"
     }
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -b",
     "test": "vitest run"

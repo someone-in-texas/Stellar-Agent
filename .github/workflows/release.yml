@@ -2,12 +2,30 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create or verify, for example v0.1.0"
+        required: true
+        default: "v0.1.0"
+      create_github_release:
+        description: "Create the GitHub release from generated artifacts"
+        required: true
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
 
 jobs:
-  preflight:
+  github-release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -16,4 +34,26 @@ jobs:
           version: 9.15.4
       - run: pnpm install --frozen-lockfile
       - run: pnpm release:preflight
-      - run: echo "Publishing remains manual until package names, provenance, and workspace package order are finalized."
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stellar-agent-release-artifacts
+          path: |
+            .release/artifacts/npm/*.tgz
+            .release/artifacts/codex/*.tgz
+            .release/artifacts/release-manifest.json
+            .release/github-release-notes.md
+      - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/') || inputs.create_github_release == true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            .release/artifacts/npm/*.tgz \
+            .release/artifacts/codex/*.tgz \
+            .release/artifacts/release-manifest.json \
+            --title "Stellar Agent $RELEASE_TAG" \
+            --notes-file .release/github-release-notes.md \
+            --target "$GITHUB_SHA" \
+            --verify-tag
+      - run: echo "npm publishing remains a separate manual provenance-backed step."

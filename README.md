@@ -4,7 +4,7 @@
 
 ## Status
 
-This repository is an early v0 implementation. Core primitives, policy evaluation, local receipt logging, Testnet wallet creation, Friendbot funding, basic Testnet payment submission, issued-asset trustlines, claimable balances, local approval bridge requests, local x402-style and MPP one-time Testnet demos, MCP tools, Codex plugin validation, and the CLI command surface are present. Mainnet local auto-signing remains blocked; guarded Mainnet submission is limited to externally signed XDR and explicitly acknowledged real-funds contract operations.
+This repository is a `0.1.0` Testnet-first release. Core primitives, policy evaluation, local receipt logging, Testnet wallet creation, Friendbot funding, basic Testnet payment submission, issued-asset trustlines, claimable balances, local approval bridge requests, local x402-style and MPP Testnet demos, MCP tools, Codex plugin packaging, and the CLI command surface are present. Mainnet local auto-signing remains blocked; guarded Mainnet submission is limited to externally signed XDR and explicitly acknowledged real-funds contract operations.
 
 ## Safety First
 
@@ -17,7 +17,7 @@ This repository is an early v0 implementation. Core primitives, policy evaluatio
 
 ## 10-Minute Quickstart
 
-Package publishing is not enabled yet for this workspace. Until the release checklist in [docs/distribution.md](docs/distribution.md) is complete, use the local checkout workflow:
+GitHub releases include verified npm package tarballs and a matching Codex plugin artifact. npm publication remains a separate manual provenance-backed step, so the local checkout workflow is still the default install path:
 
 ```bash
 pnpm install
@@ -84,6 +84,16 @@ Agents should call the CLI with `--json`, parse the standard envelope, and stop 
 
 > Run `stellar-agent testnet doctor --json`, initialize Testnet if needed, run a dry-run smoke test, and summarize the latest receipt without printing secrets.
 
+## Release Artifacts
+
+`v0.1.0` GitHub releases contain:
+
+- npm tarballs for the scoped `@stellar-agent/*` packages.
+- `stellar-agent-codex-plugin-v0.1.0.tgz` for the bundled Codex plugin.
+- `release-manifest.json` with artifact SHA-256 checksums and source commit metadata.
+
+The generated tarballs are verified by `pnpm release:preflight` through a fresh temporary install before release.
+
 ## Architecture
 
 The project is CLI-first with shared packages underneath:
@@ -106,7 +116,7 @@ Mainnet uses real funds. It is disabled by default, requires explicit enablement
 ## Roadmap
 
 1. Production facilitator-backed x402/MPP support.
-2. Publishable package metadata, provenance, and workspace release order.
+2. npm publication after maintainer confirmation of scope access and provenance setup.
 3. Broader Mainnet approval UX hardening without local Mainnet secret custody.
 
 ## Contributing

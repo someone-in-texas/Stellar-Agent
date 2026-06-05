@@ -2508,7 +2508,7 @@ Continue implementing the next incomplete phase in SPEC.md. Before making change
 Codex should not block on these, but should leave TODOs where needed:
 
 1. Should the canonical repo live on GitHub, Bitbucket, or both?
-2. Should package publishing use npm under `@stellar-agent/*`?
+2. Confirm npm org/package access for the `@stellar-agent/*` package set before publishing the verified GitHub release tarballs.
 3. Should the first Mainnet flow support only Freighter?
 4. Should x402 or MPP come first after the base Testnet suite?
 5. Should local Stellar Quickstart be supported in addition to public Testnet?

@@ -46,11 +46,15 @@ import {
   walletTrustlines
 } from "@stellar-agent/testnet-suite";
 import { Command } from "commander";
+import { realpathSync } from "node:fs";
+import { createRequire } from "node:module";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
-const VERSION = "0.0.0";
+const require = createRequire(import.meta.url);
+const { version: VERSION } = require("../package.json") as { version: string };
 
 interface CliOptions {
   profile?: string;
@@ -2766,6 +2770,11 @@ async function resolvePaymentSourcePublicKey(
   return wallet.publicKey;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isCliEntrypoint()) {
   await buildProgram().parseAsync(process.argv);
+}
+
+export function isCliEntrypoint(argvPath = process.argv[1], moduleUrl = import.meta.url): boolean {
+  if (!argvPath) return false;
+  return realpathSync(argvPath) === realpathSync(fileURLToPath(moduleUrl));
 }

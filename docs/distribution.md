@@ -1,6 +1,6 @@
 # Distribution Readiness
 
-This repository is a pnpm workspace. Publishing the CLI requires publishing the workspace packages it depends on or replacing `workspace:*` dependency ranges during release.
+This repository is a pnpm workspace. The `0.1.x` release strategy is to publish scoped `@stellar-agent/*` package tarballs from a verified GitHub release. Source manifests keep `workspace:*` dependency ranges for local development; `pnpm release:pack` rewrites those ranges to the release version inside the staged package tarballs only.
 
 ## Current Release Gate
 
@@ -13,15 +13,50 @@ pnpm release:preflight
 
 See `RELEASE.md` for the Codex-run release checklist.
 
-The package dry-run uses `NPM_CONFIG_CACHE=/tmp/stellar-agent-npm-cache` so it is independent of a developer's global npm cache permissions.
+The release preflight builds, lints, tests, smoke-tests, checks release metadata, verifies Mainnet safety invariants, packs every publishable package, validates the Codex plugin package, installs the generated tarballs in a fresh temporary project, and writes GitHub release notes.
 
-Publishing remains manual until these decisions are finalized:
+Generated artifacts:
 
-- Public package names for each workspace package.
-- npm provenance/signing requirements.
-- Versioning and changelog policy.
-- Package publish order for workspace dependencies.
-- Whether the unscoped `stellar-agent-bridge` package is a wrapper package or the CLI package is published as `@stellar-agent/cli`.
+- `.release/artifacts/npm/*.tgz` for scoped npm packages.
+- `.release/artifacts/codex/stellar-agent-codex-plugin-v0.1.0.tgz` for Codex plugin installation.
+- `.release/artifacts/release-manifest.json` for checksums and source commit evidence.
+
+The public package set is:
+
+```text
+@stellar-agent/core
+@stellar-agent/ledger-logger
+@stellar-agent/policy
+@stellar-agent/stellar
+@stellar-agent/freighter-bridge
+@stellar-agent/mcp-server
+@stellar-agent/testnet-suite
+@stellar-agent/x402-client
+@stellar-agent/mpp-client
+@stellar-agent/codex-plugin
+@stellar-agent/cli
+```
+
+The unscoped root package remains private and is not the CLI package. Users should install or run `@stellar-agent/cli` once npm publication is enabled.
+
+## npm Publication
+
+npm publication is prepared but manual. Publish only the generated tarballs after confirming npm scope ownership and package access:
+
+```bash
+for package in .release/artifacts/npm/*.tgz; do
+  npm publish "$package" --provenance --access public
+done
+```
+
+Do not publish from package source directories. The generated tarballs are the tested artifacts.
+
+## Versioning and Changelog
+
+- `0.1.x` means installable Testnet-first release artifacts with stable-enough CLI commands and JSON envelopes for early agent integration.
+- Patch releases fix defects, documentation, packaging, and safety checks without broad command-shape churn.
+- Breaking command, JSON envelope, policy schema, or receipt schema changes should wait for `0.2.0` unless they repair a safety bug.
+- `CHANGELOG.md` is the source for GitHub release notes.
 
 ## Mainnet Release Requirements
 
