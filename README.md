@@ -1,6 +1,6 @@
 `stellar-agent-bridge` is an open-source CLI and local wallet bridge for safe agentic payments on Stellar. It gives developers and AI agents a Testnet-first way to create wallets, fund accounts, run payments, inspect ledger data, enforce spend policies, and produce auditable receipts - with guarded Mainnet support when users are ready.
 
-[![CI](https://github.com/example/stellar-agent-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/example/stellar-agent-bridge/actions)
+[![CI](https://github.com/someone-in-texas/Stellar-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/someone-in-texas/Stellar-Agent/actions/workflows/ci.yml)
 
 ## Status
 
@@ -31,10 +31,13 @@ Useful verification commands:
 
 ```bash
 pnpm test
+pnpm release:preflight
 pnpm cli -- testnet init --no-fund
 pnpm cli -- testnet smoke-test --dry-run --json
 LIVE_STELLAR_TESTNET=1 pnpm verify:live:testnet
 ```
+
+For GitHub release preparation, see [RELEASE.md](RELEASE.md).
 
 ## CLI Examples
 

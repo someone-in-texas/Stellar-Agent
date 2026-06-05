@@ -15,9 +15,5 @@ jobs:
         with:
           version: 9.15.4
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - run: pnpm lint
-      - run: pnpm test
-      - run: pnpm smoke
-      - run: pnpm --filter @stellar-agent/cli pack --dry-run
+      - run: pnpm release:preflight
       - run: echo "Publishing remains manual until package names, provenance, and workspace package order are finalized."

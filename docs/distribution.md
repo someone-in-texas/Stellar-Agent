@@ -8,12 +8,12 @@ The release workflow runs:
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm build
-pnpm lint
-pnpm test
-pnpm smoke
-pnpm --filter @stellar-agent/cli pack --dry-run
+pnpm release:preflight
 ```
+
+See `RELEASE.md` for the Codex-run release checklist.
+
+The package dry-run uses `NPM_CONFIG_CACHE=/tmp/stellar-agent-npm-cache` so it is independent of a developer's global npm cache permissions.
 
 Publishing remains manual until these decisions are finalized:
 
