@@ -3,6 +3,7 @@ import {
   DEFAULT_MAINNET_POLICY,
   DEFAULT_TESTNET_POLICY,
   evaluateDefiBlendRequest,
+  evaluateMarketLiquidityRequest,
   evaluatePaymentRequest,
   parsePolicyYaml,
   policyToYaml
@@ -220,5 +221,73 @@ describe("policy evaluation", () => {
     expect(decision.status).toBe("denied");
     expect(decision.matchedRules).toContain("defi_blend_disabled");
     expect(decision.matchedRules).toContain("defi_blend_mainnet_requires_approval");
+  });
+
+  it("allows default Testnet core liquidity deposits and withdrawals within policy", () => {
+    const deposit = evaluateMarketLiquidityRequest(DEFAULT_TESTNET_POLICY, {
+      network: "testnet",
+      pool: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      assets: ["XLM", "USDC:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"],
+      action: "deposit",
+      exposureValue: "10",
+      priceBoundsProvided: true
+    });
+    expect(deposit.status).toBe("allowed");
+    expect(deposit.matchedRules).toContain("market_liquidity_assets_allowed");
+    expect(deposit.matchedRules).toContain("market_liquidity_action_allowed");
+
+    const withdraw = evaluateMarketLiquidityRequest(DEFAULT_TESTNET_POLICY, {
+      network: "testnet",
+      pool: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      assets: ["XLM", "USDC:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"],
+      action: "withdraw",
+      exposureValue: "0"
+    });
+    expect(withdraw.status).toBe("allowed");
+  });
+
+  it("enforces liquidity pool, asset, action, exposure, and price-bound policy", () => {
+    const policy = {
+      ...DEFAULT_TESTNET_POLICY,
+      market: {
+        liquidity: {
+          ...DEFAULT_TESTNET_POLICY.market.liquidity,
+          allowedPools: ["allowed-pool"],
+          allowedAssets: ["XLM"],
+          allowedActions: ["withdraw" as const],
+          maxPoolExposureValue: "5",
+          requirePriceBounds: true
+        }
+      }
+    };
+    const decision = evaluateMarketLiquidityRequest(policy, {
+      network: "testnet",
+      pool: "denied-pool",
+      assets: ["XLM", "EUR:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"],
+      action: "deposit",
+      exposureValue: "6",
+      priceBoundsProvided: false
+    });
+    expect(decision.status).toBe("denied");
+    expect(decision.matchedRules).toContain("market_liquidity_pool_not_allowed");
+    expect(decision.matchedRules).toContain("market_liquidity_asset_not_allowed");
+    expect(decision.matchedRules).toContain("market_liquidity_action_not_allowed");
+    expect(decision.matchedRules).toContain("market_liquidity_exposure_over_limit");
+    expect(decision.matchedRules).toContain("market_liquidity_price_bounds_required");
+  });
+
+  it("keeps Mainnet liquidity disabled and approval-gated by default", () => {
+    const decision = evaluateMarketLiquidityRequest(DEFAULT_MAINNET_POLICY, {
+      network: "mainnet",
+      pool: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      assets: ["XLM", "USDC:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"],
+      action: "deposit",
+      exposureValue: "1",
+      priceBoundsProvided: true
+    });
+    expect(decision.realFunds).toBe(true);
+    expect(decision.status).toBe("denied");
+    expect(decision.matchedRules).toContain("market_liquidity_disabled");
+    expect(decision.matchedRules).toContain("market_liquidity_mainnet_requires_approval");
   });
 });

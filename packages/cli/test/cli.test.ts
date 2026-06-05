@@ -389,6 +389,202 @@ describe("CLI DeFi commands", () => {
   });
 });
 
+describe("CLI market liquidity commands", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+  });
+
+  it("inspects core liquidity pools through Horizon", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(poolFixture())));
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "market",
+      "pool",
+      "inspect",
+      "--pool",
+      poolIdFixture()
+    ]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        id: poolIdFixture(),
+        feeBp: 30,
+        totalShares: "50.0000000",
+        reserves: [
+          { asset: "XLM", amount: "100.0000000" },
+          { asset: expect.stringContaining("USD:G"), amount: "200.0000000" }
+        ]
+      }
+    });
+  });
+
+  it("preflights liquidity deposits with policy context before submission", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input: string | URL | Request) => {
+      const url = input.toString();
+      if (url.includes("/accounts/")) return new Response(JSON.stringify(accountFixture()));
+      return new Response(JSON.stringify(poolFixture()));
+    });
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "market",
+      "lp",
+      "preflight",
+      "--pool",
+      poolIdFixture(),
+      "--max-a",
+      "1",
+      "--max-b",
+      "2",
+      "--min-price",
+      "1.5",
+      "--max-price",
+      "2.5"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        policyDecision: { status: "allowed" },
+        preflight: {
+          action: "deposit",
+          pool: { id: poolIdFixture() },
+          deposit: {
+            maxAmountA: "1.0000000",
+            maxAmountB: "2.0000000",
+            estimatedShares: "0.5000000"
+          },
+          trustlines: {
+            reserveAssetsSatisfied: true,
+            poolShareSatisfied: true
+          }
+        }
+      }
+    });
+  });
+
+  it("evaluates price listeners as finite JSON events", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(poolFixture())));
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "market",
+      "listen",
+      "price",
+      "--pool",
+      poolIdFixture(),
+      "--above",
+      "1.5"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        triggered: true,
+        events: [
+          {
+            type: "market.alert",
+            status: "triggered",
+            observed: "2.0000000"
+          }
+        ]
+      }
+    });
+  });
+
+  it("blocks local Mainnet liquidity mutation", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--profile",
+      "mainnet",
+      "--json",
+      "market",
+      "lp",
+      "deposit",
+      "--pool",
+      poolIdFixture(),
+      "--max-a",
+      "1",
+      "--max-b",
+      "1",
+      "--min-price",
+      "0.9",
+      "--max-price",
+      "1.1"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: false,
+      error: {
+        code: "MAINNET_NOT_ENABLED",
+        message: "Mainnet liquidity pool mutation requires an external signer and is not available through local auto-signing."
+      }
+    });
+  });
+
+  it("explains strategy files without signing or submitting", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
+    const strategyPath = join(tmpdir(), `stellar-agent-strategy-${Date.now()}.json`);
+    await writeFile(
+      strategyPath,
+      JSON.stringify({
+        kind: "liquidity",
+        actions: [{ type: "deposit", pool: poolIdFixture(), maxA: "1", maxB: "2" }]
+      })
+    );
+
+    const output = await runCli(["--config", configPath, "--json", "strategy", "simulate", strategyPath]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        status: "explained",
+        submitted: false,
+        signing: false,
+        simulation: { submitted: false, signing: false, mode: "dry_run" }
+      }
+    });
+  });
+
+  it("keeps Soroban pool mutation behind an adapter-required boundary", async () => {
+    const output = await runCli([
+      "--json",
+      "market",
+      "soroban",
+      "pool",
+      "preflight",
+      "--id",
+      contractId,
+      "--action",
+      "deposit"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        contractId,
+        status: "adapter_required",
+        mutationSupported: false
+      }
+    });
+  });
+});
+
 async function createCliFixture(args: { stdout: string; stderr: string }, options: { mainnetEnabled?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), "stellar-agent-cli-test-"));
   const config = createDefaultConfig(root);
@@ -448,4 +644,50 @@ function signedPaymentXdrFixture(): string {
     .build();
   transaction.sign(signer);
   return transaction.toXDR();
+}
+
+function poolIdFixture(): string {
+  return "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+}
+
+function poolFixture() {
+  return {
+    id: poolIdFixture(),
+    paging_token: poolIdFixture(),
+    fee_bp: 30,
+    type: "constant_product",
+    total_trustlines: "3",
+    total_shares: "50.0000000",
+    reserves: [
+      { asset: "native", amount: "100.0000000" },
+      { asset: "USD:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", amount: "200.0000000" }
+    ],
+    _links: {
+      self: { href: `https://horizon-testnet.stellar.org/liquidity_pools/${poolIdFixture()}` }
+    }
+  };
+}
+
+function accountFixture() {
+  return {
+    id: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    account_id: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    sequence: "1",
+    balances: [
+      { asset_type: "native", balance: "100.0000000" },
+      {
+        asset_type: "credit_alphanum4",
+        asset_code: "USD",
+        asset_issuer: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        balance: "100.0000000",
+        limit: "1000.0000000"
+      },
+      {
+        asset_type: "liquidity_pool_shares",
+        liquidity_pool_id: poolIdFixture(),
+        balance: "5.0000000",
+        limit: "1000.0000000"
+      }
+    ]
+  };
 }

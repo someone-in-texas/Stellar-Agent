@@ -19,6 +19,7 @@ export type DefiBlendRequestType =
   | "withdraw_collateral"
   | "borrow"
   | "repay";
+export type MarketLiquidityAction = "deposit" | "withdraw";
 
 export interface PolicyDecision {
   status: PolicyDecisionStatus;
@@ -47,6 +48,15 @@ export interface DefiBlendPolicyRequest {
   borrowValue?: string;
   protocolExposureValue?: string;
   healthFactorAfter?: number | null;
+}
+
+export interface MarketLiquidityPolicyRequest {
+  network: "testnet" | "mainnet" | "local";
+  pool: string;
+  assets: string[];
+  action: MarketLiquidityAction;
+  exposureValue?: string;
+  priceBoundsProvided?: boolean;
 }
 
 const defiBlendRequestTypeSchema = z.enum([
@@ -92,6 +102,39 @@ const defiPolicySchema = z
     }
   });
 
+const marketLiquidityActionSchema = z.enum(["deposit", "withdraw"]);
+
+const marketPolicySchema = z
+  .object({
+    liquidity: z
+      .object({
+        enabled: z.boolean().default(false),
+        allowedPools: z.array(z.string().min(1)).default([]),
+        allowedAssets: z.array(z.string().min(1)).default([]),
+        allowedActions: z.array(marketLiquidityActionSchema).default([]),
+        maxPoolExposureValue: z.string().min(1).default("0"),
+        requirePriceBounds: z.boolean().default(true)
+      })
+      .default({
+        enabled: false,
+        allowedPools: [],
+        allowedAssets: [],
+        allowedActions: [],
+        maxPoolExposureValue: "0",
+        requirePriceBounds: true
+      })
+  })
+  .default({
+    liquidity: {
+      enabled: false,
+      allowedPools: [],
+      allowedAssets: [],
+      allowedActions: [],
+      maxPoolExposureValue: "0",
+      requirePriceBounds: true
+    }
+  });
+
 export const policySchema = z.object({
   version: z.literal(1),
   name: z.string().min(1),
@@ -133,6 +176,7 @@ export const policySchema = z.object({
       blockOpaqueTransactions: z.boolean().default(true)
     })
     .optional(),
+  market: marketPolicySchema,
   defi: defiPolicySchema,
   privacy: z.object({
     redactUrlQueryParamsInLogs: z.boolean().default(true),
@@ -179,6 +223,16 @@ export const DEFAULT_TESTNET_POLICY: Policy = {
       maxProtocolExposureValue: "1000",
       minimumHealthFactor: 1.5,
       requireSimulation: true
+    }
+  },
+  market: {
+    liquidity: {
+      enabled: true,
+      allowedPools: ["*"],
+      allowedAssets: ["*"],
+      allowedActions: ["deposit", "withdraw"],
+      maxPoolExposureValue: "1000",
+      requirePriceBounds: true
     }
   },
   privacy: {
@@ -230,6 +284,16 @@ export const DEFAULT_MAINNET_POLICY: Policy = {
       maxProtocolExposureValue: "0",
       minimumHealthFactor: 2,
       requireSimulation: true
+    }
+  },
+  market: {
+    liquidity: {
+      enabled: false,
+      allowedPools: [],
+      allowedAssets: [],
+      allowedActions: [],
+      maxPoolExposureValue: "0",
+      requirePriceBounds: true
     }
   },
   privacy: {
@@ -475,6 +539,87 @@ export function evaluateDefiBlendRequest(policyInput: Policy, request: DefiBlend
 
   if (decision.status === "allowed") {
     note("policy_allowed", "Blend DeFi request is allowed by policy.");
+  }
+
+  return sanitizeDecision(policy, decision);
+}
+
+export function evaluateMarketLiquidityRequest(
+  policyInput: Policy,
+  request: MarketLiquidityPolicyRequest
+): PolicyDecision {
+  const policy = policySchema.parse(policyInput);
+  const decision: PolicyDecision = {
+    status: "allowed",
+    network: policy.network,
+    realFunds: policy.network === "mainnet" || request.network === "mainnet",
+    matchedRules: [],
+    reasons: []
+  };
+  const liquidity = policy.market.liquidity;
+  const deny = (rule: string, reason: string) => {
+    decision.status = "denied";
+    decision.matchedRules.push(rule);
+    decision.reasons.push(reason);
+  };
+  const requireApproval = (rule: string, reason: string) => {
+    if (decision.status !== "denied") {
+      decision.status = "requires_approval";
+      decision.approval ??= { required: true, reason: rule };
+    }
+    decision.matchedRules.push(rule);
+    decision.reasons.push(reason);
+  };
+  const note = (rule: string, reason: string) => {
+    decision.matchedRules.push(rule);
+    decision.reasons.push(reason);
+  };
+
+  if (!liquidity.enabled) {
+    deny("market_liquidity_disabled", "Market liquidity pool requests are disabled by policy.");
+  } else {
+    note("market_liquidity_enabled", "Market liquidity pool requests are enabled by policy.");
+  }
+
+  const allowedPools = liquidity.allowedPools.map((pool) => pool.toUpperCase());
+  if (!allowedPools.includes("*") && !allowedPools.includes(request.pool.toUpperCase())) {
+    deny("market_liquidity_pool_not_allowed", "Liquidity pool is not allowed by policy.");
+  } else {
+    note("market_liquidity_pool_allowed", "Liquidity pool is allowed by policy.");
+  }
+
+  const allowedAssets = liquidity.allowedAssets.map((asset) => asset.toUpperCase());
+  const deniedAssets = request.assets.filter(
+    (asset) => !allowedAssets.includes("*") && !allowedAssets.includes(asset.toUpperCase())
+  );
+  if (deniedAssets.length > 0) {
+    deny("market_liquidity_asset_not_allowed", "One or more liquidity pool assets are not allowed by policy.");
+  } else {
+    note("market_liquidity_assets_allowed", "Liquidity pool assets are allowed by policy.");
+  }
+
+  if (!liquidity.allowedActions.includes(request.action)) {
+    deny("market_liquidity_action_not_allowed", `Liquidity action ${request.action} is not allowed by policy.`);
+  } else {
+    note("market_liquidity_action_allowed", "Liquidity action is allowed by policy.");
+  }
+
+  const exposureValue = parsePolicyNumber(request.exposureValue ?? "0", "liquidity exposure value");
+  const maxExposureValue = parsePolicyNumber(liquidity.maxPoolExposureValue, "max liquidity pool exposure value");
+  if (exposureValue > maxExposureValue) {
+    deny("market_liquidity_exposure_over_limit", "Liquidity pool exposure would exceed the policy limit.");
+  }
+
+  if (liquidity.requirePriceBounds && request.action === "deposit" && request.priceBoundsProvided === false) {
+    deny("market_liquidity_price_bounds_required", "Liquidity deposits require explicit price bounds.");
+  }
+
+  if (decision.realFunds) {
+    requireApproval("market_liquidity_mainnet_requires_approval", "Mainnet liquidity pool requests require explicit approval.");
+  }
+
+  if (decision.status === "allowed") {
+    note("policy_allowed", "Market liquidity request is allowed by policy.");
   }
 
   return sanitizeDecision(policy, decision);

@@ -18,6 +18,7 @@ import {
   serializeError
 } from "@stellar-agent/core";
 import { latestLedger, lookupTransaction, parseStellarCliTransactionHash, resolveNetworkProfile } from "@stellar-agent/stellar";
+import type { LiquidityPoolPreflight, LiquidityPoolSummary } from "@stellar-agent/stellar";
 import type { BlendAction, BlendPreflight } from "@stellar-agent/defi";
 import {
   appendEvent,
@@ -35,6 +36,7 @@ import {
   PolicyDecision,
   defaultPolicyForNetwork,
   evaluateDefiBlendRequest,
+  evaluateMarketLiquidityRequest,
   evaluatePaymentRequest,
   parsePolicyYaml,
   policyToYaml
@@ -113,6 +115,8 @@ Common commands:
   stellar-agent claimable create --to G... --amount 1
   stellar-agent cache inspect
   stellar-agent contract invoke --id C... --source agent --fn hello --arg to=world
+  stellar-agent market pools list --asset-a XLM --asset-b USDC:G... --json
+  stellar-agent market lp preflight --pool 0123... --max-a 1 --max-b 1 --min-price 0.9 --max-price 1.1 --json
   stellar-agent policy explain --request ./payment-request.json`
     );
 
@@ -124,6 +128,8 @@ Common commands:
   addPayCommands(program);
   addClaimableCommands(program);
   addContractCommands(program);
+  addMarketCommands(program);
+  addStrategyCommands(program);
   addDefiCommands(program);
   addPolicyCommands(program);
   addLedgerCommands(program);
@@ -2103,6 +2109,339 @@ function addContractCommands(program: Command): void {
     );
 }
 
+function addMarketCommands(program: Command): void {
+  const market = program.command("market").description("Inspect markets, liquidity pools, and market-aware alerts.");
+
+  const pools = market.command("pools").description("Inspect built-in Stellar AMM liquidity pools.");
+  pools
+    .command("list")
+    .description("List core Stellar liquidity pools, optionally filtered by exact reserve assets or participant account.")
+    .option("--asset-a <asset>", "First reserve asset, such as XLM or USD:G...")
+    .option("--asset-b <asset>", "Second reserve asset, such as XLM or USD:G...")
+    .option("--account <account>", "Local wallet name or public key participating in pools")
+    .option("--network <name>", "Network profile to inspect: testnet or mainnet")
+    .option("--limit <n>", "Number of records", parseIntegerOption, 10)
+    .action(
+      withContext(async (context, options: { assetA?: string; assetB?: string; account?: string; network?: string; limit: number }) => {
+        if (Boolean(options.assetA) !== Boolean(options.assetB)) {
+          throw new StellarAgentError({
+            code: "INVALID_INPUT",
+            message: "Pool asset filtering requires both --asset-a and --asset-b.",
+            docs: "docs/market-liquidity.md#core-pool-inspection"
+          });
+        }
+        const { listLiquidityPools } = await import("@stellar-agent/stellar");
+        const profile = resolveMarketProfile(context, options.network);
+        return listLiquidityPools({
+          profile,
+          ...(options.assetA === undefined ? {} : { assetA: options.assetA }),
+          ...(options.assetB === undefined ? {} : { assetB: options.assetB }),
+          ...(options.account === undefined ? {} : { account: await resolvePublicAccount(context, options.account) }),
+          limit: options.limit
+        });
+      }, "Liquidity pools listed.")
+    );
+
+  const pool = market.command("pool").description("Inspect one core Stellar AMM liquidity pool.");
+  pool
+    .command("inspect")
+    .description("Load reserves, shares, fee, and trustline count for a core liquidity pool.")
+    .requiredOption("--pool <poolId>", "Liquidity pool id")
+    .option("--network <name>", "Network profile to inspect: testnet or mainnet")
+    .action(
+      withContext(async (context, options: { pool: string; network?: string }) => {
+        const { inspectLiquidityPool } = await import("@stellar-agent/stellar");
+        return inspectLiquidityPool({ poolId: options.pool, profile: resolveMarketProfile(context, options.network) });
+      }, "Liquidity pool inspected.")
+    );
+  pool
+    .command("trades")
+    .description("Fetch recent Horizon trades for a core liquidity pool.")
+    .requiredOption("--pool <poolId>", "Liquidity pool id")
+    .option("--network <name>", "Network profile to inspect: testnet or mainnet")
+    .option("--limit <n>", "Number of records", parseIntegerOption, 10)
+    .action(
+      withContext(async (context, options: { pool: string; network?: string; limit: number }) => {
+        const { liquidityPoolTrades } = await import("@stellar-agent/stellar");
+        return liquidityPoolTrades({ poolId: options.pool, profile: resolveMarketProfile(context, options.network), limit: options.limit });
+      }, "Liquidity pool trades loaded.")
+    );
+  pool
+    .command("position")
+    .description("Inspect pool-share positions for a local wallet or public key.")
+    .option("--account <account>", "Local wallet name or public key", "agent")
+    .option("--pool <poolId>", "Limit to one liquidity pool id")
+    .option("--network <name>", "Network profile to inspect: testnet or mainnet")
+    .action(
+      withContext(async (context, options: { account: string; pool?: string; network?: string }) => {
+        const { inspectLiquidityPoolPosition } = await import("@stellar-agent/stellar");
+        return inspectLiquidityPoolPosition({
+          account: await resolvePublicAccount(context, options.account),
+          ...(options.pool === undefined ? {} : { poolId: options.pool }),
+          profile: resolveMarketProfile(context, options.network)
+        });
+      }, "Liquidity pool position inspected.")
+    );
+
+  const lp = market.command("lp").description("Preflight and submit guarded core Stellar liquidity pool actions.");
+  lp
+    .command("preflight")
+    .description("Preflight a core liquidity pool deposit or withdrawal with policy context.")
+    .requiredOption("--pool <poolId>", "Liquidity pool id")
+    .option("--account <account>", "Local wallet name or public key", "agent")
+    .option("--action <action>", "deposit or withdraw", "deposit")
+    .option("--max-a <amount>", "Deposit max amount for reserve A")
+    .option("--max-b <amount>", "Deposit max amount for reserve B")
+    .option("--min-price <price>", "Deposit minimum reserve B per reserve A price")
+    .option("--max-price <price>", "Deposit maximum reserve B per reserve A price")
+    .option("--shares <amount>", "Pool shares to withdraw")
+    .option("--min-a <amount>", "Withdrawal minimum reserve A amount", "0")
+    .option("--min-b <amount>", "Withdrawal minimum reserve B amount", "0")
+    .option("--network <name>", "Network profile to inspect: testnet or mainnet")
+    .action(
+      withContext(async (context, options: LiquidityPreflightOptions) => {
+        const profile = resolveMarketProfile(context, options.network);
+        const preflight = await runLiquidityPreflight(context, profile, options);
+        const policy = await loadPolicy(context);
+        const policyDecision = evaluateMarketLiquidityRequest(policy, liquidityPolicyRequest(profile, preflight));
+        return { policyDecision, preflight };
+      }, "Liquidity pool preflight complete.")
+    );
+  lp
+    .command("deposit")
+    .description("Submit a guarded Testnet core liquidity pool deposit.")
+    .requiredOption("--pool <poolId>", "Liquidity pool id")
+    .requiredOption("--max-a <amount>", "Deposit max amount for reserve A")
+    .requiredOption("--max-b <amount>", "Deposit max amount for reserve B")
+    .requiredOption("--min-price <price>", "Deposit minimum reserve B per reserve A price")
+    .requiredOption("--max-price <price>", "Deposit maximum reserve B per reserve A price")
+    .option("--source <account>", "Local Testnet wallet name", "agent")
+    .option("--fee-strategy <strategy>", "Fee strategy: base, low, medium, high, p95", parseFeeStrategy, "medium")
+    .action(
+      withContext(async (context, options: LiquidityDepositOptions) => {
+        return runLiquiditySubmitCommand(context, { command: "market lp deposit", action: "deposit", ...options });
+      }, "Liquidity pool deposit submitted.")
+    );
+  lp
+    .command("withdraw")
+    .description("Submit a guarded Testnet core liquidity pool withdrawal.")
+    .requiredOption("--pool <poolId>", "Liquidity pool id")
+    .requiredOption("--shares <amount>", "Pool shares to withdraw")
+    .option("--min-a <amount>", "Withdrawal minimum reserve A amount", "0")
+    .option("--min-b <amount>", "Withdrawal minimum reserve B amount", "0")
+    .option("--source <account>", "Local Testnet wallet name", "agent")
+    .option("--fee-strategy <strategy>", "Fee strategy: base, low, medium, high, p95", parseFeeStrategy, "medium")
+    .action(
+      withContext(async (context, options: LiquidityWithdrawOptions) => {
+        return runLiquiditySubmitCommand(context, { command: "market lp withdraw", action: "withdraw", ...options });
+      }, "Liquidity pool withdrawal submitted.")
+    );
+
+  const trustline = lp.command("trustline").description("Manage core liquidity pool share trustlines.");
+  trustline
+    .command("add")
+    .description("Create a Testnet trustline for a liquidity pool share asset.")
+    .option("--pool <poolId>", "Existing liquidity pool id")
+    .option("--asset-a <asset>", "First reserve asset when deriving a pool id")
+    .option("--asset-b <asset>", "Second reserve asset when deriving a pool id")
+    .option("--account <account>", "Local Testnet wallet name", "agent")
+    .option("--limit <amount>", "Pool share trustline limit")
+    .action(
+      withContext(async (context, options: { pool?: string; assetA?: string; assetB?: string; account: string; limit?: string }) => {
+        const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
+        if (profile.realFunds) {
+          throw new StellarAgentError({
+            code: "MAINNET_NOT_ENABLED",
+            message: "Mainnet liquidity pool trustline creation requires an external signer.",
+            docs: "docs/mainnet-safety.md#mainnet-liquidity"
+          });
+        }
+        const wallet = await loadWallet(context.config, options.account);
+        const { changeLiquidityPoolTrustline } = await import("@stellar-agent/stellar");
+        const transaction = await changeLiquidityPoolTrustline({
+          source: wallet,
+          ...(options.pool === undefined ? {} : { poolId: options.pool }),
+          ...(options.assetA === undefined ? {} : { assetA: options.assetA }),
+          ...(options.assetB === undefined ? {} : { assetB: options.assetB }),
+          ...(options.limit === undefined ? {} : { limit: options.limit }),
+          profile
+        });
+        const receiptPath = await writeOperationReceipt(context, {
+          command: "market lp trustline add",
+          operation: {
+            type: "market.lp.trustline.add",
+            account: wallet.publicKey,
+            details: { liquidityPool: { poolId: transaction.poolId, limit: transaction.limit } }
+          },
+          transaction
+        });
+        return { status: "trustline_added", poolId: transaction.poolId, transaction, receiptPath };
+      }, "Liquidity pool trustline added.")
+    );
+
+  const listen = market.command("listen").description("Evaluate one or more market alert checks and return JSON events.");
+  listen
+    .command("price")
+    .description("Alert when a core pool reserve price crosses a threshold.")
+    .requiredOption("--pool <poolId>", "Liquidity pool id")
+    .option("--above <price>", "Trigger when reserve B per reserve A is above this price")
+    .option("--below <price>", "Trigger when reserve B per reserve A is below this price")
+    .option("--network <name>", "Network profile to inspect: testnet or mainnet")
+    .option("--polls <n>", "Number of checks", parsePositiveIntegerOption, 1)
+    .option("--interval-ms <n>", "Delay between checks", parsePositiveIntegerOption, 1000)
+    .action(
+      withContext(async (context, options: MarketPriceListenOptions) => {
+        return listenForPoolPrice(context, options);
+      }, "Market price listener evaluated.")
+    );
+  listen
+    .command("position")
+    .description("Alert when a pool-share position crosses a local threshold.")
+    .requiredOption("--pool <poolId>", "Liquidity pool id")
+    .option("--account <account>", "Local wallet name or public key", "agent")
+    .option("--shares-below <amount>", "Trigger when pool shares are below this amount")
+    .option("--network <name>", "Network profile to inspect: testnet or mainnet")
+    .action(
+      withContext(async (context, options: { pool: string; account: string; sharesBelow?: string; network?: string }) => {
+        const { inspectLiquidityPoolPosition } = await import("@stellar-agent/stellar");
+        const account = await resolvePublicAccount(context, options.account);
+        const position = await inspectLiquidityPoolPosition({
+          account,
+          poolId: options.pool,
+          profile: resolveMarketProfile(context, options.network)
+        });
+        const shares = position.positions[0]?.shares ?? "0.0000000";
+        const triggered = options.sharesBelow === undefined ? false : Number(shares) < Number(options.sharesBelow);
+        return {
+          type: "market.alert",
+          rule: "lp-position-shares-below",
+          status: triggered ? "triggered" : "not_triggered",
+          observed: shares,
+          threshold: options.sharesBelow ?? null,
+          position
+        };
+      }, "Market position listener evaluated.")
+    );
+
+  const soroban = market.command("soroban").description("Inspect Soroban AMM contracts without submitting liquidity actions.");
+  const sorobanPool = soroban.command("pool").description("Read-only Soroban pool investigation.");
+  sorobanPool
+    .command("inspect")
+    .description("Inspect Soroban contract interface metadata for a potential AMM pool.")
+    .requiredOption("--id <contractId>", "Soroban contract id")
+    .option("--network <network>", "Stellar CLI network", "testnet")
+    .option("--stellar-binary <path>", "Path to stellar CLI binary")
+    .option("--stellar-config-dir <path>", "Stellar CLI config directory")
+    .option("--stellar-no-cache", "Pass --no-cache to stellar CLI")
+    .action(
+      withContext(async (context, options: { id: string; network: string; stellarBinary?: string; stellarConfigDir?: string; stellarNoCache?: boolean }) => {
+        const profile = resolveContractExecutionContext(context, options.network, {
+          mutating: false
+        });
+        const { contractInfoWithStellarCli } = await import("@stellar-agent/stellar");
+        const result = await contractInfoWithStellarCli({
+          kind: "interface",
+          contractId: options.id,
+          network: options.network,
+          rpcUrl: profile.rpcUrl,
+          networkPassphrase: profile.networkPassphrase,
+          ...(options.stellarBinary === undefined ? {} : { stellarBinary: options.stellarBinary }),
+          ...(options.stellarConfigDir === undefined ? {} : { stellarConfigDir: options.stellarConfigDir }),
+          ...(options.stellarNoCache === undefined ? {} : { noCache: options.stellarNoCache })
+        });
+        return {
+          contractId: options.id,
+          boundary: "read_only",
+          mutationSupported: false,
+          result
+        };
+      }, "Soroban pool inspected.")
+    );
+  sorobanPool
+    .command("preflight")
+    .description("Explain why Soroban AMM mutation requires a protocol-specific adapter before submission.")
+    .requiredOption("--id <contractId>", "Soroban contract id")
+    .requiredOption("--action <action>", "deposit or withdraw")
+    .action(
+      withContext(async (_context, options: { id: string; action: string }) => {
+        if (options.action !== "deposit" && options.action !== "withdraw") {
+          throw new StellarAgentError({
+            code: "INVALID_INPUT",
+            message: "Soroban pool action must be deposit or withdraw.",
+            docs: "docs/market-liquidity.md#soroban-pool-boundary"
+          });
+        }
+        return {
+          contractId: options.id,
+          action: options.action,
+          status: "adapter_required",
+          mutationSupported: false,
+          requirements: [
+            "Use a protocol-specific adapter with documented contract interfaces.",
+            "Add policy controls before mutation.",
+            "Require simulation, external Mainnet signing, and receipts for submitted transactions."
+          ]
+        };
+      }, "Soroban pool preflight boundary explained.")
+    );
+}
+
+function addStrategyCommands(program: Command): void {
+  const strategy = program.command("strategy").description("Explain and simulate market-aware strategy proposals without hidden signing.");
+  strategy
+    .command("explain")
+    .description("Validate and explain a local strategy file.")
+    .argument("<file>", "Strategy JSON or YAML file")
+    .action(
+      withContext(async (_context, file: string) => {
+        const parsed = await readStrategyFile(file);
+        return explainStrategy(parsed);
+      }, "Strategy explained.")
+    );
+  strategy
+    .command("simulate")
+    .description("Simulate a local strategy file without submitting transactions.")
+    .argument("<file>", "Strategy JSON or YAML file")
+    .action(
+      withContext(async (_context, file: string) => {
+        const parsed = await readStrategyFile(file);
+        return { ...explainStrategy(parsed), simulation: { submitted: false, signing: false, mode: "dry_run" } };
+      }, "Strategy simulation complete.")
+    );
+  const investigate = strategy.command("investigate").description("Investigate market options without execution.");
+  investigate
+    .command("liquidity")
+    .description("Compare liquidity-pool context for an asset pair or explicit pool.")
+    .option("--pair <assetA/assetB>", "Asset pair, such as XLM/USD:G...")
+    .option("--pool <poolId>", "Specific liquidity pool id")
+    .option("--network <name>", "Network profile to inspect: testnet or mainnet")
+    .option("--limit <n>", "Number of records", parseIntegerOption, 5)
+    .action(
+      withContext(async (context, options: { pair?: string; pool?: string; network?: string; limit: number }) => {
+        const { inspectLiquidityPool, liquidityPoolTrades, listLiquidityPools } = await import("@stellar-agent/stellar");
+        const profile = resolveMarketProfile(context, options.network);
+        if (options.pool) {
+          const pool = await inspectLiquidityPool({ poolId: options.pool, profile });
+          const trades = await liquidityPoolTrades({ poolId: options.pool, profile, limit: options.limit });
+          return liquidityInvestigation({ pool, trades: trades.records, profile });
+        }
+        if (!options.pair) {
+          throw new StellarAgentError({
+            code: "INVALID_INPUT",
+            message: "Provide --pool or --pair for liquidity investigation.",
+            docs: "docs/market-liquidity.md#strategy-investigation"
+          });
+        }
+        const [assetA, assetB] = parsePairOption(options.pair);
+        const pools = await listLiquidityPools({ assetA, assetB, profile, limit: options.limit });
+        return {
+          pair: { assetA, assetB },
+          pools: pools.records.map((pool) => liquidityInvestigation({ pool, trades: [], profile }))
+        };
+      }, "Liquidity strategy investigation complete.")
+    );
+}
+
 function addDefiCommands(program: Command): void {
   const defi = program.command("defi").description("Inspect and preflight guarded DeFi workflows.");
   const blend = defi.command("blend").description("Inspect Blend pools and preflight Blend pool requests.");
@@ -2727,6 +3066,358 @@ function resolveBlendPoolVersion(version?: string): "v1" | "v2" | undefined {
 async function resolvePublicAccount(context: CliContext, account: string): Promise<string> {
   if (/^G[A-Z2-7]{55}$/.test(account)) return account;
   return (await loadWalletPublic(context.config, account)).publicKey;
+}
+
+interface LiquidityPreflightOptions {
+  pool: string;
+  account: string;
+  action: string;
+  maxA?: string;
+  maxB?: string;
+  minPrice?: string;
+  maxPrice?: string;
+  shares?: string;
+  minA: string;
+  minB: string;
+  network?: string;
+}
+
+interface LiquidityDepositOptions {
+  pool: string;
+  maxA: string;
+  maxB: string;
+  minPrice: string;
+  maxPrice: string;
+  source: string;
+  feeStrategy: "base" | "low" | "medium" | "high" | "p95";
+}
+
+interface LiquidityWithdrawOptions {
+  pool: string;
+  shares: string;
+  minA: string;
+  minB: string;
+  source: string;
+  feeStrategy: "base" | "low" | "medium" | "high" | "p95";
+}
+
+interface MarketPriceListenOptions {
+  pool: string;
+  above?: string;
+  below?: string;
+  network?: string;
+  polls: number;
+  intervalMs: number;
+}
+
+function resolveMarketProfile(context: CliContext, network?: string): NetworkProfile {
+  if (!network) return resolveNetworkProfile(context.profileName, context.config.profiles);
+  const normalized = network.toLowerCase();
+  if (normalized !== "testnet" && normalized !== "mainnet") {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Market network must be testnet or mainnet.",
+      docs: "docs/market-liquidity.md"
+    });
+  }
+  return resolveNetworkProfile(normalized, context.config.profiles);
+}
+
+async function runLiquidityPreflight(
+  context: CliContext,
+  profile: NetworkProfile,
+  options: LiquidityPreflightOptions
+): Promise<LiquidityPoolPreflight> {
+  const action = parseLiquidityAction(options.action);
+  const account = await resolvePublicAccount(context, options.account);
+  const { preflightLiquidityPoolDeposit, preflightLiquidityPoolWithdraw } = await import("@stellar-agent/stellar");
+  if (action === "deposit") {
+    if (!options.maxA || !options.maxB || !options.minPrice || !options.maxPrice) {
+      throw new StellarAgentError({
+        code: "INVALID_INPUT",
+        message: "Liquidity deposit preflight requires --max-a, --max-b, --min-price, and --max-price.",
+        docs: "docs/market-liquidity.md#lp-preflight"
+      });
+    }
+    return preflightLiquidityPoolDeposit({
+      poolId: options.pool,
+      maxAmountA: options.maxA,
+      maxAmountB: options.maxB,
+      minPrice: options.minPrice,
+      maxPrice: options.maxPrice,
+      account,
+      profile
+    });
+  }
+  if (!options.shares) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Liquidity withdrawal preflight requires --shares.",
+      docs: "docs/market-liquidity.md#lp-preflight"
+    });
+  }
+  return preflightLiquidityPoolWithdraw({
+    poolId: options.pool,
+    shares: options.shares,
+    minAmountA: options.minA,
+    minAmountB: options.minB,
+    account,
+    profile
+  });
+}
+
+function parseLiquidityAction(action: string): "deposit" | "withdraw" {
+  if (action === "deposit" || action === "withdraw") return action;
+  throw new StellarAgentError({
+    code: "INVALID_INPUT",
+    message: "Liquidity action must be deposit or withdraw.",
+    docs: "docs/market-liquidity.md#lp-preflight"
+  });
+}
+
+async function runLiquiditySubmitCommand(
+  context: CliContext,
+  args:
+    | ({ command: string; action: "deposit" } & LiquidityDepositOptions)
+    | ({ command: string; action: "withdraw" } & LiquidityWithdrawOptions)
+): Promise<unknown> {
+  const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
+  if (profile.realFunds) {
+    throw new StellarAgentError({
+      code: "MAINNET_NOT_ENABLED",
+      message: "Mainnet liquidity pool mutation requires an external signer and is not available through local auto-signing.",
+      hint: "Use Testnet for local liquidity workflows.",
+      docs: "docs/mainnet-safety.md#mainnet-liquidity"
+    });
+  }
+  const wallet = await loadWallet(context.config, args.source);
+  const { preflightLiquidityPoolDeposit, preflightLiquidityPoolWithdraw, submitLiquidityPoolDeposit, submitLiquidityPoolWithdraw } =
+    await import("@stellar-agent/stellar");
+  const preflight =
+    args.action === "deposit"
+      ? await preflightLiquidityPoolDeposit({
+          poolId: args.pool,
+          maxAmountA: args.maxA,
+          maxAmountB: args.maxB,
+          minPrice: args.minPrice,
+          maxPrice: args.maxPrice,
+          account: wallet.publicKey,
+          profile
+        })
+      : await preflightLiquidityPoolWithdraw({
+          poolId: args.pool,
+          shares: args.shares,
+          minAmountA: args.minA,
+          minAmountB: args.minB,
+          account: wallet.publicKey,
+          profile
+        });
+  const policy = await loadPolicy(context);
+  const policyDecision = evaluateMarketLiquidityRequest(policy, liquidityPolicyRequest(profile, preflight));
+  if (policyDecision.status !== "allowed") throw marketPolicyDeniedError(policyDecision);
+  const submitted =
+    args.action === "deposit"
+      ? await submitLiquidityPoolDeposit({
+          source: wallet,
+          poolId: args.pool,
+          maxAmountA: args.maxA,
+          maxAmountB: args.maxB,
+          minPrice: args.minPrice,
+          maxPrice: args.maxPrice,
+          profile,
+          feeStrategy: args.feeStrategy,
+          ...(context.options.noCache === undefined ? {} : { noCache: context.options.noCache })
+        })
+      : await submitLiquidityPoolWithdraw({
+          source: wallet,
+          poolId: args.pool,
+          shares: args.shares,
+          minAmountA: args.minA,
+          minAmountB: args.minB,
+          profile,
+          feeStrategy: args.feeStrategy,
+          ...(context.options.noCache === undefined ? {} : { noCache: context.options.noCache })
+        });
+  const receiptPath = await writeOperationReceipt(context, {
+    command: args.command,
+    policyDecision,
+    operation: {
+      type: `market.lp.${args.action}`,
+      source: args.source,
+      account: wallet.publicKey,
+      details: { liquidityPool: submitted.preflight }
+    },
+    transaction: {
+      hash: submitted.hash,
+      ...(submitted.ledger === undefined ? {} : { ledger: submitted.ledger }),
+      successful: submitted.successful,
+      ...(submitted.feeCharged === undefined ? {} : { feeCharged: submitted.feeCharged })
+    }
+  });
+  return {
+    status: "submitted",
+    transaction: {
+      hash: submitted.hash,
+      ...(submitted.ledger === undefined ? {} : { ledger: submitted.ledger }),
+      successful: submitted.successful,
+      ...(submitted.feeCharged === undefined ? {} : { feeCharged: submitted.feeCharged })
+    },
+    receiptPath,
+    policyDecision,
+    preflight: submitted.preflight
+  };
+}
+
+function liquidityPolicyRequest(profile: NetworkProfile, preflight: LiquidityPoolPreflight) {
+  return {
+    network: profile.realFunds ? ("mainnet" as const) : ("testnet" as const),
+    pool: preflight.pool.id,
+    assets: preflight.assets,
+    action: preflight.action,
+    exposureValue: liquidityExposureValue(preflight),
+    priceBoundsProvided: preflight.action === "deposit" ? Boolean(preflight.deposit?.minPrice && preflight.deposit.maxPrice) : true
+  };
+}
+
+function liquidityExposureValue(preflight: LiquidityPoolPreflight): string {
+  if (preflight.deposit) {
+    return String(Number(preflight.deposit.maxAmountA) + Number(preflight.deposit.maxAmountB));
+  }
+  return "0";
+}
+
+function marketPolicyDeniedError(decision: PolicyDecision): StellarAgentError {
+  return new StellarAgentError({
+    code: "POLICY_DENIED",
+    message: "Market liquidity request was denied by policy.",
+    hint: "Run market lp preflight to inspect the matched rules.",
+    docs: "docs/market-liquidity.md#policy",
+    details: decision
+  });
+}
+
+async function listenForPoolPrice(context: CliContext, options: MarketPriceListenOptions): Promise<unknown> {
+  if (options.above === undefined && options.below === undefined) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Price listener requires --above or --below.",
+      docs: "docs/market-liquidity.md#market-listeners"
+    });
+  }
+  const { inspectLiquidityPool } = await import("@stellar-agent/stellar");
+  const profile = resolveMarketProfile(context, options.network);
+  const events = [];
+  for (let poll = 0; poll < options.polls; poll += 1) {
+    if (poll > 0) await sleep(options.intervalMs);
+    const pool = await inspectLiquidityPool({ poolId: options.pool, profile });
+    const price = poolReservePrice(pool);
+    const aboveTriggered = options.above === undefined ? false : price > Number(options.above);
+    const belowTriggered = options.below === undefined ? false : price < Number(options.below);
+    events.push({
+      type: "market.alert",
+      rule: "core-pool-price",
+      status: aboveTriggered || belowTriggered ? "triggered" : "not_triggered",
+      pool: options.pool,
+      observed: price.toFixed(7),
+      thresholds: {
+        ...(options.above === undefined ? {} : { above: options.above }),
+        ...(options.below === undefined ? {} : { below: options.below })
+      },
+      assets: pool.reserves.map((reserve) => reserve.asset)
+    });
+  }
+  return { events, triggered: events.some((event) => event.status === "triggered") };
+}
+
+function poolReservePrice(pool: LiquidityPoolSummary): number {
+  if (pool.reserves.length !== 2 || !pool.reserves[0] || !pool.reserves[1]) {
+    throw new StellarAgentError({
+      code: "LEDGER_LOOKUP_FAILED",
+      message: "Liquidity pool record did not include exactly two reserves.",
+      docs: "docs/market-liquidity.md#core-pool-inspection"
+    });
+  }
+  const reserveA = Number(pool.reserves[0].amount);
+  const reserveB = Number(pool.reserves[1].amount);
+  if (!Number.isFinite(reserveA) || !Number.isFinite(reserveB) || reserveA <= 0) {
+    throw new StellarAgentError({
+      code: "LEDGER_LOOKUP_FAILED",
+      message: "Liquidity pool reserves did not contain a usable price.",
+      docs: "docs/market-liquidity.md#market-listeners"
+    });
+  }
+  return reserveB / reserveA;
+}
+
+async function readStrategyFile(file: string): Promise<Record<string, unknown>> {
+  const raw = await readFile(resolvePath(file), "utf8");
+  const parsed = file.endsWith(".json") ? JSON.parse(raw) : parseYaml(raw);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Strategy file must contain a JSON or YAML object.",
+      docs: "docs/market-liquidity.md#strategy-investigation"
+    });
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function explainStrategy(strategy: Record<string, unknown>) {
+  const kind = typeof strategy.kind === "string" ? strategy.kind : "liquidity";
+  const actions = Array.isArray(strategy.actions) ? strategy.actions : [];
+  return {
+    status: "explained",
+    kind,
+    actionCount: actions.length,
+    submitted: false,
+    signing: false,
+    requiredControls: [
+      "Run market lp preflight before any core LP mutation.",
+      "Require policy approval for any request outside configured market.liquidity limits.",
+      "Use external signing for Mainnet.",
+      "Write receipts for submitted Testnet liquidity actions."
+    ],
+    riskNotes: [
+      "Strategy files are proposals, not profitability guarantees.",
+      "Testnet liquidity does not prove Mainnet profitability.",
+      "Quotes and pool snapshots can change before submission."
+    ],
+    strategy
+  };
+}
+
+function parsePairOption(pair: string): [string, string] {
+  const separator = pair.indexOf("/");
+  if (separator <= 0 || separator === pair.length - 1) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Pair must use assetA/assetB format.",
+      docs: "docs/market-liquidity.md#strategy-investigation"
+    });
+  }
+  return [pair.slice(0, separator), pair.slice(separator + 1)];
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function liquidityInvestigation(args: { pool: LiquidityPoolSummary; trades: unknown[]; profile: NetworkProfile }) {
+  return {
+    network: args.profile.name,
+    pool: args.pool,
+    currentPrice: poolReservePrice(args.pool).toFixed(7),
+    recentTrades: args.trades,
+    execution: {
+      submitted: false,
+      mutationSupported: args.profile.realFunds ? "external_signer_required" : "testnet_preflight_required"
+    },
+    riskNotes: [
+      "Liquidity fees are not guaranteed profit.",
+      "LP positions can lose relative value versus holding reserve assets.",
+      "Inspect issuer risk and trustlines before depositing."
+    ]
+  };
 }
 
 function collectOption(value: string, previous: string[]): string[] {

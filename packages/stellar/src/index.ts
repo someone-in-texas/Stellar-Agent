@@ -16,9 +16,12 @@ import {
   Claimant,
   Horizon,
   Keypair,
+  LiquidityPoolAsset,
+  LiquidityPoolFeeV18,
   Memo,
   Operation,
   TransactionBuilder,
+  getLiquidityPoolId,
   xdr
 } from "@stellar/stellar-sdk";
 import { execFile } from "node:child_process";
@@ -109,6 +112,60 @@ export interface ClaimableBalanceRecord {
     destination: string;
     predicate?: unknown;
   }>;
+}
+
+export interface LiquidityPoolReserve {
+  asset: string;
+  amount: string;
+}
+
+export interface LiquidityPoolSummary {
+  id: string;
+  pagingToken?: string;
+  feeBp: number;
+  type: string;
+  totalTrustlines: string;
+  totalShares: string;
+  reserves: LiquidityPoolReserve[];
+}
+
+export interface LiquidityPoolPosition {
+  account: string;
+  poolId: string;
+  shares: string;
+  limit?: string;
+  shareOfPool?: number;
+  estimatedReserves?: LiquidityPoolReserve[];
+  pool?: LiquidityPoolSummary;
+}
+
+export interface LiquidityPoolPreflight {
+  action: "deposit" | "withdraw";
+  pool: LiquidityPoolSummary;
+  account?: string;
+  assets: string[];
+  currentPrice?: string;
+  trustlines?: {
+    reserveAssetsSatisfied: boolean;
+    poolShareSatisfied: boolean;
+    missing: string[];
+  };
+  deposit?: {
+    maxAmountA: string;
+    maxAmountB: string;
+    minPrice: string;
+    maxPrice: string;
+    estimatedShares?: string;
+  };
+  withdraw?: {
+    shares: string;
+    minAmountA: string;
+    minAmountB: string;
+    estimatedReserves?: LiquidityPoolReserve[];
+  };
+  risk: {
+    notes: string[];
+  };
 }
 
 export interface ClaimableTimestamp {
@@ -480,6 +537,260 @@ export async function claimClaimableBalance(args: {
     operation: Operation.claimClaimableBalance({ balanceId: args.balanceId })
   });
   return { ...submitted, balanceId: args.balanceId };
+}
+
+export async function listLiquidityPools(args: {
+  profile?: NetworkProfile;
+  assetA?: string;
+  assetB?: string;
+  account?: string;
+  limit?: number;
+} = {}): Promise<HorizonCollectionResult<LiquidityPoolSummary>> {
+  const profile = args.profile ?? TESTNET_PROFILE;
+  if (!profile.horizonUrl) {
+    throw new StellarAgentError({ code: "HORIZON_UNAVAILABLE", message: "Horizon is not configured." });
+  }
+  const url = new URL(`${profile.horizonUrl.replace(/\/$/, "")}/liquidity_pools`);
+  if (args.assetA && args.assetB) {
+    url.searchParams.set("reserves", `${stellarSdkAsset(args.assetA).toString()},${stellarSdkAsset(args.assetB).toString()}`);
+  }
+  if (args.account) url.searchParams.set("account", args.account);
+  url.searchParams.set("order", "desc");
+  url.searchParams.set("limit", String(args.limit ?? 10));
+  const page: any = await horizonGet(url, "Could not list liquidity pools from Horizon.");
+  return collectionResult(horizonRecords(page).map(normalizeLiquidityPoolRecord), page);
+}
+
+export async function inspectLiquidityPool(args: {
+  poolId: string;
+  profile?: NetworkProfile;
+}): Promise<LiquidityPoolSummary> {
+  const profile = args.profile ?? TESTNET_PROFILE;
+  if (!profile.horizonUrl) {
+    throw new StellarAgentError({ code: "HORIZON_UNAVAILABLE", message: "Horizon is not configured." });
+  }
+  try {
+    return normalizeLiquidityPoolRecord(
+      await horizonGet(
+        new URL(`${profile.horizonUrl.replace(/\/$/, "")}/liquidity_pools/${args.poolId}`),
+        "Could not inspect liquidity pool from Horizon."
+      )
+    );
+  } catch (error) {
+    if (error instanceof StellarAgentError) throw error;
+    throw new StellarAgentError({
+      code: "LEDGER_LOOKUP_FAILED",
+      message: "Could not inspect liquidity pool from Horizon.",
+      docs: "docs/market-liquidity.md#core-pool-inspection",
+      details: String(error)
+    });
+  }
+}
+
+export async function liquidityPoolTrades(args: {
+  poolId: string;
+  profile?: NetworkProfile;
+  limit?: number;
+}): Promise<HorizonCollectionResult<unknown>> {
+  const profile = args.profile ?? TESTNET_PROFILE;
+  if (!profile.horizonUrl) {
+    throw new StellarAgentError({ code: "HORIZON_UNAVAILABLE", message: "Horizon is not configured." });
+  }
+  const url = new URL(`${profile.horizonUrl.replace(/\/$/, "")}/liquidity_pools/${args.poolId}/trades`);
+  url.searchParams.set("order", "desc");
+  url.searchParams.set("limit", String(args.limit ?? 10));
+  const page: any = await horizonGet(url, "Could not fetch liquidity pool trades from Horizon.");
+  return collectionResult(horizonRecords(page), page);
+}
+
+export async function inspectLiquidityPoolPosition(args: {
+  account: string;
+  poolId?: string;
+  profile?: NetworkProfile;
+}): Promise<{ account: string; positions: LiquidityPoolPosition[] }> {
+  const profile = args.profile ?? TESTNET_PROFILE;
+  if (!profile.horizonUrl) {
+    throw new StellarAgentError({ code: "HORIZON_UNAVAILABLE", message: "Horizon is not configured." });
+  }
+  const account: any = await horizonGet(
+    new URL(`${profile.horizonUrl.replace(/\/$/, "")}/accounts/${args.account}`),
+    "Could not load account liquidity pool positions from Horizon."
+  );
+  const poolShareBalances = account.balances.filter((balance: any) => balance.asset_type === "liquidity_pool_shares");
+  const positions = await Promise.all(
+    poolShareBalances
+      .filter((balance: any) => !args.poolId || balance.liquidity_pool_id === args.poolId)
+      .map(async (balance: any) => {
+        const pool = await inspectLiquidityPool({ poolId: balance.liquidity_pool_id, profile });
+        const shareOfPool = liquidityPoolShareRatio(balance.balance, pool.totalShares);
+        return {
+          account: args.account,
+          poolId: balance.liquidity_pool_id,
+          shares: balance.balance,
+          ...(balance.limit === undefined ? {} : { limit: balance.limit }),
+          ...(shareOfPool === undefined ? {} : { shareOfPool }),
+          ...(shareOfPool === undefined ? {} : { estimatedReserves: estimatePoolReserves(pool, shareOfPool) }),
+          pool
+        };
+      })
+  );
+  return { account: args.account, positions };
+}
+
+export async function preflightLiquidityPoolDeposit(args: {
+  poolId: string;
+  maxAmountA: string;
+  maxAmountB: string;
+  minPrice: string;
+  maxPrice: string;
+  account?: string;
+  profile?: NetworkProfile;
+}): Promise<LiquidityPoolPreflight> {
+  const profile = args.profile ?? TESTNET_PROFILE;
+  const pool = await inspectLiquidityPool({ poolId: args.poolId, profile });
+  const reserves = requireTwoPoolReserves(pool);
+  const maxAmountA = parseAmount(args.maxAmountA, reserves[0].asset).value;
+  const maxAmountB = parseAmount(args.maxAmountB, reserves[1].asset).value;
+  const currentPrice = poolPrice(pool);
+  const estimatedShares = estimateDepositShares(pool, maxAmountA, maxAmountB);
+  return {
+    action: "deposit",
+    pool,
+    ...(args.account === undefined ? {} : { account: args.account }),
+    assets: reserves.map((reserve) => reserve.asset),
+    ...(currentPrice === undefined ? {} : { currentPrice }),
+    ...(args.account === undefined ? {} : { trustlines: await liquidityPoolTrustlineStatus(args.account, pool, profile) }),
+    deposit: {
+      maxAmountA,
+      maxAmountB,
+      minPrice: args.minPrice,
+      maxPrice: args.maxPrice,
+      ...(estimatedShares === undefined ? {} : { estimatedShares })
+    },
+    risk: liquidityPoolRiskNotes(pool)
+  };
+}
+
+export async function preflightLiquidityPoolWithdraw(args: {
+  poolId: string;
+  shares: string;
+  minAmountA: string;
+  minAmountB: string;
+  account?: string;
+  profile?: NetworkProfile;
+}): Promise<LiquidityPoolPreflight> {
+  const profile = args.profile ?? TESTNET_PROFILE;
+  const pool = await inspectLiquidityPool({ poolId: args.poolId, profile });
+  const reserves = requireTwoPoolReserves(pool);
+  const shares = parseAmount(args.shares, "pool_shares").value;
+  const shareOfPool = liquidityPoolShareRatio(shares, pool.totalShares);
+  return {
+    action: "withdraw",
+    pool,
+    ...(args.account === undefined ? {} : { account: args.account }),
+    assets: reserves.map((reserve) => reserve.asset),
+    ...(args.account === undefined ? {} : { trustlines: await liquidityPoolTrustlineStatus(args.account, pool, profile) }),
+    withdraw: {
+      shares,
+      minAmountA: normalizeAmountAllowZero(args.minAmountA),
+      minAmountB: normalizeAmountAllowZero(args.minAmountB),
+      ...(shareOfPool === undefined ? {} : { estimatedReserves: estimatePoolReserves(pool, shareOfPool) })
+    },
+    risk: liquidityPoolRiskNotes(pool)
+  };
+}
+
+export async function changeLiquidityPoolTrustline(args: {
+  source: TestnetWallet;
+  poolId?: string;
+  assetA?: string;
+  assetB?: string;
+  limit?: string;
+  profile?: NetworkProfile;
+  feeStrategy?: FeeStrategy;
+  noCache?: boolean;
+}): Promise<SubmittedOperation & { poolId: string; limit: string }> {
+  const poolAsset = await resolveLiquidityPoolAssetForTrustline(args);
+  const limit = normalizeTrustlineLimit(args.limit ?? "922337203685.4775807");
+  const submitted = await submitOperation({
+    source: args.source,
+    profile: args.profile ?? TESTNET_PROFILE,
+    ...(args.feeStrategy === undefined ? {} : { feeStrategy: args.feeStrategy }),
+    ...(args.noCache === undefined ? {} : { noCache: args.noCache }),
+    operation: Operation.changeTrust({ asset: poolAsset.asset as any, limit })
+  });
+  return { ...submitted, poolId: poolAsset.poolId, limit };
+}
+
+export async function submitLiquidityPoolDeposit(args: {
+  source: TestnetWallet;
+  poolId: string;
+  maxAmountA: string;
+  maxAmountB: string;
+  minPrice: string;
+  maxPrice: string;
+  profile?: NetworkProfile;
+  feeStrategy?: FeeStrategy;
+  noCache?: boolean;
+}): Promise<SubmittedOperation & { preflight: LiquidityPoolPreflight }> {
+  const profile = args.profile ?? TESTNET_PROFILE;
+  const preflight = await preflightLiquidityPoolDeposit({
+    poolId: args.poolId,
+    maxAmountA: args.maxAmountA,
+    maxAmountB: args.maxAmountB,
+    minPrice: args.minPrice,
+    maxPrice: args.maxPrice,
+    account: args.source.publicKey,
+    profile
+  });
+  const submitted = await submitOperation({
+    source: args.source,
+    profile,
+    ...(args.feeStrategy === undefined ? {} : { feeStrategy: args.feeStrategy }),
+    ...(args.noCache === undefined ? {} : { noCache: args.noCache }),
+    operation: Operation.liquidityPoolDeposit({
+      liquidityPoolId: args.poolId,
+      maxAmountA: preflight.deposit!.maxAmountA,
+      maxAmountB: preflight.deposit!.maxAmountB,
+      minPrice: args.minPrice,
+      maxPrice: args.maxPrice
+    })
+  });
+  return { ...submitted, preflight };
+}
+
+export async function submitLiquidityPoolWithdraw(args: {
+  source: TestnetWallet;
+  poolId: string;
+  shares: string;
+  minAmountA: string;
+  minAmountB: string;
+  profile?: NetworkProfile;
+  feeStrategy?: FeeStrategy;
+  noCache?: boolean;
+}): Promise<SubmittedOperation & { preflight: LiquidityPoolPreflight }> {
+  const profile = args.profile ?? TESTNET_PROFILE;
+  const preflight = await preflightLiquidityPoolWithdraw({
+    poolId: args.poolId,
+    shares: args.shares,
+    minAmountA: args.minAmountA,
+    minAmountB: args.minAmountB,
+    account: args.source.publicKey,
+    profile
+  });
+  const submitted = await submitOperation({
+    source: args.source,
+    profile,
+    ...(args.feeStrategy === undefined ? {} : { feeStrategy: args.feeStrategy }),
+    ...(args.noCache === undefined ? {} : { noCache: args.noCache }),
+    operation: Operation.liquidityPoolWithdraw({
+      liquidityPoolId: args.poolId,
+      amount: preflight.withdraw!.shares,
+      minAmountA: preflight.withdraw!.minAmountA,
+      minAmountB: preflight.withdraw!.minAmountB
+    })
+  });
+  return { ...submitted, preflight };
 }
 
 export async function buildPaymentTransactionXdr(args: {
@@ -1343,6 +1654,200 @@ async function submitOperation(args: {
 function stellarSdkAsset(input: string): Asset {
   const parsed = parseAsset(input);
   return parsed.kind === "native" ? Asset.native() : new Asset(parsed.code, parsed.issuer);
+}
+
+function normalizeLiquidityPoolRecord(record: any): LiquidityPoolSummary {
+  return {
+    id: record.id,
+    ...(record.paging_token === undefined ? {} : { pagingToken: record.paging_token }),
+    feeBp: Number(record.fee_bp),
+    type: record.type,
+    totalTrustlines: String(record.total_trustlines ?? "0"),
+    totalShares: String(record.total_shares ?? "0"),
+    reserves: (record.reserves ?? []).map((reserve: any) => ({
+      asset: reserve.asset === "native" ? "XLM" : String(reserve.asset),
+      amount: String(reserve.amount)
+    }))
+  };
+}
+
+function collectionResult<T>(records: T[], page: any): HorizonCollectionResult<T> {
+  return {
+    records,
+    ...(page?._links?.next?.href === undefined ? {} : { next: page._links.next.href }),
+    ...(page?._links?.prev?.href === undefined ? {} : { previous: page._links.prev.href })
+  };
+}
+
+function horizonRecords(page: any): any[] {
+  return page?._embedded?.records ?? page?.records ?? [];
+}
+
+async function horizonGet(url: URL, message: string): Promise<unknown> {
+  const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+  const body = await response.text();
+  const parsed = safeJson(body);
+  if (!response.ok) {
+    throw new StellarAgentError({
+      code: "LEDGER_LOOKUP_FAILED",
+      message,
+      docs: "docs/troubleshooting.md#transaction-timeout",
+      details: parsed ?? body
+    });
+  }
+  return parsed ?? {};
+}
+
+function requireTwoPoolReserves(pool: LiquidityPoolSummary): [LiquidityPoolReserve, LiquidityPoolReserve] {
+  if (pool.reserves.length !== 2 || !pool.reserves[0] || !pool.reserves[1]) {
+    throw new StellarAgentError({
+      code: "LEDGER_LOOKUP_FAILED",
+      message: "Liquidity pool record did not include exactly two reserves.",
+      docs: "docs/market-liquidity.md#core-pool-inspection"
+    });
+  }
+  return [pool.reserves[0], pool.reserves[1]];
+}
+
+function liquidityPoolShareRatio(shares: string, totalShares: string): number | undefined {
+  const sharesValue = Number(shares);
+  const totalValue = Number(totalShares);
+  if (!Number.isFinite(sharesValue) || !Number.isFinite(totalValue) || totalValue <= 0) return undefined;
+  return sharesValue / totalValue;
+}
+
+function estimatePoolReserves(pool: LiquidityPoolSummary, shareOfPool: number): LiquidityPoolReserve[] {
+  return pool.reserves.map((reserve) => ({
+    asset: reserve.asset,
+    amount: formatEstimatedAmount(Number(reserve.amount) * shareOfPool)
+  }));
+}
+
+function estimateDepositShares(
+  pool: LiquidityPoolSummary,
+  maxAmountA: string,
+  maxAmountB: string
+): string | undefined {
+  const [reserveA, reserveB] = requireTwoPoolReserves(pool);
+  const reserveAValue = Number(reserveA.amount);
+  const reserveBValue = Number(reserveB.amount);
+  const maxAValue = Number(maxAmountA);
+  const maxBValue = Number(maxAmountB);
+  const totalShares = Number(pool.totalShares);
+  if (
+    !Number.isFinite(reserveAValue) ||
+    !Number.isFinite(reserveBValue) ||
+    !Number.isFinite(maxAValue) ||
+    !Number.isFinite(maxBValue) ||
+    !Number.isFinite(totalShares) ||
+    reserveAValue <= 0 ||
+    reserveBValue <= 0 ||
+    totalShares <= 0
+  ) {
+    return undefined;
+  }
+  return formatEstimatedAmount(Math.min(maxAValue / reserveAValue, maxBValue / reserveBValue) * totalShares);
+}
+
+function poolPrice(pool: LiquidityPoolSummary): string | undefined {
+  const [reserveA, reserveB] = requireTwoPoolReserves(pool);
+  const reserveAValue = Number(reserveA.amount);
+  const reserveBValue = Number(reserveB.amount);
+  if (!Number.isFinite(reserveAValue) || !Number.isFinite(reserveBValue) || reserveAValue <= 0) return undefined;
+  return formatEstimatedAmount(reserveBValue / reserveAValue);
+}
+
+async function liquidityPoolTrustlineStatus(
+  accountId: string,
+  pool: LiquidityPoolSummary,
+  profile: NetworkProfile
+): Promise<NonNullable<LiquidityPoolPreflight["trustlines"]>> {
+  if (!profile.horizonUrl) {
+    throw new StellarAgentError({ code: "HORIZON_UNAVAILABLE", message: "Horizon is not configured." });
+  }
+  const account: any = await horizonGet(
+    new URL(`${profile.horizonUrl.replace(/\/$/, "")}/accounts/${accountId}`),
+    "Could not load account trustlines from Horizon."
+  );
+  const reserveAssets = requireTwoPoolReserves(pool).map((reserve) => reserve.asset);
+  const reserveAssetsSatisfied = reserveAssets.every((asset) => asset === "XLM" || hasAssetBalanceOrTrustline(account, asset));
+  const poolShareSatisfied = account.balances.some(
+    (balance: any) => balance.asset_type === "liquidity_pool_shares" && balance.liquidity_pool_id === pool.id
+  );
+  return {
+    reserveAssetsSatisfied,
+    poolShareSatisfied,
+    missing: [
+      ...reserveAssets.filter((asset) => asset !== "XLM" && !hasAssetBalanceOrTrustline(account, asset)),
+      ...(poolShareSatisfied ? [] : [`pool_shares:${pool.id}`])
+    ]
+  };
+}
+
+function hasAssetBalanceOrTrustline(account: any, asset: string): boolean {
+  return account.balances.some((balance: any) => balanceLineAssetString(balance).toUpperCase() === asset.toUpperCase());
+}
+
+function balanceLineAssetString(balance: any): string {
+  if (balance.asset_type === "native") return "XLM";
+  if (balance.asset_code && balance.asset_issuer) return `${balance.asset_code}:${balance.asset_issuer}`;
+  if (balance.asset_type === "liquidity_pool_shares") return `pool_shares:${balance.liquidity_pool_id}`;
+  return String(balance.asset_type ?? "unknown");
+}
+
+function liquidityPoolRiskNotes(pool: LiquidityPoolSummary): LiquidityPoolPreflight["risk"] {
+  return {
+    notes: [
+      "Liquidity pool fees are not guaranteed profit.",
+      "Pool share value can underperform simply holding the reserve assets.",
+      "Quotes, estimates, and Horizon snapshots can change before transaction submission.",
+      `Core pool fee is ${pool.feeBp} bps.`
+    ]
+  };
+}
+
+async function resolveLiquidityPoolAssetForTrustline(args: {
+  poolId?: string;
+  assetA?: string;
+  assetB?: string;
+  profile?: NetworkProfile;
+}): Promise<{ poolId: string; asset: LiquidityPoolAsset }> {
+  if (args.poolId) {
+    const pool = await inspectLiquidityPool({
+      poolId: args.poolId,
+      ...(args.profile === undefined ? {} : { profile: args.profile })
+    });
+    const [reserveA, reserveB] = requireTwoPoolReserves(pool);
+    const asset = new LiquidityPoolAsset(stellarSdkAsset(reserveA.asset), stellarSdkAsset(reserveB.asset), LiquidityPoolFeeV18);
+    return { poolId: pool.id, asset };
+  }
+  if (!args.assetA || !args.assetB) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Provide --pool or both --asset-a and --asset-b for a pool-share trustline.",
+      docs: "docs/market-liquidity.md#pool-share-trustlines"
+    });
+  }
+  const [assetA, assetB] = sortedLiquidityPoolAssets(args.assetA, args.assetB);
+  const asset = new LiquidityPoolAsset(assetA, assetB, LiquidityPoolFeeV18);
+  return { poolId: getLiquidityPoolId("constant_product", { assetA, assetB, fee: LiquidityPoolFeeV18 }).toString("hex"), asset };
+}
+
+function sortedLiquidityPoolAssets(assetA: string, assetB: string): [Asset, Asset] {
+  const left = stellarSdkAsset(assetA);
+  const right = stellarSdkAsset(assetB);
+  return Asset.compare(left, right) <= 0 ? [left, right] : [right, left];
+}
+
+function normalizeAmountAllowZero(input: string): string {
+  const trimmed = input.trim();
+  if (/^0(?:\.0{0,7})?$/.test(trimmed)) return "0.0000000";
+  return parseAmount(trimmed).value;
+}
+
+function formatEstimatedAmount(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return "0.0000000";
+  return value.toFixed(7);
 }
 
 function normalizeTrustlineLimit(input: string): string {
