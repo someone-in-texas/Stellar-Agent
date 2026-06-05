@@ -46,7 +46,8 @@ export interface McpResponse {
 const commonProperties = {
   configPath: { type: "string", description: "Optional path to stellar-agent config.yaml." },
   profile: { type: "string", enum: ["testnet", "mainnet", "local"], description: "Network profile name." },
-  policyPath: { type: "string", description: "Optional path to a policy YAML file." }
+  policyPath: { type: "string", description: "Optional path to a policy YAML file." },
+  noCache: { type: "boolean", description: "Disable session caches for network lookups." }
 };
 
 const require = createRequire(import.meta.url);
@@ -258,7 +259,8 @@ export const MCP_TOOLS: McpTool[] = [
     requiredString(input, "amount"),
     "--asset",
     string(input, "asset") ?? "XLM",
-    ...option(input, "memo", "--memo")
+    ...option(input, "memo", "--memo"),
+    ...option(input, "feeStrategy", "--fee-strategy")
   ], paymentProperties()),
   tool("stellar_pay_send", "Submit a Testnet payment after policy allows it.", { to: true, amount: true }, (input) => [
     "pay",
@@ -273,8 +275,26 @@ export const MCP_TOOLS: McpTool[] = [
     string(input, "from") ?? "agent",
     ...option(input, "approvalId", "--approval-id"),
     ...option(input, "memo", "--memo"),
+    ...option(input, "feeStrategy", "--fee-strategy"),
     ...(bool(input, "dryRun") ? ["--dry-run"] : [])
   ], { ...paymentProperties(), from: { type: "string" }, approvalId: { type: "string" }, dryRun: { type: "boolean" } }),
+  tool("stellar_pay_batch", "Submit multiple guarded Testnet payments in one transaction.", { file: true }, (input) => [
+    "pay",
+    "batch",
+    "--file",
+    requiredString(input, "file"),
+    "--from",
+    string(input, "from") ?? "agent",
+    ...option(input, "memo", "--memo"),
+    ...option(input, "feeStrategy", "--fee-strategy"),
+    ...(bool(input, "dryRun") ? ["--dry-run"] : [])
+  ], {
+    file: { type: "string" },
+    from: { type: "string" },
+    memo: { type: "string" },
+    feeStrategy: { type: "string", enum: ["base", "low", "medium", "high", "p95"] },
+    dryRun: { type: "boolean" }
+  }),
   tool("stellar_pay_x402", "Pay a local x402-style HTTP 402 resource on Testnet.", { url: true }, (input) => [
     "pay",
     "x402",
@@ -453,6 +473,7 @@ export function buildCliArgs(toolName: string, input: Record<string, unknown> = 
     ...option(input, "configPath", "--config"),
     ...option(input, "profile", "--profile"),
     ...option(input, "policyPath", "--policy"),
+    ...(bool(input, "noCache") ? ["--no-cache"] : []),
     "--json",
     ...found.buildArgs(input)
   ];
@@ -573,7 +594,13 @@ function tool(
 }
 
 function paymentProperties(): Record<string, unknown> {
-  return { to: { type: "string" }, amount: { type: "string" }, asset: { type: "string" }, memo: { type: "string" } };
+  return {
+    to: { type: "string" },
+    amount: { type: "string" },
+    asset: { type: "string" },
+    memo: { type: "string" },
+    feeStrategy: { type: "string", enum: ["base", "low", "medium", "high", "p95"] }
+  };
 }
 
 function httpPaymentProperties(): Record<string, unknown> {

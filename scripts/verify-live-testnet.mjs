@@ -51,6 +51,21 @@ try {
   const issuer = runCli(["wallet", "address", "--account", "issuer"]).data;
   step("wallet.addresses", { agent, merchant, auditor, issuer });
 
+  const batchPath = join(root, "batch-payments.json");
+  await writeFile(
+    batchPath,
+    JSON.stringify([
+      { destination: merchant.publicKey, amount: "0.0000001", asset: "XLM" },
+      { destination: auditor.publicKey, amount: "0.0000001", asset: "XLM" }
+    ])
+  );
+  const batchPayment = runCli(["pay", "batch", "--from", "agent", "--file", batchPath, "--memo", "live-batch"]);
+  step("payment.batch", {
+    transaction: transactionSummary(batchPayment.data.transaction),
+    operationCount: batchPayment.data.transaction.operationCount,
+    receiptPath: batchPayment.data.receiptPath
+  });
+
   const payment = runCli([
     "pay",
     "send",

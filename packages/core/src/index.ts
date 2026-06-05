@@ -161,15 +161,56 @@ export function serializeError(error: unknown): SerializedError {
     return {
       code: error.code,
       message: error.message,
-      ...(error.hint ? { hint: error.hint } : {}),
-      ...(error.docs ? { docs: error.docs } : {}),
+      hint: error.hint ?? defaultHintForError(error.code),
+      docs: error.docs ?? defaultDocsForError(error.code),
       ...(error.details !== undefined ? { details: redactSensitive(error.details) } : {})
     };
   }
   if (error instanceof Error) {
-    return { code: "UNKNOWN_ERROR", message: error.message };
+    return {
+      code: "UNKNOWN_ERROR",
+      message: error.message,
+      hint: defaultHintForError("UNKNOWN_ERROR"),
+      docs: defaultDocsForError("UNKNOWN_ERROR")
+    };
   }
-  return { code: "UNKNOWN_ERROR", message: "Unknown error.", details: redactSensitive(error) };
+  return {
+    code: "UNKNOWN_ERROR",
+    message: "Unknown error.",
+    hint: defaultHintForError("UNKNOWN_ERROR"),
+    docs: defaultDocsForError("UNKNOWN_ERROR"),
+    details: redactSensitive(error)
+  };
+}
+
+function defaultHintForError(code: ErrorCode): string {
+  if (code === "POLICY_DENIED") return "Run stellar-agent policy explain to inspect the matched rules.";
+  if (code === "APPROVAL_REQUIRED" || code === "APPROVAL_DENIED") return "Use the local approval flow or adjust the request.";
+  if (code === "MAINNET_NOT_ENABLED") return "Run stellar-agent mainnet status and use guarded Mainnet flows only when intended.";
+  if (code === "CONFIG_NOT_FOUND" || code === "CONFIG_INVALID") return "Run stellar-agent testnet init or pass --config with a valid config file.";
+  if (code === "POLICY_INVALID") return "Run stellar-agent policy check to inspect the policy file.";
+  if (code === "WALLET_NOT_FOUND" || code === "WALLET_INVALID") return "Run stellar-agent wallet list or create/import the wallet first.";
+  if (code.includes("UNAVAILABLE")) return "Check network access and run stellar-agent testnet doctor --live.";
+  if (code.startsWith("TRANSACTION_")) return "Check wallet funding, fee strategy, destination, and the transaction hash before retrying.";
+  if (code === "INVALID_AMOUNT") return "Use a positive decimal string with at most 7 decimal places.";
+  if (code === "INVALID_ASSET") return "Use XLM or CODE:G... issuer asset format.";
+  if (code === "INVALID_INPUT") return "Run the command with --help and correct the input.";
+  if (code.includes("NOT_IMPLEMENTED")) return "Use the documented Testnet-supported commands for this release.";
+  return "Rerun with --verbose for more context and check docs/troubleshooting.md.";
+}
+
+function defaultDocsForError(code: ErrorCode): string {
+  if (code === "POLICY_DENIED") return "docs/troubleshooting.md#policy-denied";
+  if (code === "APPROVAL_REQUIRED" || code === "APPROVAL_DENIED") return "docs/mainnet-safety.md#local-approval-bridge";
+  if (code === "MAINNET_NOT_ENABLED") return "docs/troubleshooting.md#mainnet-disabled";
+  if (code === "CONFIG_NOT_FOUND" || code === "CONFIG_INVALID") return "docs/troubleshooting.md#invalid-wallet";
+  if (code === "POLICY_INVALID") return "docs/troubleshooting.md#policy-denied";
+  if (code === "WALLET_NOT_FOUND" || code === "WALLET_INVALID") return "docs/troubleshooting.md#invalid-wallet";
+  if (code.includes("UNAVAILABLE")) return "docs/troubleshooting.md#rpc-or-horizon-unavailable";
+  if (code.startsWith("TRANSACTION_")) return "docs/troubleshooting.md#transaction-timeout";
+  if (code === "INVALID_AMOUNT" || code === "INVALID_ASSET" || code === "INVALID_INPUT") return "docs/troubleshooting.md";
+  if (code.includes("NOT_IMPLEMENTED")) return "docs/quickstart-testnet.md";
+  return "docs/troubleshooting.md";
 }
 
 export type NativeAsset = { kind: "native"; code: "XLM" };

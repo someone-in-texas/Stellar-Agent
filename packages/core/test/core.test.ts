@@ -5,7 +5,9 @@ import {
   parseAmount,
   parseAsset,
   redactSensitive,
-  resolvePath
+  resolvePath,
+  serializeError,
+  StellarAgentError
 } from "../src/index.js";
 
 describe("amount parsing", () => {
@@ -73,6 +75,24 @@ describe("config and redaction", () => {
     expect(redactSensitive({ expectedTokens: { bTokens: "100", dTokens: "0" }, apiToken: "secret" })).toEqual({
       expectedTokens: { bTokens: "100", dTokens: "0" },
       apiToken: "[REDACTED]"
+    });
+  });
+});
+
+describe("error serialization", () => {
+  it("adds fallback hints and docs to structured errors", () => {
+    expect(
+      serializeError(
+        new StellarAgentError({
+          code: "INVALID_INPUT",
+          message: "Bad input."
+        })
+      )
+    ).toMatchObject({
+      code: "INVALID_INPUT",
+      message: "Bad input.",
+      hint: "Run the command with --help and correct the input.",
+      docs: "docs/troubleshooting.md"
     });
   });
 });

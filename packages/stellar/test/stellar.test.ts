@@ -9,9 +9,11 @@ import {
   buildPaymentTransactionXdr,
   checkStellarCli,
   changeTrustline,
+  clearStellarSessionCache,
   assetContractIdWithStellarCli,
   contractInfoWithStellarCli,
   deployAssetContractWithStellarCli,
+  estimateTransactionFee,
   deployContractWithStellarCli,
   extendContractWithStellarCli,
   fetchContractWasmWithStellarCli,
@@ -21,6 +23,8 @@ import {
   readContractWithStellarCli,
   resolveClaimableBalanceClaimants,
   restoreContractWithStellarCli,
+  sendPaymentBatch,
+  stellarSessionCacheSnapshot,
   submitTransactionXdr,
   uploadContractWasmWithStellarCli
 } from "../src/index.js";
@@ -54,6 +58,80 @@ describe("stellar operations", () => {
       networkPassphrase: "Test SDF Network ; September 2015",
       xdr: expect.any(String)
     });
+  });
+
+  it("uses Horizon fee stats for unsigned payment XDR and caches fee lookups", async () => {
+    const fetchImpl = globalThis.fetch;
+    let feeStatsCalls = 0;
+    globalThis.fetch = async () => {
+      feeStatsCalls += 1;
+      return new Response(
+        JSON.stringify({
+          last_ledger_base_fee: "100",
+          ledger_capacity_usage: "0.25",
+          fee_charged: { p50: "100", p80: "200", p90: "300", p95: "400" }
+        })
+      );
+    };
+    clearStellarSessionCache();
+    try {
+      await expect(
+        buildPaymentTransactionXdr({
+          sourcePublicKey: wallet.publicKey,
+          destination: wallet.publicKey,
+          amount: "1",
+          sourceSequence: "1",
+          profile: testnetProfile(),
+          feeStrategy: "high"
+        })
+      ).resolves.toMatchObject({
+        fee: {
+          source: "horizon",
+          strategy: "high",
+          perOperationFee: "300",
+          transactionFee: "300",
+          cached: false
+        }
+      });
+      await expect(estimateTransactionFee({ profile: testnetProfile(), strategy: "high" })).resolves.toMatchObject({
+        perOperationFee: "300",
+        cached: true
+      });
+      expect(feeStatsCalls).toBe(1);
+      expect(stellarSessionCacheSnapshot()).toEqual([
+        expect.objectContaining({ key: "feeStats:https://horizon-testnet.stellar.org" })
+      ]);
+    } finally {
+      clearStellarSessionCache();
+      globalThis.fetch = fetchImpl;
+    }
+  });
+
+  it("falls back to base fee when Horizon fee stats are unavailable", async () => {
+    await expect(
+      estimateTransactionFee({
+        profile: { ...testnetProfile(), horizonUrl: null },
+        operationCount: 3,
+        strategy: "p95"
+      })
+    ).resolves.toMatchObject({
+      source: "base_fee_fallback",
+      perOperationFee: BASE_FEE,
+      transactionFee: String(BigInt(BASE_FEE) * 3n)
+    });
+  });
+
+  it("rejects oversized payment batches before network access", async () => {
+    await expect(
+      sendPaymentBatch({
+        source: wallet,
+        payments: Array.from({ length: 101 }, () => ({
+          destination: wallet.publicKey,
+          amount: "0.0000001",
+          asset: "XLM"
+        }))
+      })
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 
   it("requires explicit approval before building unsigned payment XDR on real-funds profiles", async () => {
@@ -528,6 +606,37 @@ describe("stellar operations", () => {
       ledger: 456,
       successful: true,
       feeCharged: "100"
+    });
+  });
+
+  it("polls Horizon when signed transaction submission returns an unconfirmed hash", async () => {
+    const requests: string[] = [];
+    const result = await submitTransactionXdr({
+      xdr: "AAAAAgSIGNED",
+      profile: testnetProfile(),
+      fetchImpl: async (input) => {
+        requests.push(String(input));
+        if (requests.length === 1) return new Response(JSON.stringify({ hash: "abc123" }));
+        return new Response(
+          JSON.stringify({
+            hash: "abc123",
+            ledger: 456,
+            successful: true,
+            fee_charged: "200"
+          })
+        );
+      }
+    });
+
+    expect(requests).toEqual([
+      "https://horizon-testnet.stellar.org/transactions",
+      "https://horizon-testnet.stellar.org/transactions/abc123"
+    ]);
+    expect(result).toEqual({
+      hash: "abc123",
+      ledger: 456,
+      successful: true,
+      feeCharged: "200"
     });
   });
 

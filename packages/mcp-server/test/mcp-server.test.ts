@@ -18,6 +18,7 @@ describe("mcp server", () => {
     expect(response?.result).toMatchObject({
       tools: expect.arrayContaining([
         expect.objectContaining({ name: "stellar_pay_send" }),
+        expect.objectContaining({ name: "stellar_pay_batch" }),
         expect.objectContaining({ name: "stellar_pay_x402" }),
         expect.objectContaining({ name: "stellar_pay_mpp" }),
         expect.objectContaining({ name: "stellar_pay_mpp_session" }),
@@ -45,6 +46,33 @@ describe("mcp server", () => {
         id: "appr_123"
       })
     ).toEqual(["--config", "/tmp/config.yaml", "--json", "tx", "submit-approval", "appr_123"]);
+  });
+
+  it("builds CLI arguments for fee-aware batch payments with cache disabled", () => {
+    expect(
+      buildCliArgs("stellar_pay_batch", {
+        configPath: "/tmp/config.yaml",
+        noCache: true,
+        file: "/tmp/payments.json",
+        from: "agent",
+        feeStrategy: "p95",
+        dryRun: true
+      })
+    ).toEqual([
+      "--config",
+      "/tmp/config.yaml",
+      "--no-cache",
+      "--json",
+      "pay",
+      "batch",
+      "--file",
+      "/tmp/payments.json",
+      "--from",
+      "agent",
+      "--fee-strategy",
+      "p95",
+      "--dry-run"
+    ]);
   });
 
   it("builds CLI arguments for guarded Mainnet signed-XDR submission", () => {

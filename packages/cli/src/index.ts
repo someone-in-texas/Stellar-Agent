@@ -9,7 +9,9 @@ import {
   configSchema,
   createDefaultConfig,
   fail,
+  formatStroops,
   ok,
+  parseAmount,
   paymentRequestSchema,
   redactSensitive,
   resolvePath,
@@ -67,6 +69,7 @@ interface CliOptions {
   noColor?: boolean;
   verbose?: boolean;
   quiet?: boolean;
+  noCache?: boolean;
 }
 
 interface CliContext {
@@ -88,6 +91,7 @@ export function buildProgram(): Command {
     .option("--no-color", "Disable colored output")
     .option("--verbose", "Print additional diagnostics")
     .option("--quiet", "Suppress nonessential output")
+    .option("--no-cache", "Disable session caches for network lookups")
     .addHelpText(
       "after",
       `
@@ -102,9 +106,12 @@ Common commands:
   stellar-agent testnet doctor
   stellar-agent wallet balance
   stellar-agent wallet trustline add --asset USD:G... --account merchant
+  stellar-agent pay quote --to G... --amount 1 --asset XLM --fee-strategy medium
   stellar-agent pay send --to G... --amount 1 --asset XLM
+  stellar-agent pay batch --file ./payments.json
   stellar-agent tx submit-approval appr_...
   stellar-agent claimable create --to G... --amount 1
+  stellar-agent cache inspect
   stellar-agent contract invoke --id C... --source agent --fn hello --arg to=world
   stellar-agent policy explain --request ./payment-request.json`
     );
@@ -121,9 +128,33 @@ Common commands:
   addPolicyCommands(program);
   addLedgerCommands(program);
   addReceiptCommands(program);
+  addCacheCommands(program);
   addMainnetCommands(program);
 
   return program;
+}
+
+function addCacheCommands(program: Command): void {
+  const cache = program.command("cache").description("Inspect and clear in-process session caches.");
+  cache
+    .command("inspect")
+    .description("Show cached Horizon and tool-readiness lookups for this CLI process.")
+    .action(
+      withContext(async () => {
+        const { stellarSessionCacheSnapshot } = await import("@stellar-agent/stellar");
+        return { entries: stellarSessionCacheSnapshot() };
+      }, "Session cache inspected.")
+    );
+  cache
+    .command("clear")
+    .description("Clear in-process session caches.")
+    .action(
+      withContext(async () => {
+        const { clearStellarSessionCache } = await import("@stellar-agent/stellar");
+        clearStellarSessionCache();
+        return { cleared: true };
+      }, "Session cache cleared.")
+    );
 }
 
 function addProfileCommands(program: Command): void {
@@ -756,10 +787,11 @@ function addTransactionCommands(program: Command): void {
     .option("--asset <asset>", "Asset", "XLM")
     .option("--from <accountOrAddress>", "Local wallet name, watch-only wallet name, or source public key", "agent")
     .option("--memo <memo>", "Memo")
+    .option("--fee-strategy <strategy>", "Fee strategy: base, low, medium, high, p95", "medium")
     .option("--allow-real-funds", "Permit guarded Mainnet payment-XDR building")
     .option("--i-understand-real-funds", "Acknowledge this payment uses real funds")
     .action(
-      withContext(async (context, options: { to: string; amount: string; asset: string; from: string; memo?: string; allowRealFunds?: boolean; iUnderstandRealFunds?: boolean }) => {
+      withContext(async (context, options: { to: string; amount: string; asset: string; from: string; memo?: string; feeStrategy: string; allowRealFunds?: boolean; iUnderstandRealFunds?: boolean }) => {
         const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
         assertGuardedRealFundsProfile(context, profile, {
           allowRealFunds: Boolean(options.allowRealFunds),
@@ -795,7 +827,9 @@ function addTransactionCommands(program: Command): void {
           asset: options.asset,
           ...(options.memo === undefined ? {} : { memo: options.memo }),
           profile,
-          allowRealFunds: profile.realFunds
+          allowRealFunds: profile.realFunds,
+          feeStrategy: parseFeeStrategy(options.feeStrategy),
+          noCache: context.options.noCache
         });
         await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
           event: "transaction_built",
@@ -816,13 +850,14 @@ function addTransactionCommands(program: Command): void {
     .option("--from <accountOrAddress>", "Local wallet name, watch-only wallet name, or source public key", "agent")
     .option("--memo <memo>", "Memo")
     .option("--summary <summary>", "Human-readable signing summary")
+    .option("--fee-strategy <strategy>", "Fee strategy: base, low, medium, high, p95", "medium")
     .option("--allow-real-funds", "Permit a guarded Mainnet payment signature request")
     .option("--i-understand-real-funds", "Acknowledge this payment uses real funds")
     .action(
       withContext(
         async (
           context,
-          options: { to: string; amount: string; asset: string; from: string; memo?: string; summary?: string; allowRealFunds?: boolean; iUnderstandRealFunds?: boolean }
+          options: { to: string; amount: string; asset: string; from: string; memo?: string; summary?: string; feeStrategy: string; allowRealFunds?: boolean; iUnderstandRealFunds?: boolean }
         ) => {
           const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
           assertGuardedRealFundsProfile(context, profile, {
@@ -852,7 +887,9 @@ function addTransactionCommands(program: Command): void {
             asset: options.asset,
             ...(options.memo === undefined ? {} : { memo: options.memo }),
             profile,
-            allowRealFunds: profile.realFunds
+            allowRealFunds: profile.realFunds,
+            feeStrategy: parseFeeStrategy(options.feeStrategy),
+            noCache: context.options.noCache
           });
           const approval = await createTransactionXdrApprovalRequest({
             approvalsDir: context.config.storage.approvalsDir,
@@ -998,8 +1035,9 @@ function addPayCommands(program: Command): void {
     .requiredOption("--amount <amount>", "Payment amount")
     .option("--asset <asset>", "Asset", "XLM")
     .option("--memo <memo>", "Memo")
+    .option("--fee-strategy <strategy>", "Fee strategy: base, low, medium, high, p95", "medium")
     .action(
-      withContext(async (context, options: { to: string; amount: string; asset: string; memo?: string }) => {
+      withContext(async (context, options: { to: string; amount: string; asset: string; memo?: string; feeStrategy: string }) => {
         const policy = await loadPolicy(context);
         const request = paymentRequestSchema.parse({
           destination: options.to,
@@ -1009,9 +1047,16 @@ function addPayCommands(program: Command): void {
           network: context.profileName
         });
         const history = await loadSpendHistory(context, request);
+        const { estimateTransactionFee } = await import("@stellar-agent/stellar");
+        const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
         return {
           request,
-          estimatedFee: "100 stroops",
+          estimatedFee: await estimateTransactionFee({
+            profile,
+            operationCount: 1,
+            strategy: parseFeeStrategy(options.feeStrategy),
+            noCache: context.options.noCache
+          }),
           policyDecision: evaluatePaymentRequest(policy, request, history),
           spendHistory: history,
           profile: context.profileName
@@ -1026,10 +1071,11 @@ function addPayCommands(program: Command): void {
     .option("--asset <asset>", "Asset", "XLM")
     .option("--from <account>", "Local source wallet name", "agent")
     .option("--memo <memo>", "Memo")
+    .option("--fee-strategy <strategy>", "Fee strategy: base, low, medium, high, p95", "medium")
     .option("--approval-id <id>", "Approved local approval request id")
     .option("--dry-run", "Evaluate locally without submitting")
     .action(
-      withContext(async (context, options: { to: string; amount: string; asset: string; from: string; memo?: string; approvalId?: string; dryRun?: boolean }) => {
+      withContext(async (context, options: { to: string; amount: string; asset: string; from: string; memo?: string; feeStrategy: string; approvalId?: string; dryRun?: boolean }) => {
         if (context.profileName === "mainnet") {
           throw new StellarAgentError({
             code: "MAINNET_NOT_ENABLED",
@@ -1095,7 +1141,9 @@ function addPayCommands(program: Command): void {
           amount: options.amount,
           asset: options.asset,
           ...(options.memo === undefined ? {} : { memo: options.memo }),
-          profile: context.config.profiles.testnet
+          profile: context.config.profiles.testnet,
+          feeStrategy: parseFeeStrategy(options.feeStrategy),
+          noCache: context.options.noCache
         });
         const eventLog = join(context.config.storage.logsDir, "events.jsonl");
         await appendEvent(eventLog, {
@@ -1136,6 +1184,95 @@ function addPayCommands(program: Command): void {
           receiptPath
         };
       }, "Payment send complete.")
+    );
+  pay
+    .command("batch")
+    .description("Submit multiple Testnet payments in one guarded transaction.")
+    .requiredOption("--file <path>", "JSON file containing a payment array")
+    .option("--from <account>", "Local source wallet name", "agent")
+    .option("--memo <memo>", "Transaction memo")
+    .option("--fee-strategy <strategy>", "Fee strategy: base, low, medium, high, p95", "medium")
+    .option("--dry-run", "Evaluate locally without submitting")
+    .action(
+      withContext(async (context, options: { file: string; from: string; memo?: string; feeStrategy: string; dryRun?: boolean }) => {
+        if (context.profileName === "mainnet") {
+          throw new StellarAgentError({
+            code: "MAINNET_NOT_ENABLED",
+            message: "Mainnet batch payment submission is blocked in v0.",
+            hint: "Use guarded signed-XDR flows for Mainnet; stellar-agent will not auto-sign Mainnet payments.",
+            docs: "docs/mainnet-safety.md"
+          });
+        }
+        const source = await loadWallet(context.config, options.from);
+        const payments = parseBatchPaymentsFile(await readFile(resolvePath(options.file), "utf8"));
+        const policy = await loadPolicy(context);
+        const checked = await evaluateBatchPaymentPolicy(context, {
+          source: source.publicKey,
+          payments,
+          policy,
+          ...(options.memo === undefined ? {} : { memo: options.memo })
+        });
+        if (checked.aggregate.status === "denied") {
+          throw new StellarAgentError({
+            code: "POLICY_DENIED",
+            message: "One or more batch payments were denied by policy.",
+            hint: "Run pay quote for each denied destination and adjust the batch or policy intentionally.",
+            docs: "docs/troubleshooting.md#policy-denied",
+            details: checked
+          });
+        }
+        if (checked.aggregate.status === "requires_approval") {
+          throw new StellarAgentError({
+            code: "APPROVAL_REQUIRED",
+            message: "One or more batch payments require approval.",
+            hint: "Split approval-required payments into explicit pay send approval flows.",
+            docs: "docs/mainnet-safety.md#local-approval-bridge",
+            details: checked
+          });
+        }
+        if (options.dryRun) return { ...checked, dryRun: true };
+        const { sendPaymentBatch } = await import("@stellar-agent/stellar");
+        const transaction = await sendPaymentBatch({
+          source,
+          payments,
+          ...(options.memo === undefined ? {} : { memo: options.memo }),
+          profile: context.config.profiles.testnet,
+          feeStrategy: parseFeeStrategy(options.feeStrategy),
+          noCache: context.options.noCache
+        });
+        const receiptPath = await writeOperationReceipt(context, {
+          command: "pay batch",
+          operation: {
+            type: "pay.batch",
+            source: source.publicKey,
+            details: {
+              operationCount: transaction.operationCount,
+              payments: transaction.payments,
+              aggregatePolicyDecision: checked.aggregate
+            }
+          },
+          policyDecision: {
+            status: checked.aggregate.status,
+            network: "testnet",
+            realFunds: false,
+            matchedRules: checked.aggregate.matchedRules,
+            reasons: ["Batch payment policy aggregate."]
+          },
+          transaction
+        });
+        await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
+          event: "transaction_confirmed",
+          status: "batch_successful",
+          command: "pay batch",
+          profile: "testnet",
+          data: { transaction, receiptPath }
+        });
+        return {
+          ...checked,
+          transaction,
+          receiptPath
+        };
+      }, "Batch payment transaction submitted.")
     );
   pay
     .command("x402")
@@ -2793,6 +2930,130 @@ async function loadSpendHistory(context: CliContext, request: PaymentRequest) {
   });
 }
 
+function parseFeeStrategy(value: string): "base" | "low" | "medium" | "high" | "p95" {
+  if (value === "base" || value === "low" || value === "medium" || value === "high" || value === "p95") return value;
+  throw new StellarAgentError({
+    code: "INVALID_INPUT",
+    message: "Fee strategy must be base, low, medium, high, or p95.",
+    hint: "Use --fee-strategy medium unless you intentionally need a different fee posture.",
+    docs: "docs/troubleshooting.md#fee-too-low"
+  });
+}
+
+function parseBatchPaymentsFile(raw: string): Array<{ destination: string; amount: string; asset: string }> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Batch payment file must be valid JSON.",
+      hint: "Use an array like [{\"destination\":\"G...\",\"amount\":\"1\",\"asset\":\"XLM\"}].",
+      docs: "docs/troubleshooting.md#batch-transaction-failed",
+      details: String(error)
+    });
+  }
+  if (!Array.isArray(parsed) || parsed.length < 1 || parsed.length > 100) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Batch payment file must contain 1 to 100 payments.",
+      docs: "docs/troubleshooting.md#batch-transaction-failed"
+    });
+  }
+  return parsed.map((item, index) => {
+    if (!item || typeof item !== "object") {
+      throw new StellarAgentError({
+        code: "INVALID_INPUT",
+        message: `Batch payment ${index + 1} must be an object.`,
+        docs: "docs/troubleshooting.md#batch-transaction-failed"
+      });
+    }
+    const candidate = item as { destination?: unknown; amount?: unknown; asset?: unknown };
+    if (typeof candidate.destination !== "string" || typeof candidate.amount !== "string") {
+      throw new StellarAgentError({
+        code: "INVALID_INPUT",
+        message: `Batch payment ${index + 1} requires destination and amount strings.`,
+        docs: "docs/troubleshooting.md#batch-transaction-failed"
+      });
+    }
+    const asset = typeof candidate.asset === "string" ? candidate.asset : "XLM";
+    const amount = parseAmount(candidate.amount, asset).value;
+    return { destination: candidate.destination, amount, asset };
+  });
+}
+
+async function evaluateBatchPaymentPolicy(
+  context: CliContext,
+  args: {
+    source: string;
+    payments: Array<{ destination: string; amount: string; asset: string }>;
+    policy: Policy;
+    memo?: string;
+  }
+) {
+  const histories = new Map<string, Awaited<ReturnType<typeof loadSpendHistory>>>();
+  const results = [];
+  for (const [index, payment] of args.payments.entries()) {
+    const request = paymentRequestSchema.parse({
+      source: args.source,
+      destination: payment.destination,
+      amount: payment.amount,
+      asset: payment.asset,
+      memo: args.memo,
+      network: "testnet"
+    });
+    const assetKey = request.asset.toUpperCase();
+    let history = histories.get(assetKey);
+    if (!history) {
+      history = await loadSpendHistory(context, request);
+      histories.set(assetKey, { ...history });
+    }
+    const decision = evaluatePaymentRequest(args.policy, request, history);
+    results.push({ index, request, spendHistory: history, policyDecision: decision });
+    if (decision.status === "allowed") {
+      histories.set(assetKey, incrementBatchSpendHistory(history, request));
+    }
+  }
+  const status: "allowed" | "denied" | "requires_approval" = results.some((result) => result.policyDecision.status === "denied")
+    ? "denied"
+    : results.some((result) => result.policyDecision.status === "requires_approval")
+      ? "requires_approval"
+      : "allowed";
+  return {
+    aggregate: {
+      status,
+      matchedRules: [...new Set(results.flatMap((result) => result.policyDecision.matchedRules))]
+    },
+    payments: results
+  };
+}
+
+function incrementBatchSpendHistory(
+  history: Awaited<ReturnType<typeof loadSpendHistory>>,
+  request: PaymentRequest
+): Awaited<ReturnType<typeof loadSpendHistory>> {
+  if (history.unreadable) return history;
+  const amount = parseAmount(request.amount, request.asset).stroops;
+  const add = (value: string | undefined) => formatStroops(parseNonnegativeStroops(value, request.asset) + amount);
+  return {
+    ...history,
+    dailyTotal: add(history.dailyTotal),
+    monthlyTotal: add(history.monthlyTotal),
+    knownRecipients: [...new Set([...(history.knownRecipients ?? []), request.destination])],
+    ...(request.domain
+      ? { knownDomains: [...new Set([...(history.knownDomains ?? []), request.domain])] }
+      : history.knownDomains === undefined
+        ? {}
+        : { knownDomains: history.knownDomains })
+  };
+}
+
+function parseNonnegativeStroops(value: string | undefined, asset: string): bigint {
+  const raw = value ?? "0";
+  if (/^0(?:\.0{0,7})?$/.test(raw)) return 0n;
+  return parseAmount(raw, asset).stroops;
+}
+
 function policyDeniedError(): StellarAgentError {
   return new StellarAgentError({
     code: "POLICY_DENIED",
@@ -2882,6 +3143,7 @@ function printError(options: CliOptions, error: unknown): void {
   }
   process.stderr.write(`${serialized.code}: ${serialized.message}\n`);
   if (serialized.hint) process.stderr.write(`Hint: ${serialized.hint}\n`);
+  if (serialized.docs) process.stderr.write(`Docs: ${serialized.docs}\n`);
 }
 
 function fixtureRequest(amount: string) {
@@ -2997,6 +3259,7 @@ async function writeOperationReceipt(
   args: {
     command: string;
     operation: NonNullable<Parameters<typeof writeReceipt>[1]["operation"]>;
+    policyDecision?: PolicyDecision;
     transaction: {
       hash: string;
       ledger?: number;
@@ -3013,7 +3276,9 @@ async function writeOperationReceipt(
     networkPassphrase: profile.networkPassphrase,
     realFunds: false,
     operation: args.operation,
-    policyDecision: { status: "allowed", matchedRules: ["testnet_operation"] },
+    policyDecision: args.policyDecision
+      ? { status: args.policyDecision.status, matchedRules: args.policyDecision.matchedRules }
+      : { status: "allowed", matchedRules: ["testnet_operation"] },
     transaction: args.transaction,
     ...(args.transaction.ledger === undefined ? {} : { ledger: { confirmedLedger: args.transaction.ledger } }),
     eventLog

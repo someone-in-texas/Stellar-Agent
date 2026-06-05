@@ -24,6 +24,8 @@ const commands = [
   ["packages/cli/dist/index.js", "ledger", "payments", "--help"],
   ["packages/cli/dist/index.js", "ledger", "effects", "--help"],
   ["packages/cli/dist/index.js", "ledger", "export", "--help"],
+  ["packages/cli/dist/index.js", "cache", "inspect", "--help"],
+  ["packages/cli/dist/index.js", "cache", "clear", "--help"],
   ["packages/cli/dist/index.js", "testnet", "export-report", "--help"],
   ["packages/cli/dist/index.js", "contract", "doctor", "--json"],
   ["packages/cli/dist/index.js", "contract", "invoke", "--help"],
@@ -45,6 +47,7 @@ const commands = [
   ["packages/cli/dist/index.js", "defi", "blend", "trustline", "guide", "--help"],
   ["packages/cli/dist/index.js", "defi", "blend", "trustline", "add", "--help"],
   ["packages/cli/dist/index.js", "pay", "x402", "--help"],
+  ["packages/cli/dist/index.js", "pay", "batch", "--help"],
   ["packages/cli/dist/index.js", "pay", "mpp", "--help"],
   ["packages/cli/dist/index.js", "pay", "mpp-session", "--help"]
 ];
@@ -53,6 +56,18 @@ for (const args of commands) {
   const result = spawnSync(process.execPath, args, { encoding: "utf8" });
   if (result.status !== 0) {
     throw new Error(`Command failed: node ${args.join(" ")}\n${result.stderr}\n${result.stdout}`);
+  }
+  if (args.includes("--help")) {
+    if (!result.stdout.includes("Usage:") || !result.stdout.includes("Options:")) {
+      throw new Error(`Help output for node ${args.join(" ")} is missing usage/options sections.\n${result.stdout}`);
+    }
+    if (args.length === 2) {
+      for (const expected of ["--json", "--profile", "--no-cache"]) {
+        if (!result.stdout.includes(expected)) {
+          throw new Error(`Top-level help output is missing ${expected}.\n${result.stdout}`);
+        }
+      }
+    }
   }
 }
 
@@ -65,6 +80,9 @@ if (!MCP_TOOLS.some((tool) => tool.name === "stellar_pay_x402")) {
 }
 if (!MCP_TOOLS.some((tool) => tool.name === "stellar_pay_mpp")) {
   throw new Error("MCP tool list does not include stellar_pay_mpp.");
+}
+if (!MCP_TOOLS.some((tool) => tool.name === "stellar_pay_batch")) {
+  throw new Error("MCP tool list does not include stellar_pay_batch.");
 }
 if (!MCP_TOOLS.some((tool) => tool.name === "stellar_tx_submit_approval")) {
   throw new Error("MCP tool list does not include stellar_tx_submit_approval.");

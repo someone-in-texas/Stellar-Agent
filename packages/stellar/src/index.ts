@@ -42,6 +42,8 @@ export interface SubmittedPayment {
   ledger?: number;
   successful: boolean;
   feeCharged?: string;
+  feeBid?: string;
+  feeStrategy?: FeeStrategy;
 }
 
 export interface SubmittedOperation {
@@ -49,6 +51,8 @@ export interface SubmittedOperation {
   ledger?: number;
   successful: boolean;
   feeCharged?: string;
+  feeBid?: string;
+  feeStrategy?: FeeStrategy;
 }
 
 export interface SubmittedTransaction {
@@ -58,6 +62,18 @@ export interface SubmittedTransaction {
   feeCharged?: string;
 }
 
+export type FeeStrategy = "base" | "low" | "medium" | "high" | "p95";
+
+export interface FeeStatsSummary {
+  source: "horizon" | "base_fee_fallback";
+  strategy: FeeStrategy;
+  perOperationFee: string;
+  transactionFee: string;
+  operationCount: number;
+  cached: boolean;
+  ledgerCapacityUsage?: string;
+}
+
 export interface BuiltPaymentTransactionXdr {
   xdr: string;
   source: string;
@@ -65,6 +81,22 @@ export interface BuiltPaymentTransactionXdr {
   amount: string;
   asset: string;
   networkPassphrase: string;
+  fee: FeeStatsSummary;
+}
+
+export interface BatchPaymentItem {
+  destination: string;
+  amount: string;
+  asset?: string;
+}
+
+export interface SubmittedPaymentBatch extends SubmittedOperation {
+  operationCount: number;
+  payments: Array<{
+    destination: string;
+    amount: string;
+    asset: string;
+  }>;
 }
 
 export interface ClaimableBalanceRecord {
@@ -106,6 +138,29 @@ export interface StellarCliStatus {
   binary: string;
   version?: string;
   error?: string;
+}
+
+interface CacheEntry<T> {
+  expiresAt: number;
+  value: T;
+}
+
+const sessionCache = new Map<string, CacheEntry<unknown>>();
+
+export function clearStellarSessionCache(): void {
+  sessionCache.clear();
+}
+
+export function stellarSessionCacheSnapshot(now = Date.now()): Array<{
+  key: string;
+  expiresAt: string;
+  ttlMs: number;
+}> {
+  return Array.from(sessionCache.entries()).map(([key, entry]) => ({
+    key,
+    expiresAt: new Date(entry.expiresAt).toISOString(),
+    ttlMs: Math.max(0, entry.expiresAt - now)
+  }));
 }
 
 export function resolveNetworkProfile(profileName: string, profiles: Record<string, NetworkProfile>): NetworkProfile {
@@ -229,16 +284,20 @@ export async function sendPayment(args: {
   asset?: string;
   memo?: string;
   profile?: NetworkProfile;
+  feeStrategy?: FeeStrategy;
+  noCache?: boolean;
 }): Promise<SubmittedPayment> {
   const profile = args.profile ?? TESTNET_PROFILE;
   const amount = parseAmount(args.amount).value;
   const asset = stellarSdkAsset(args.asset ?? "XLM");
 
   try {
-    return submitOperation({
+    return await submitOperation({
       source: args.source,
       profile,
       ...(args.memo === undefined ? {} : { memo: args.memo }),
+      ...(args.feeStrategy === undefined ? {} : { feeStrategy: args.feeStrategy }),
+      ...(args.noCache === undefined ? {} : { noCache: args.noCache }),
       operation:
       Operation.payment({
         destination: args.destination,
@@ -262,6 +321,8 @@ export async function changeTrustline(args: {
   asset: string;
   limit?: string;
   profile?: NetworkProfile;
+  feeStrategy?: FeeStrategy;
+  noCache?: boolean;
 }): Promise<SubmittedOperation & { asset: string; limit: string }> {
   const asset = stellarSdkAsset(args.asset);
   if (asset.isNative()) {
@@ -275,6 +336,8 @@ export async function changeTrustline(args: {
   const submitted = await submitOperation({
     source: args.source,
     profile: args.profile ?? TESTNET_PROFILE,
+    ...(args.feeStrategy === undefined ? {} : { feeStrategy: args.feeStrategy }),
+    ...(args.noCache === undefined ? {} : { noCache: args.noCache }),
     operation: Operation.changeTrust({ asset, limit })
   });
   return { ...submitted, asset: args.asset.toUpperCase(), limit };
@@ -303,6 +366,8 @@ export async function createClaimableBalance(args: {
   claimableAfter?: string | number | Date;
   claimableBefore?: string | number | Date;
   profile?: NetworkProfile;
+  feeStrategy?: FeeStrategy;
+  noCache?: boolean;
 }): Promise<
   SubmittedOperation & {
     asset: string;
@@ -325,6 +390,8 @@ export async function createClaimableBalance(args: {
   const submitted = await submitOperation({
     source: args.source,
     profile,
+    ...(args.feeStrategy === undefined ? {} : { feeStrategy: args.feeStrategy }),
+    ...(args.noCache === undefined ? {} : { noCache: args.noCache }),
     operation: Operation.createClaimableBalance({
       asset,
       amount,
@@ -402,10 +469,14 @@ export async function claimClaimableBalance(args: {
   source: TestnetWallet;
   balanceId: string;
   profile?: NetworkProfile;
+  feeStrategy?: FeeStrategy;
+  noCache?: boolean;
 }): Promise<SubmittedOperation & { balanceId: string }> {
   const submitted = await submitOperation({
     source: args.source,
     profile: args.profile ?? TESTNET_PROFILE,
+    ...(args.feeStrategy === undefined ? {} : { feeStrategy: args.feeStrategy }),
+    ...(args.noCache === undefined ? {} : { noCache: args.noCache }),
     operation: Operation.claimClaimableBalance({ balanceId: args.balanceId })
   });
   return { ...submitted, balanceId: args.balanceId };
@@ -420,6 +491,8 @@ export async function buildPaymentTransactionXdr(args: {
   profile?: NetworkProfile;
   sourceSequence?: string;
   allowRealFunds?: boolean;
+  feeStrategy?: FeeStrategy;
+  noCache?: boolean;
 }): Promise<BuiltPaymentTransactionXdr> {
   const profile = args.profile ?? TESTNET_PROFILE;
   if (profile.realFunds && !args.allowRealFunds) {
@@ -440,8 +513,14 @@ export async function buildPaymentTransactionXdr(args: {
   const sourceAccount = args.sourceSequence
     ? new Account(args.sourcePublicKey, args.sourceSequence)
     : await new Horizon.Server(profile.horizonUrl!).loadAccount(args.sourcePublicKey);
+  const fee = await estimateTransactionFee({
+    profile,
+    operationCount: 1,
+    strategy: args.feeStrategy ?? "medium",
+    ...(args.noCache === undefined ? {} : { noCache: args.noCache })
+  });
   let builder = new TransactionBuilder(sourceAccount, {
-    fee: BASE_FEE,
+    fee: fee.perOperationFee,
     networkPassphrase: profile.networkPassphrase
   }).addOperation(
     Operation.payment({
@@ -458,7 +537,39 @@ export async function buildPaymentTransactionXdr(args: {
     destination: args.destination,
     amount,
     asset: args.asset ?? "XLM",
-    networkPassphrase: profile.networkPassphrase
+    networkPassphrase: profile.networkPassphrase,
+    fee
+  };
+}
+
+export async function sendPaymentBatch(args: {
+  source: TestnetWallet;
+  payments: BatchPaymentItem[];
+  memo?: string;
+  profile?: NetworkProfile;
+  feeStrategy?: FeeStrategy;
+  noCache?: boolean;
+}): Promise<SubmittedPaymentBatch> {
+  const payments = normalizeBatchPayments(args.payments);
+  const operations = payments.map((payment) =>
+    Operation.payment({
+      destination: payment.destination,
+      asset: stellarSdkAsset(payment.asset),
+      amount: payment.amount
+    })
+  );
+  const submitted = await submitOperation({
+    source: args.source,
+    profile: args.profile ?? TESTNET_PROFILE,
+    operations,
+    ...(args.memo === undefined ? {} : { memo: args.memo }),
+    ...(args.feeStrategy === undefined ? {} : { feeStrategy: args.feeStrategy }),
+    ...(args.noCache === undefined ? {} : { noCache: args.noCache })
+  });
+  return {
+    ...submitted,
+    operationCount: payments.length,
+    payments
   };
 }
 
@@ -518,12 +629,87 @@ export async function submitTransactionXdr(args: {
       details: parsed ?? body
     });
   }
+  if (parsed.successful === false) {
+    throw new StellarAgentError({
+      code: "TRANSACTION_SUBMIT_FAILED",
+      message: "Signed transaction was submitted but Horizon marked it unsuccessful.",
+      hint: "Inspect the transaction result codes and retry only if the transaction hash is known.",
+      docs: "docs/troubleshooting.md#transaction-timeout",
+      details: parsed
+    });
+  }
+  if (parsed.ledger === undefined || parsed.successful === undefined) {
+    return confirmSubmittedTransaction({
+      hash: parsed.hash,
+      profile,
+      fetchImpl
+    });
+  }
   return {
     hash: parsed?.hash,
     ledger: parsed?.ledger,
     successful: parsed?.successful ?? true,
     feeCharged: parsed?.fee_charged?.toString()
   };
+}
+
+async function confirmSubmittedTransaction(args: {
+  hash: string;
+  profile: NetworkProfile;
+  fetchImpl: typeof fetch;
+}): Promise<SubmittedTransaction> {
+  const horizonUrl = args.profile.horizonUrl?.replace(/\/$/, "");
+  if (!horizonUrl) {
+    throw new StellarAgentError({
+      code: "HORIZON_UNAVAILABLE",
+      message: "Horizon is not configured for transaction confirmation.",
+      docs: "docs/troubleshooting.md#rpc-or-horizon-unavailable"
+    });
+  }
+  const deadline = Date.now() + 60_000;
+  let lastStatus: number | undefined;
+  while (Date.now() < deadline) {
+    const response = await args.fetchImpl(`${horizonUrl}/transactions/${args.hash}`, {
+      signal: AbortSignal.timeout(15_000)
+    });
+    lastStatus = response.status;
+    if (response.status === 404) {
+      await sleep(2_000);
+      continue;
+    }
+    const body = await response.text();
+    const parsed = safeJson(body);
+    if (!response.ok) {
+      throw new StellarAgentError({
+        code: "LEDGER_LOOKUP_FAILED",
+        message: "Could not confirm submitted transaction on Horizon.",
+        docs: "docs/troubleshooting.md#transaction-timeout",
+        details: parsed ?? body
+      });
+    }
+    if (parsed?.successful === false) {
+      throw new StellarAgentError({
+        code: "TRANSACTION_SUBMIT_FAILED",
+        message: "Submitted transaction was confirmed unsuccessful.",
+        hint: "Inspect the transaction result codes before retrying.",
+        docs: "docs/troubleshooting.md#transaction-timeout",
+        details: parsed
+      });
+    }
+    return {
+      hash: parsed?.hash ?? args.hash,
+      ledger: parsed?.ledger,
+      successful: parsed?.successful ?? true,
+      feeCharged: parsed?.fee_charged?.toString()
+    };
+  }
+  throw new StellarAgentError({
+    code: "TRANSACTION_TIMEOUT",
+    message: "Submitted transaction was not confirmed before the timeout.",
+    hint: `Check the transaction hash ${args.hash} on the selected Horizon endpoint before retrying.`,
+    docs: "docs/troubleshooting.md#transaction-timeout",
+    details: { hash: args.hash, lastStatus }
+  });
 }
 
 function assertSignedTransactionXdr(rawXdr: string): void {
@@ -1065,9 +1251,12 @@ export async function checkStellarCli(binary = "stellar"): Promise<StellarCliSta
 
 async function submitOperation(args: {
   source: TestnetWallet;
-  operation: any;
+  operation?: any;
+  operations?: any[];
   memo?: string;
   profile: NetworkProfile;
+  feeStrategy?: FeeStrategy;
+  noCache?: boolean;
 }): Promise<SubmittedOperation> {
   const profile = args.profile;
   if (profile.realFunds) {
@@ -1087,22 +1276,52 @@ async function submitOperation(args: {
   const keypair = Keypair.fromSecret(args.source.secretKey);
   const server = new Horizon.Server(profile.horizonUrl);
   try {
+    const operations = args.operations ?? (args.operation ? [args.operation] : []);
+    if (operations.length < 1 || operations.length > 100) {
+      throw new StellarAgentError({
+        code: "INVALID_INPUT",
+        message: "A Stellar transaction must contain between 1 and 100 operations.",
+        docs: "docs/troubleshooting.md#batch-transaction-failed",
+        exitCode: EXIT_CODES.usage
+      });
+    }
     const sourceAccount = await server.loadAccount(args.source.publicKey);
+    const fee = await estimateTransactionFee({
+      profile,
+      operationCount: operations.length,
+      strategy: args.feeStrategy ?? "medium",
+      ...(args.noCache === undefined ? {} : { noCache: args.noCache })
+    });
     let builder = new TransactionBuilder(sourceAccount, {
-      fee: BASE_FEE,
+      fee: fee.perOperationFee,
       networkPassphrase: profile.networkPassphrase
-    }).addOperation(args.operation);
+    });
+    for (const operation of operations) {
+      builder = builder.addOperation(operation);
+    }
     if (args.memo) builder = builder.addMemo(Memo.text(args.memo));
     const tx = builder.setTimeout(60).build();
     tx.sign(keypair);
     const result: any = await server.submitTransaction(tx);
+    if (result.successful === false) {
+      throw new StellarAgentError({
+        code: "TRANSACTION_SUBMIT_FAILED",
+        message: "Stellar transaction was submitted but Horizon marked it unsuccessful.",
+        hint: "Inspect the transaction result codes and retry only if the transaction hash is known.",
+        docs: "docs/troubleshooting.md#transaction-timeout",
+        details: result
+      });
+    }
     return {
       hash: result.hash,
       ledger: result.ledger,
       successful: result.successful ?? true,
-      feeCharged: result.fee_charged?.toString()
+      feeCharged: result.fee_charged?.toString(),
+      feeBid: fee.transactionFee,
+      feeStrategy: fee.strategy
     };
   } catch (error: any) {
+    if (error instanceof StellarAgentError) throw error;
     if (isHorizonNotFound(error)) {
       throw new StellarAgentError({
         code: "ACCOUNT_NOT_FOUND",
@@ -1186,6 +1405,151 @@ function parseClaimableTimestamp(input: string | number | Date, field: string): 
     epochSeconds: epochSeconds.toString(),
     iso: new Date(Number(epochSeconds) * 1000).toISOString()
   };
+}
+
+export async function estimateTransactionFee(args: {
+  profile?: NetworkProfile;
+  operationCount?: number;
+  strategy?: FeeStrategy;
+  noCache?: boolean;
+  fetchImpl?: typeof fetch;
+}): Promise<FeeStatsSummary> {
+  const profile = args.profile ?? TESTNET_PROFILE;
+  const operationCount = args.operationCount ?? 1;
+  if (!Number.isInteger(operationCount) || operationCount < 1 || operationCount > 100) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Fee estimation requires an operation count between 1 and 100.",
+      docs: "docs/troubleshooting.md#batch-transaction-failed",
+      exitCode: EXIT_CODES.usage
+    });
+  }
+  const strategy = args.strategy ?? "medium";
+  const stats = await horizonFeeStats(profile, {
+    ...(args.noCache === undefined ? {} : { noCache: args.noCache }),
+    ...(args.fetchImpl === undefined ? {} : { fetchImpl: args.fetchImpl })
+  });
+  const perOperationFee = selectFeeForStrategy(stats, strategy);
+  return {
+    source: stats.source,
+    strategy,
+    perOperationFee,
+    transactionFee: (BigInt(perOperationFee) * BigInt(operationCount)).toString(),
+    operationCount,
+    cached: stats.cached,
+    ...(stats.ledgerCapacityUsage === undefined ? {} : { ledgerCapacityUsage: stats.ledgerCapacityUsage })
+  };
+}
+
+function normalizeBatchPayments(payments: BatchPaymentItem[]): Array<{
+  destination: string;
+  amount: string;
+  asset: string;
+}> {
+  if (!Array.isArray(payments) || payments.length < 1 || payments.length > 100) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Batch payments must include between 1 and 100 payment operations.",
+      hint: "Use pay send for a single payment or provide a JSON array to pay batch.",
+      docs: "docs/troubleshooting.md#batch-transaction-failed",
+      exitCode: EXIT_CODES.usage
+    });
+  }
+  return payments.map((payment, index) => {
+    if (!payment || typeof payment !== "object") {
+      throw new StellarAgentError({
+        code: "INVALID_INPUT",
+        message: `Batch payment ${index + 1} must be an object.`,
+        docs: "docs/troubleshooting.md#batch-transaction-failed",
+        exitCode: EXIT_CODES.usage
+      });
+    }
+    const asset = payment.asset ?? "XLM";
+    parseAsset(asset);
+    return {
+      destination: payment.destination,
+      amount: parseAmount(payment.amount, asset).value,
+      asset
+    };
+  });
+}
+
+async function horizonFeeStats(
+  profile: NetworkProfile,
+  options: { noCache?: boolean; fetchImpl?: typeof fetch } = {}
+): Promise<{
+  source: "horizon" | "base_fee_fallback";
+  cached: boolean;
+  lastLedgerBaseFee: string;
+  ledgerCapacityUsage?: string;
+  feeCharged?: Record<string, string>;
+}> {
+  if (!profile.horizonUrl) {
+    return { source: "base_fee_fallback", cached: false, lastLedgerBaseFee: BASE_FEE };
+  }
+  const key = `feeStats:${profile.horizonUrl}`;
+  const now = Date.now();
+  if (!options.noCache) {
+    const cached = sessionCache.get(key) as CacheEntry<Awaited<ReturnType<typeof horizonFeeStats>>> | undefined;
+    if (cached && cached.expiresAt > now) {
+      return { ...cached.value, cached: true };
+    }
+  }
+  try {
+    const fetchImpl = options.fetchImpl ?? fetch;
+    const response = await fetchImpl(`${profile.horizonUrl.replace(/\/$/, "")}/fee_stats`, {
+      signal: AbortSignal.timeout(15_000)
+    });
+    if (!response.ok) throw new Error(`fee_stats returned ${response.status}`);
+    const parsed: any = await response.json();
+    const feeCharged = normalizeFeeCharged(parsed.fee_charged);
+    const value = {
+      source: "horizon" as const,
+      cached: false,
+      lastLedgerBaseFee: String(parsed.last_ledger_base_fee ?? BASE_FEE),
+      ...(parsed.ledger_capacity_usage === undefined
+        ? {}
+        : { ledgerCapacityUsage: String(parsed.ledger_capacity_usage) }),
+      ...(feeCharged === undefined ? {} : { feeCharged })
+    };
+    sessionCache.set(key, { value, expiresAt: now + 30_000 });
+    return value;
+  } catch {
+    return { source: "base_fee_fallback", cached: false, lastLedgerBaseFee: BASE_FEE };
+  }
+}
+
+function normalizeFeeCharged(input: unknown): Record<string, string> | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const output: Record<string, string> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (value !== undefined && value !== null && /^\d+$/.test(String(value))) output[key] = String(value);
+  }
+  return output;
+}
+
+function selectFeeForStrategy(
+  stats: Awaited<ReturnType<typeof horizonFeeStats>>,
+  strategy: FeeStrategy
+): string {
+  if (strategy === "base") return maxFeeString(BASE_FEE, stats.lastLedgerBaseFee);
+  const charged = stats.feeCharged ?? {};
+  const candidate =
+    strategy === "low"
+      ? charged.p50 ?? charged.mode ?? charged.min
+      : strategy === "medium"
+        ? charged.p80 ?? charged.p70 ?? charged.p60 ?? charged.p50
+        : strategy === "high"
+          ? charged.p90 ?? charged.p95 ?? charged.max
+          : charged.p95 ?? charged.p90 ?? charged.max;
+  return maxFeeString(BASE_FEE, stats.lastLedgerBaseFee, candidate ?? BASE_FEE);
+}
+
+function maxFeeString(...values: string[]): string {
+  return values.reduce((max, value) => {
+    if (!/^\d+$/.test(value)) return max;
+    return BigInt(value) > BigInt(max) ? value : max;
+  }, BASE_FEE);
 }
 
 
@@ -1293,6 +1657,10 @@ function safeJson(raw: string): any {
   } catch {
     return undefined;
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function isHorizonNotFound(error: any): boolean {

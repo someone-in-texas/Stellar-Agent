@@ -240,6 +240,106 @@ describe("CLI contract receipts", () => {
     });
     expect(JSON.stringify(receipt)).not.toContain("\"S");
   });
+
+  it("quotes payments with fee stats metadata", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          last_ledger_base_fee: "100",
+          fee_charged: { p50: "100", p80: "250", p90: "300", p95: "450" }
+        })
+      )
+    );
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "pay",
+      "quote",
+      "--to",
+      "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      "--amount",
+      "1",
+      "--fee-strategy",
+      "p95"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        estimatedFee: {
+          source: "horizon",
+          strategy: "p95",
+          perOperationFee: "450",
+          transactionFee: "450"
+        },
+        policyDecision: { status: "allowed" }
+      }
+    });
+  });
+
+  it("evaluates batch payment dry-runs without submitting a transaction", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
+    const batchPath = join(tmpdir(), `stellar-agent-batch-${Date.now()}.json`);
+    await writeFile(
+      batchPath,
+      JSON.stringify([
+        { destination: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", amount: "1", asset: "XLM" },
+        { destination: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", amount: "2", asset: "XLM" }
+      ])
+    );
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "pay",
+      "batch",
+      "--file",
+      batchPath,
+      "--dry-run"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        dryRun: true,
+        aggregate: { status: "allowed" },
+        payments: [
+          { request: { amount: "1.0000000" }, policyDecision: { status: "allowed" } },
+          { request: { amount: "2.0000000" }, policyDecision: { status: "allowed" } }
+        ]
+      }
+    });
+  });
+
+  it("rejects invalid fee strategies with a docs-linked hint", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "pay",
+      "quote",
+      "--to",
+      "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      "--amount",
+      "1",
+      "--fee-strategy",
+      "fastest"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: false,
+      error: {
+        code: "INVALID_INPUT",
+        hint: expect.stringContaining("--fee-strategy medium"),
+        docs: "docs/troubleshooting.md#fee-too-low"
+      }
+    });
+  });
 });
 
 describe("CLI DeFi commands", () => {
