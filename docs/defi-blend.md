@@ -129,3 +129,16 @@ Default Testnet policy allows non-borrow Blend request types and denies borrowin
 - Borrowing is denied by default until the policy explicitly allows it.
 - Non-native reserves require a classic trustline before an account can hold the backing issued asset.
 - Receipts for submitted Blend transactions include public Blend metadata such as pool, action, reserve, amount, and position/preflight summaries.
+- Blend SDK code is confined to the DeFi adapter and loaded lazily by DeFi commands. Shared payment, policy, receipt, x402, MPP, and Mainnet guard code must not import protocol SDKs.
+
+## Adding Protocol SDK Support
+
+Additional DeFi protocol SDK support must preserve the same boundaries:
+
+- Add the SDK only to the approved adapter package.
+- Load the SDK with dynamic `import()` inside adapter functions.
+- Keep CLI command registration free of static runtime adapter imports.
+- Add protocol-specific policy controls before any mutation command.
+- Block Mainnet local auto-signing at both CLI and adapter-library boundaries.
+- Add unit tests, docs, and relevant live Testnet examples.
+- Update `scripts/check-protocol-sdk-boundaries.mjs` so release safety fails if the SDK leaks into shared packages.

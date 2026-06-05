@@ -32,6 +32,11 @@ Before starting a release:
   - no local Mainnet secret-key storage
   - real-funds commands require explicit acknowledgements
   - receipts are not bypassed
+- Protocol SDK boundaries remain intact:
+  - third-party protocol SDKs are confined to approved adapter packages
+  - protocol SDKs are loaded lazily
+  - CLI and shared packages do not statically import protocol SDKs
+  - new protocol SDKs are added to `scripts/check-protocol-sdk-boundaries.mjs`
 - User-facing docs distinguish GitHub artifacts from npm publication.
 
 ## Local Preflight
@@ -52,6 +57,7 @@ pnpm test
 pnpm smoke
 pnpm release:check-versions
 pnpm release:safety
+pnpm release:audit
 pnpm release:pack
 pnpm release:verify-artifacts
 pnpm release:notes
@@ -62,6 +68,8 @@ The release gate verifies:
 - package and plugin versions are aligned
 - package metadata is publishable
 - Mainnet safety invariants are present in docs, tests, and CLI behavior
+- third-party protocol SDKs remain isolated to approved adapter packages
+- production dependencies have no known advisories from `pnpm audit --prod`
 - npm tarballs are generated with internal `workspace:*` ranges rewritten to the release version
 - no packed `package.json` leaks a `workspace:*` dependency
 - a fresh temp project can install all generated tarballs

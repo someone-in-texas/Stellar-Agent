@@ -13,6 +13,7 @@
 - Local CLI binary.
 - Local policy files chosen by the user.
 - Stellar SDK and Horizon endpoints for network operations.
+- Protocol-specific DeFi adapters only after policy and signing guards have run; third-party protocol SDKs are not trusted for policy decisions.
 
 ## Untrusted Components
 
@@ -20,6 +21,7 @@
 - Paid APIs.
 - Remote URLs.
 - User-provided transaction data.
+- Third-party protocol SDKs and remote deployment maps used by DeFi adapters.
 
 ## Threats and Mitigations
 
@@ -34,6 +36,7 @@
 - Log privacy leaks: URL query params are redacted by default.
 - Mainnet/Testnet confusion: Mainnet is disabled and marked `realFunds: true`; Mainnet signed-XDR submission and contract operations require explicit real-funds flags and refuse local Testnet wallet secrets.
 - DeFi leverage risk: Blend borrow and protocol exposure are governed by explicit policy limits, minimum health-factor checks, and preflight simulation requirements.
+- Third-party protocol SDK compromise: protocol SDKs are isolated to adapter packages, loaded lazily, prohibited from core package and CLI startup paths by protocol SDK boundary checks, and cannot bypass policy evaluation, Soroban simulation, Mainnet auto-signing blocks, or receipt logging.
 - Malicious paid API: domain allowlists and policy checks gate payment.
 - Local approval bridge abuse: the localhost bridge requires a per-session API token for request and decision APIs, rejects cross-origin writes, and bounds request body size.
 - Malicious contributor: tests and docs are required for safety-sensitive changes.
@@ -41,3 +44,14 @@
 ## Out of Scope
 
 Hosted custody, mobile wallets, generalized blockchain indexing, and autonomous Mainnet spending are out of scope for v0.
+
+## Protocol SDK Boundary Rules
+
+Protocol SDK support must keep dependency and import boundaries narrow:
+
+- Third-party protocol SDK dependencies belong only in the approved adapter package, currently `@stellar-agent/defi`.
+- Protocol SDKs must be loaded with dynamic `import()` inside the adapter functions that need them.
+- The CLI must lazy-load DeFi adapters instead of statically importing them into every command path.
+- Shared packages such as `core`, `policy`, `stellar`, `ledger-logger`, payment clients, and MCP code must not import protocol SDKs.
+- Adding another protocol SDK requires updating `scripts/check-protocol-sdk-boundaries.mjs`, policy tests, docs, and release notes.
+- Release preflight runs protocol SDK boundary checks and a production dependency audit before artifacts are packed.

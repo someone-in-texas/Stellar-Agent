@@ -12,8 +12,11 @@ function requireText(name, body, needles) {
 }
 
 const threatModel = await readFile(join(rootDir, "docs", "threat-model.md"), "utf8");
+const securityPolicy = await readFile(join(rootDir, "SECURITY.md"), "utf8");
+const securityGuide = await readFile(join(rootDir, "docs", "security.md"), "utf8");
 const mainnetSafety = await readFile(join(rootDir, "docs", "mainnet-safety.md"), "utf8");
 const readme = await readFile(join(rootDir, "README.md"), "utf8");
+const rootPackage = await readFile(join(rootDir, "package.json"), "utf8");
 const cliSource = await readFile(join(rootDir, "packages", "cli", "src", "index.ts"), "utf8");
 const coreTests = await readFile(join(rootDir, "packages", "core", "test", "core.test.ts"), "utf8");
 const policyTests = await readFile(join(rootDir, "packages", "policy", "test", "policy.test.ts"), "utf8");
@@ -23,7 +26,19 @@ requireText("docs/threat-model.md", threatModel, [
   "Secret key leakage",
   "Spend-history bypass",
   "Mainnet/Testnet confusion",
+  "Third-party protocol SDK compromise",
+  "protocol SDK boundary checks",
   "tests and docs are required for safety-sensitive changes"
+]);
+requireText("SECURITY.md", securityPolicy, [
+  "Protocol SDK Boundaries",
+  "treated as untrusted supply-chain inputs",
+  "pnpm release:safety"
+]);
+requireText("docs/security.md", securityGuide, [
+  "Protocol SDK Boundaries",
+  "treated as untrusted supply-chain inputs",
+  "scripts/check-protocol-sdk-boundaries.mjs"
 ]);
 requireText("docs/mainnet-safety.md", mainnetSafety, [
   "Mainnet local auto-signing is blocked.",
@@ -51,6 +66,12 @@ requireText("packages/cli/test/cli.test.ts", cliTests, [
   "blocks Mainnet contract submissions unless guarded Mainnet mode is enabled",
   "submits externally signed Mainnet XDR only with explicit real-funds flags and writes a receipt",
   "not.toContain(\"\\\"S\")"
+]);
+requireText("package.json", rootPackage, [
+  "release:check-sdk-boundaries",
+  "check-protocol-sdk-boundaries.mjs",
+  "release:audit",
+  "pnpm audit --prod"
 ]);
 
 const cli = join(rootDir, "packages", "cli", "dist", "index.js");

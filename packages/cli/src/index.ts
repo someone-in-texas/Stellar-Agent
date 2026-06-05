@@ -16,19 +16,7 @@ import {
   serializeError
 } from "@stellar-agent/core";
 import { latestLedger, lookupTransaction, parseStellarCliTransactionHash, resolveNetworkProfile } from "@stellar-agent/stellar";
-import {
-  BlendAction,
-  blendDeployment,
-  blendNetworkForProfile,
-  fetchBlendDeployment,
-  inspectBlendPool,
-  inspectBlendPosition,
-  parseBlendRequest,
-  preflightBlendActions,
-  resolveBlendAsset,
-  resolveBlendPool,
-  submitBlendActions
-} from "@stellar-agent/defi";
+import type { BlendAction, BlendPreflight } from "@stellar-agent/defi";
 import {
   appendEvent,
   latestReceipt,
@@ -1989,6 +1977,7 @@ function addDefiCommands(program: Command): void {
     .option("--refresh", "Fetch current Blend deployment maps from blend-utils and blend-ui")
     .action(
       withContext(async (context, options: { network?: string; refresh?: boolean }) => {
+        const { blendDeployment, fetchBlendDeployment } = await loadDefi();
         const network = resolveBlendNetworkOption(context, options.network);
         return options.refresh ? await fetchBlendDeployment(network) : blendDeployment(network);
       }, "Blend deployments loaded.")
@@ -2003,6 +1992,7 @@ function addDefiCommands(program: Command): void {
     .option("--version <version>", "Pool version: v1 or v2")
     .action(
       withContext(async (context, options: { pool: string; network?: string; version?: string }) => {
+        const { blendDeployment, inspectBlendPool, resolveBlendPool } = await loadDefi();
         const profile = resolveBlendProfile(context, options.network);
         const deployment = blendDeployment(blendNetworkForProfile(profile));
         const poolDeployment = resolveBlendPool(deployment, options.pool);
@@ -2025,6 +2015,7 @@ function addDefiCommands(program: Command): void {
     .option("--version <version>", "Pool version: v1 or v2")
     .action(
       withContext(async (context, options: { pool: string; account: string; network?: string; version?: string }) => {
+        const { blendDeployment, inspectBlendPosition, resolveBlendPool } = await loadDefi();
         const profile = resolveBlendProfile(context, options.network);
         const deployment = blendDeployment(blendNetworkForProfile(profile));
         const poolDeployment = resolveBlendPool(deployment, options.pool);
@@ -2053,6 +2044,13 @@ function addDefiCommands(program: Command): void {
           context,
           options: { pool: string; account: string; request: string[]; network?: string; version?: string }
         ) => {
+          const {
+            blendDeployment,
+            parseBlendRequest,
+            preflightBlendActions,
+            resolveBlendAsset,
+            resolveBlendPool
+          } = await loadDefi();
           const profile = resolveBlendProfile(context, options.network);
           const deployment = blendDeployment(blendNetworkForProfile(profile));
           const poolDeployment = resolveBlendPool(deployment, options.pool);
@@ -2192,6 +2190,7 @@ function addDefiCommands(program: Command): void {
     .requiredOption("--request <type:asset:amount...>", "Blend request, repeatable", collectOption, [])
     .action(
       withContext(async (context, options: { pool: string; source: string; request: string[] }) => {
+        const { parseBlendRequest } = await loadDefi();
         return runBlendSubmitCommand(context, {
           command: "defi blend batch",
           pool: options.pool,
@@ -2565,6 +2564,14 @@ function resolveBlendNetworkOption(context: CliContext, network?: string): "test
   });
 }
 
+async function loadDefi(): Promise<typeof import("@stellar-agent/defi")> {
+  return await import("@stellar-agent/defi");
+}
+
+function blendNetworkForProfile(profile: NetworkProfile): "testnet" | "mainnet" {
+  return profile.realFunds || profile.name === "mainnet" ? "mainnet" : "testnet";
+}
+
 function resolveBlendProfile(context: CliContext, network?: string): NetworkProfile {
   return resolveNetworkProfile(resolveBlendNetworkOption(context, network), context.config.profiles);
 }
@@ -2594,6 +2601,8 @@ async function runBlendSubmitCommand(
   context: CliContext,
   args: { command: string; pool: string; source: string; actions: BlendAction[] }
 ): Promise<unknown> {
+  const { blendDeployment, preflightBlendActions, resolveBlendAsset, resolveBlendPool, submitBlendActions } =
+    await loadDefi();
   const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
   if (profile.realFunds) {
     throw new StellarAgentError({
@@ -2670,7 +2679,7 @@ async function runBlendSubmitCommand(
   };
 }
 
-function blendPolicyRequest(profile: NetworkProfile, pool: string, preflight: Awaited<ReturnType<typeof preflightBlendActions>>) {
+function blendPolicyRequest(profile: NetworkProfile, pool: string, preflight: BlendPreflight) {
   const borrowValue = preflight.actions
     .filter((action) => action.type === "borrow")
     .reduce((total, action) => total + (action.value ?? 0), 0);
@@ -2701,6 +2710,7 @@ async function blendTrustlineGuide(
   context: CliContext,
   options: { asset: string; account: string; network?: string }
 ): Promise<unknown> {
+  const { blendDeployment, resolveBlendAsset } = await loadDefi();
   const profile = resolveBlendProfile(context, options.network);
   const deployment = blendDeployment(blendNetworkForProfile(profile));
   const asset = resolveBlendAsset(deployment, options.asset);
@@ -2730,6 +2740,7 @@ async function addBlendTrustline(
   context: CliContext,
   options: { asset: string; account: string; limit?: string }
 ): Promise<unknown> {
+  const { blendDeployment, resolveBlendAsset } = await loadDefi();
   const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
   if (profile.realFunds) {
     throw new StellarAgentError({
