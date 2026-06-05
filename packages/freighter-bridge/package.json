@@ -1,6 +1,6 @@
 {
   "name": "@stellar-agent/freighter-bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local approval request storage and Freighter-compatible signing bridge for Stellar Agent Bridge.",
   "type": "module",
   "license": "MIT",

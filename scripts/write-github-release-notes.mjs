@@ -15,7 +15,7 @@ await writeFile(
     "## Artifacts",
     "",
     "- npm package tarballs for every publishable `@stellar-agent/*` workspace package.",
-    "- Codex plugin artifact: `stellar-agent-codex-plugin-v0.1.0.tgz`.",
+    `- Codex plugin artifact: \`stellar-agent-codex-plugin-v${manifest.version}.tgz\`.`,
     "- `release-manifest.json` with artifact SHA-256 checksums and source commit.",
     "",
     "## Verification",

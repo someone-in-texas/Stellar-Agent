@@ -1,6 +1,6 @@
 # Release Process
 
-This repository is ready for a GitHub `0.1.0` release with verified source, npm package tarballs, and a bundled Codex plugin artifact.
+This repository supports verified GitHub releases with source, npm package tarballs, and a bundled Codex plugin artifact.
 
 The release process is still intentionally conservative: GitHub releases are automated around verified artifacts, while npm publication remains a separate manual provenance-backed step until the maintainer confirms npm org/package access.
 
@@ -10,14 +10,15 @@ The release process is still intentionally conservative: GitHub releases are aut
 - **npm package publication:** prepared but manual. Publish the same verified tarballs with `npm publish --provenance --access public` only after npm scope ownership and package access are confirmed.
 - **Live Testnet verification:** strongly recommended before public release tags and required before releases that advertise new payment behavior.
 
-## 0.1.0 Scope
+## 0.2.0 Scope
 
-`0.1.0` is a Testnet-first release:
+`0.2.0` is a Testnet-first release:
 
-- CLI command surface, JSON envelopes, policy checks, receipt logging, Testnet wallets, Friendbot funding, direct payments, issued assets, claimable balances, approval requests, guarded signed-XDR flows, MCP tools, local x402/MPP demos, and Codex plugin validation are included.
+- CLI command surface, JSON envelopes, policy checks, receipt logging, Testnet wallets, Friendbot funding, direct payments, issued assets, claimable balances, approval requests, guarded signed-XDR flows, MCP tools, local x402/MPP demos, Blend DeFi inspection and guarded Testnet mutation, and Codex plugin validation are included.
 - Mainnet local auto-signing remains blocked.
 - Raw Mainnet secret-key storage remains blocked.
 - Mainnet usage is limited to guarded externally signed XDR or explicitly acknowledged contract operations.
+- Mainnet Blend DeFi mutation remains blocked until an external signer flow exists.
 - Production facilitator-backed x402/MPP support remains future work.
 
 ## Preconditions
@@ -82,7 +83,7 @@ For a live integration check on Stellar Testnet, run:
 LIVE_STELLAR_TESTNET=1 pnpm verify:live:testnet
 ```
 
-The live verifier creates temporary Testnet accounts and submits real Testnet transactions. Run it before `0.1.0` and before later releases that change payment, receipt, policy, wallet, contract, or approval behavior.
+The live verifier creates temporary Testnet accounts and submits real Testnet transactions. Run it before releases that change payment, receipt, policy, wallet, contract, DeFi, or approval behavior.
 
 ## Generated Artifacts
 
@@ -90,7 +91,7 @@ The live verifier creates temporary Testnet accounts and submits real Testnet tr
 
 ```text
 .release/artifacts/npm/*.tgz
-.release/artifacts/codex/stellar-agent-codex-plugin-v0.1.0.tgz
+.release/artifacts/codex/stellar-agent-codex-plugin-v0.2.0.tgz
 .release/artifacts/release-manifest.json
 ```
 
@@ -106,7 +107,7 @@ Release packaging:
 2. `pnpm smoke` validates the bundled plugin.
 3. `pnpm release:pack` copies `plugins/codex` into a release staging directory.
 4. `stellar-agent-codex-plugin manifest` writes `plugin-manifest.json` into the staged plugin.
-5. The staged plugin is archived as `stellar-agent-codex-plugin-v0.1.0.tgz`.
+5. The staged plugin is archived as `stellar-agent-codex-plugin-v0.2.0.tgz`.
 6. `pnpm release:verify-artifacts` extracts that archive and validates it through the installed `stellar-agent-codex-plugin` binary from the packed npm artifact.
 
 This keeps Codex plugin packaging aligned with GitHub releases: the GitHub release contains the npm package that validates plugin manifests and the matching plugin artifact that Codex can install.
@@ -116,8 +117,8 @@ This keeps Codex plugin packaging aligned with GitHub releases: the GitHub relea
 Create and verify the tag locally:
 
 ```bash
-git tag -a v0.1.0 -m "Stellar Agent v0.1.0"
-git push origin v0.1.0
+git tag -a v0.2.0 -m "Stellar Agent v0.2.0"
+git push origin v0.2.0
 ```
 
 The `Release` workflow runs on `v*` tags. It runs `pnpm release:preflight`, uploads generated artifacts, and creates the GitHub release from:
@@ -134,11 +135,11 @@ Manual local fallback:
 
 ```bash
 pnpm release:preflight
-gh release create v0.1.0 \
+gh release create v0.2.0 \
   .release/artifacts/npm/*.tgz \
   .release/artifacts/codex/*.tgz \
   .release/artifacts/release-manifest.json \
-  --title "Stellar Agent v0.1.0" \
+  --title "Stellar Agent v0.2.0" \
   --notes-file .release/github-release-notes.md \
   --verify-tag
 ```

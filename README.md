@@ -6,7 +6,7 @@ Build payment-capable agents on Stellar without giving them a blank check.
 
 ## Status
 
-This repository is a `0.1.0` Testnet-first release. Core primitives, policy evaluation, local receipt logging, Testnet wallet creation, Friendbot funding, basic Testnet payment submission, issued-asset trustlines, claimable balances, local approval bridge requests, local x402-style and MPP Testnet demos, MCP tools, Codex plugin packaging, and the CLI command surface are present. Mainnet local auto-signing remains blocked; guarded Mainnet submission is limited to externally signed XDR and explicitly acknowledged real-funds contract operations.
+This repository is a `0.2.0` Testnet-first release. Core primitives, policy evaluation, local receipt logging, Testnet wallet creation, Friendbot funding, basic Testnet payment submission, issued-asset trustlines, claimable balances, local approval bridge requests, local x402-style and MPP Testnet demos, Blend DeFi inspection and guarded Testnet mutation, MCP tools, Codex plugin packaging, and the CLI command surface are present. Mainnet local auto-signing remains blocked; guarded Mainnet submission is limited to externally signed XDR and explicitly acknowledged real-funds contract operations.
 
 ## Safety First
 
@@ -93,10 +93,10 @@ Agents should call the CLI with `--json`, parse the standard envelope, and stop 
 
 ## Release Artifacts
 
-`v0.1.0` GitHub releases contain:
+`v0.2.0` GitHub releases contain:
 
 - npm tarballs for the scoped `@stellar-agent/*` packages.
-- `stellar-agent-codex-plugin-v0.1.0.tgz` for the bundled Codex plugin.
+- `stellar-agent-codex-plugin-v0.2.0.tgz` for the bundled Codex plugin.
 - `release-manifest.json` with artifact SHA-256 checksums and source commit metadata.
 
 The generated tarballs are verified by `pnpm release:preflight` through a fresh temporary install before release.

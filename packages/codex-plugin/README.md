@@ -16,4 +16,4 @@ Release packaging is handled by the repository-level release gate:
 pnpm release:preflight
 ```
 
-That command builds this package, stages `plugins/codex`, writes `plugin-manifest.json`, creates `stellar-agent-codex-plugin-v0.1.0.tgz`, then verifies the artifact through the installed `stellar-agent-codex-plugin` binary from the generated npm tarball.
+That command builds this package, stages `plugins/codex`, writes `plugin-manifest.json`, creates the versioned `stellar-agent-codex-plugin-v*.tgz` artifact, then verifies the artifact through the installed `stellar-agent-codex-plugin` binary from the generated npm tarball.

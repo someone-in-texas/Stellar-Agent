@@ -9,10 +9,6 @@ const errors = [];
 if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(releaseVersion)) {
   errors.push(`Root version is not a semver release version: ${releaseVersion}`);
 }
-if (releaseVersion !== "0.1.0") {
-  errors.push(`0.1.0 release gate expected root version 0.1.0, found ${releaseVersion}`);
-}
-
 for (const packageDir of publishablePackageDirs) {
   const packageJsonPath = join(rootDir, packageDir, "package.json");
   const packageJson = await readJson(packageJsonPath);
@@ -47,7 +43,7 @@ const releaseDoc = await readFile(join(rootDir, "RELEASE.md"), "utf8");
 for (const expected of [
   "pnpm release:pack",
   "pnpm release:verify-artifacts",
-  "stellar-agent-codex-plugin-v0.1.0.tgz",
+  `stellar-agent-codex-plugin-v${releaseVersion}.tgz`,
   "npm publish --provenance --access public"
 ]) {
   if (!releaseDoc.includes(expected)) errors.push(`RELEASE.md is missing ${expected}`);
