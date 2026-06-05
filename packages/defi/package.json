@@ -1,6 +1,6 @@
 {
   "name": "@stellar-agent/defi",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Blend DeFi adapters for safe Stellar Agent inspection, preflight, and guarded request construction.",
   "type": "module",
   "license": "MIT",

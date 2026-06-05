@@ -641,6 +641,7 @@ Global options:
 --no-color              Disable colored output
 --verbose               Print additional diagnostics
 --quiet                 Suppress nonessential output
+--no-cache              Disable session caches for network lookups
 ```
 
 ### CLI behavior contract
@@ -918,6 +919,7 @@ Acceptance criteria:
 ```bash
 stellar-agent pay send
 stellar-agent pay quote
+stellar-agent pay batch
 stellar-agent pay x402
 stellar-agent pay mpp
 ```
@@ -954,6 +956,20 @@ Returns:
 - Policy decision.
 - Approval requirement.
 - Network profile.
+
+#### `pay batch`
+
+Bundles 1 to 100 Testnet payment operations from one local source wallet into one transaction.
+
+Acceptance criteria:
+
+- Reads a JSON array of payment objects from `--file`.
+- Validates every destination, amount, and asset before signing.
+- Evaluates policy for every payment and advances in-memory daily/monthly spend totals across the bundle.
+- Fails before signing if any payment is denied or approval-required.
+- Uses Horizon fee stats by default with `--fee-strategy base|low|medium|high|p95`.
+- Writes an operation receipt containing public batch metadata.
+- Must not support Mainnet auto-signing.
 
 #### `pay x402`
 
@@ -2438,6 +2454,7 @@ The first working version should satisfy this matrix. It is intended to make aut
 | `wallet connect-freighter` | Placeholder or later phase | No | No secrets | No | Yes if placeholder | Yes |
 | `pay quote` | Implemented | Optional fee lookup | No | No | Yes | Yes |
 | `pay send --profile testnet` | Implemented | Yes | Yes | Yes on success | Yes | Yes |
+| `pay batch` | Implemented for Testnet | Yes | Yes | Yes on success | Yes | Yes |
 | `pay x402` | Placeholder | No | Optional event log | No | Yes | Yes |
 | `pay mpp` | Placeholder | No | Optional event log | No | Yes | Yes |
 | `ledger latest` | Implemented if backed by network client | Yes unless mocked | No | No | Yes | Yes |

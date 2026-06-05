@@ -1,6 +1,6 @@
 {
   "name": "@stellar-agent/cli",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Testnet-first CLI for safe agentic payments, policies, receipts, approvals, and guarded Mainnet workflows on Stellar.",
   "type": "module",
   "license": "MIT",

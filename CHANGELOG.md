@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- Added fee-stat-aware transaction building with `base`, `low`, `medium`, `high`, and `p95` fee strategies, including session caching and base-fee fallback behavior.
+- Added guarded Testnet `pay batch` support for bundling multiple payments into one transaction with per-payment policy checks and aggregate spend-limit evaluation.
+- Tightened signed-XDR submission so ambiguous Horizon submit responses are confirmed by transaction lookup before reporting success.
+- Added `cache inspect` and `cache clear` commands plus global `--no-cache` support for long-running agent sessions.
+- Expanded CLI help smoke coverage, docs-linked error hints, and agent integration docs for faster setup and troubleshooting.
+- Updated GitHub Actions workflow actions to Node 24-runtime majors while keeping the project test runtime on Node 22.
+
 ## 0.2.0
 
 - Added first-class Blend DeFi inspection, preflight, deployment discovery, guided trustline setup, and guarded Testnet supply, borrow, repay, withdraw, and batch commands.

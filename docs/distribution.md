@@ -1,6 +1,6 @@
 # Distribution Readiness
 
-This repository is a pnpm workspace. The `0.1.x` release strategy is to publish scoped `@stellar-agent/*` package tarballs from a verified GitHub release. Source manifests keep `workspace:*` dependency ranges for local development; `pnpm release:pack` rewrites those ranges to the release version inside the staged package tarballs only.
+This repository is a pnpm workspace. The `0.3.x` release strategy is to publish scoped `@stellar-agent/*` package tarballs from a verified GitHub release. Source manifests keep `workspace:*` dependency ranges for local development; `pnpm release:pack` rewrites those ranges to the release version inside the staged package tarballs only.
 
 ## Current Release Gate
 
@@ -18,7 +18,7 @@ The release preflight builds, lints, tests, smoke-tests, checks release metadata
 Generated artifacts:
 
 - `.release/artifacts/npm/*.tgz` for scoped npm packages.
-- `.release/artifacts/codex/stellar-agent-codex-plugin-v0.1.0.tgz` for Codex plugin installation.
+- `.release/artifacts/codex/stellar-agent-codex-plugin-v0.3.0.tgz` for Codex plugin installation.
 - `.release/artifacts/release-manifest.json` for checksums and source commit evidence.
 
 The public package set is:
@@ -54,9 +54,9 @@ Do not publish from package source directories. The generated tarballs are the t
 
 ## Versioning and Changelog
 
-- `0.1.x` means installable Testnet-first release artifacts with stable-enough CLI commands and JSON envelopes for early agent integration.
+- `0.3.x` means installable Testnet-first release artifacts with fee-aware transaction submission, guarded bundled payments, and stable CLI/JSON behavior for agent integration.
 - Patch releases fix defects, documentation, packaging, and safety checks without broad command-shape churn.
-- Breaking command, JSON envelope, policy schema, or receipt schema changes should wait for `0.2.0` unless they repair a safety bug.
+- Breaking command, JSON envelope, policy schema, or receipt schema changes should wait for the next minor release unless they repair a safety bug.
 - `CHANGELOG.md` is the source for GitHub release notes.
 
 ## Mainnet Release Requirements

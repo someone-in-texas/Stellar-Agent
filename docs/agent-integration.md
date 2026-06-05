@@ -4,7 +4,9 @@ Agents should use JSON mode:
 
 ```bash
 stellar-agent testnet doctor --json
-stellar-agent pay quote --to G... --amount 1 --asset XLM --json
+stellar-agent pay quote --to G... --amount 1 --asset XLM --fee-strategy medium --json
+stellar-agent pay batch --file ./payments.json --dry-run --json
+stellar-agent cache inspect --json
 stellar-agent wallet trustline add --account merchant --asset USD:G... --json
 stellar-agent testnet scenario issued-asset-payment --dry-run --json
 stellar-agent wallet import-public --name treasury --network mainnet --address G... --json
@@ -29,7 +31,7 @@ The standard success envelope is:
 The standard error envelope is:
 
 ```json
-{ "ok": false, "error": { "code": "POLICY_DENIED", "message": "..." } }
+{ "ok": false, "error": { "code": "POLICY_DENIED", "message": "...", "hint": "...", "docs": "docs/troubleshooting.md#policy-denied" } }
 ```
 
 Exit codes are stable: `0` success, `2` usage, `3` config or policy validation, `4` policy denied, `5` approval required or denied, `6` network unavailable, `7` transaction failed or timed out, and `8` not implemented.
@@ -37,6 +39,12 @@ Exit codes are stable: `0` success, `2` usage, `3` config or policy validation, 
 Example agent prompt:
 
 > Run `stellar-agent pay quote --json` before any payment, stop if approval is required, and never print secrets.
+
+Speed guidance:
+
+- Prefer `--fee-strategy medium` for normal Testnet/Mainnet submission and `high` or `p95` only when faster acceptance is worth the higher fee bid.
+- Use `pay batch --dry-run --json` before bundled Testnet payments, then submit only when every per-payment policy decision is allowed.
+- Use `--no-cache` when a long-running agent session needs fresh Horizon fee stats or readiness data.
 
 Mainnet agent rule:
 

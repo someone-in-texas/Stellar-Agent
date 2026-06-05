@@ -14,8 +14,10 @@ Rules:
 
 Direct payments:
 
-- Quote XLM or issued-asset payments with `stellar-agent pay quote --from <alias> --to <G...> --amount <amount> --asset <asset> --json`.
+- Quote XLM or issued-asset payments with `stellar-agent pay quote --to <G...> --amount <amount> --asset <asset> --fee-strategy medium --json`.
 - Submit approved Testnet payments with `stellar-agent pay send ... --json`.
+- For bundled Testnet payments, run `stellar-agent pay batch --file <payments.json> --dry-run --json` first and submit only if every policy decision is `allowed`.
+- Use `--fee-strategy high` or `--fee-strategy p95` only when the user wants a higher fee bid for faster acceptance.
 - For issued assets, confirm the recipient has a trustline before submitting, or use `stellar-agent testnet scenario issued-asset-payment --json` for an end-to-end Testnet scenario.
 
 Approval and signing:

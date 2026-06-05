@@ -49,6 +49,31 @@ stellar-agent wallet trustline remove --account merchant --asset USD:G...ISSUER
 
 Remove a trustline only after the asset balance is zero.
 
+## Faster Payments
+
+Payment commands use Horizon fee stats by default so Testnet transactions bid a current fee instead of always using the static base fee. Use `--fee-strategy medium` for the default, `base` for the minimum safe fallback, `high` or `p95` when you prefer faster acceptance under congestion, and `--no-cache` when you want to bypass in-process fee-stat caching.
+
+Quote before submitting:
+
+```bash
+stellar-agent pay quote --to G...MERCHANT --amount 1 --asset XLM --fee-strategy medium --json
+```
+
+Bundle multiple Testnet payments from the same local wallet into one transaction:
+
+```json
+[
+  { "destination": "G...MERCHANT", "amount": "1", "asset": "XLM" },
+  { "destination": "G...AUDITOR", "amount": "0.5", "asset": "XLM" }
+]
+```
+
+```bash
+stellar-agent pay batch --file ./payments.json --from agent --memo "batch-demo" --json
+```
+
+`pay batch` evaluates policy for every payment and advances the in-memory spend totals while checking the bundle, so daily and monthly limits apply to the aggregate transaction. Mainnet batch auto-signing remains blocked.
+
 ## Issued Asset Scenario
 
 Run the end-to-end issued-asset path with one command:
@@ -78,6 +103,7 @@ stellar-agent ledger effects --account merchant
 stellar-agent claimable list --account merchant
 stellar-agent receipts latest
 stellar-agent ledger export --output ./ledger-report.json
+stellar-agent cache inspect --json
 ```
 
 ## Signed XDR
@@ -97,4 +123,4 @@ The broad live verifier is opt-in because it creates Testnet accounts and submit
 LIVE_STELLAR_TESTNET=1 pnpm verify:live:testnet
 ```
 
-It uses an isolated temp workspace and exercises wallet creation, Friendbot funding, XLM payment, ledger lookups, receipt verification, report export, issued-asset payment after trustline setup, Blend deployment discovery, Blend trustline guidance, Blend Testnet supply and batch transactions, signed-XDR approval submission, trustline add/remove, XLM and issued-asset claimable balance create/claim, approval-gated payment, local x402, local one-time MPP, local MPP session budget, and Stellar CLI contract asset deployment/read/info/invocation/TTL extension when `stellar` is installed.
+It uses an isolated temp workspace and exercises wallet creation, Friendbot funding, XLM payment, bundled Testnet payments, ledger lookups, receipt verification, report export, issued-asset payment after trustline setup, Blend deployment discovery, Blend trustline guidance, Blend Testnet supply and batch transactions, signed-XDR approval submission, trustline add/remove, XLM and issued-asset claimable balance create/claim, approval-gated payment, local x402, local one-time MPP, local MPP session budget, and Stellar CLI contract asset deployment/read/info/invocation/TTL extension when `stellar` is installed.

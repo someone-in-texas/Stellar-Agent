@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to create or verify, for example v0.1.0"
+        description: "Release tag to create or verify, for example v0.3.0"
         required: true
-        default: "v0.1.0"
+        default: "v0.3.0"
       create_github_release:
         description: "Create the GitHub release from generated artifacts"
         required: true
@@ -23,10 +23,10 @@ jobs:
   github-release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
       - uses: pnpm/action-setup@v4

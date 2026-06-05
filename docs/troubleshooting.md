@@ -34,6 +34,14 @@ No transaction is signed or submitted. Inspect event logs under `~/.stellar-agen
 
 Check Horizon status, wallet funding, destination address, and transaction hash if one was returned.
 
+## Fee Too Low
+
+Use `stellar-agent pay quote --fee-strategy medium --json` to inspect the current fee bid. If Testnet or Mainnet is congested, rerun the command with `--fee-strategy high` or `--fee-strategy p95`. Use `--no-cache` if you need a fresh fee-stat lookup inside a long-running agent session.
+
+## Batch Transaction Failed
+
+`stellar-agent pay batch` accepts a JSON array with 1 to 100 payment objects. Each object must include `destination` and `amount`; `asset` defaults to `XLM`. Batch payments are Testnet-only, use one local source wallet, evaluate policy for every operation, and fail before signing if any payment is denied or approval-required.
+
 ## Stellar CLI Unavailable
 
 `stellar-agent contract invoke` requires the official Stellar CLI. Install it from the Stellar docs or pass `--stellar-binary /path/to/stellar`.
