@@ -2311,7 +2311,9 @@ function addMarketCommands(program: Command): void {
           profile: resolveMarketProfile(context, options.network)
         });
         const shares = position.positions[0]?.shares ?? "0.0000000";
-        const triggered = options.sharesBelow === undefined ? false : Number(shares) < Number(options.sharesBelow);
+        const sharesBelow =
+          options.sharesBelow === undefined ? undefined : parseNonnegativeDecimalInput(options.sharesBelow, "shares-below");
+        const triggered = sharesBelow === undefined ? false : Number(shares) < sharesBelow;
         return {
           type: "market.alert",
           rule: "lp-position-shares-below",
@@ -3139,6 +3141,7 @@ async function runLiquidityPreflight(
         docs: "docs/market-liquidity.md#lp-preflight"
       });
     }
+    validatePriceBounds(options.minPrice, options.maxPrice);
     return preflightLiquidityPoolDeposit({
       poolId: options.pool,
       maxAmountA: options.maxA,
@@ -3191,6 +3194,7 @@ async function runLiquiditySubmitCommand(
     });
   }
   const wallet = await loadWallet(context.config, args.source);
+  if (args.action === "deposit") validatePriceBounds(args.minPrice, args.maxPrice);
   const { preflightLiquidityPoolDeposit, preflightLiquidityPoolWithdraw, submitLiquidityPoolDeposit, submitLiquidityPoolWithdraw } =
     await import("@stellar-agent/stellar");
   const preflight =
@@ -3304,6 +3308,8 @@ async function listenForPoolPrice(context: CliContext, options: MarketPriceListe
       docs: "docs/market-liquidity.md#market-listeners"
     });
   }
+  const above = options.above === undefined ? undefined : parsePositiveDecimalInput(options.above, "above");
+  const below = options.below === undefined ? undefined : parsePositiveDecimalInput(options.below, "below");
   const { inspectLiquidityPool } = await import("@stellar-agent/stellar");
   const profile = resolveMarketProfile(context, options.network);
   const events = [];
@@ -3311,8 +3317,8 @@ async function listenForPoolPrice(context: CliContext, options: MarketPriceListe
     if (poll > 0) await sleep(options.intervalMs);
     const pool = await inspectLiquidityPool({ poolId: options.pool, profile });
     const price = poolReservePrice(pool);
-    const aboveTriggered = options.above === undefined ? false : price > Number(options.above);
-    const belowTriggered = options.below === undefined ? false : price < Number(options.below);
+    const aboveTriggered = above === undefined ? false : price > above;
+    const belowTriggered = below === undefined ? false : price < below;
     events.push({
       type: "market.alert",
       rule: "core-pool-price",
@@ -3347,6 +3353,49 @@ function poolReservePrice(pool: LiquidityPoolSummary): number {
     });
   }
   return reserveB / reserveA;
+}
+
+function validatePriceBounds(minPrice: string, maxPrice: string): void {
+  const min = parsePositiveDecimalInput(minPrice, "min-price");
+  const max = parsePositiveDecimalInput(maxPrice, "max-price");
+  if (min > max) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Liquidity deposit --min-price must be less than or equal to --max-price.",
+      docs: "docs/market-liquidity.md#lp-preflight"
+    });
+  }
+}
+
+function parsePositiveDecimalInput(input: string, label: string): number {
+  const value = parseNonnegativeDecimalInput(input, label);
+  if (value <= 0) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: `${label} must be greater than zero.`,
+      docs: "docs/market-liquidity.md"
+    });
+  }
+  return value;
+}
+
+function parseNonnegativeDecimalInput(input: string, label: string): number {
+  if (!/^(0|[1-9]\d*)(\.\d+)?$/.test(input.trim())) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: `${label} must be a decimal number.`,
+      docs: "docs/market-liquidity.md"
+    });
+  }
+  const value = Number(input);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: `${label} must be a finite nonnegative number.`,
+      docs: "docs/market-liquidity.md"
+    });
+  }
+  return value;
 }
 
 async function readStrategyFile(file: string): Promise<Record<string, unknown>> {

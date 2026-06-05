@@ -1,6 +1,6 @@
 # Stellar Agent Bridge Codex Plugin
 
-This plugin teaches Codex to use `stellar-agent` safely for Testnet wallets, payments, issued assets, trustlines, claimable balances, local HTTP payment demos, receipts, and Stellar CLI contract workflows.
+This plugin teaches Codex to use `stellar-agent` safely for Testnet wallets, payments, issued assets, trustlines, claimable balances, local HTTP payment demos, receipts, Stellar CLI contract workflows, and market-liquidity investigation.
 
 Validate the plugin before packaging:
 
@@ -14,7 +14,7 @@ Generate a normalized manifest:
 node packages/codex-plugin/dist/cli.js manifest plugins/codex plugins/codex/plugin-manifest.json
 ```
 
-GitHub releases package this plugin as `stellar-agent-codex-plugin-v0.1.0.tgz` alongside the npm tarball for `@stellar-agent/codex-plugin`. The release preflight validates the staged plugin artifact with the packaged validator so the Codex plugin and GitHub release remain aligned.
+GitHub releases package this plugin as `stellar-agent-codex-plugin-v0.4.0.tgz` alongside the npm tarball for `@stellar-agent/codex-plugin`. The release preflight validates the staged plugin artifact with the packaged validator so the Codex plugin and GitHub release remain aligned.
 
 Rules:
 
@@ -26,3 +26,5 @@ Rules:
 - Never enable Mainnet unless the user explicitly asks.
 - Treat x402 and MPP as local Testnet demos unless production facilitator support is explicitly added.
 - Run `contract doctor` before Stellar CLI-backed contract commands.
+- Treat market liquidity commands as investigation and policy-gated Testnet workflows, not profitability guarantees.
+- For liquidity-pool mutation, run `market lp preflight` first and require an existing Horizon-visible core pool.

@@ -1,0 +1,16 @@
+name: stellar-agent-market-liquidity
+description: Use for safe Stellar market, core liquidity-pool, LP preflight, market listener, and strategy investigation workflows.
+triggers:
+  - stellar-agent market
+  - liquidity pool
+  - market liquidity
+  - LP preflight
+  - market listener
+  - strategy investigate liquidity
+  - Soroban AMM
+instructions:
+  - Prefer read-only inspection and strategy investigation before liquidity-pool mutation.
+  - Run market lp preflight before any deposit or withdrawal.
+  - Treat listener events as alerts, not approval to execute.
+  - Use Testnet for local signing and block Mainnet local auto-signing.
+  - Treat generic Soroban AMM mutation as adapter-required.

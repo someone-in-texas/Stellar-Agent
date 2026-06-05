@@ -53,13 +53,13 @@ An account must hold a pool-share trustline before depositing into a core liquid
 stellar-agent market lp trustline add --pool 0123... --account agent --json
 ```
 
-If the pool does not exist yet, derive the pool-share trustline from reserve assets:
+You can derive the pool-share trustline from reserve assets:
 
 ```bash
 stellar-agent market lp trustline add --asset-a XLM --asset-b USD:G... --account agent --json
 ```
 
-Trustline creation is Testnet-only for local signing. Mainnet trustline creation requires a future external-signer flow.
+Trustline creation is Testnet-only for local signing. Mainnet trustline creation requires a future external-signer flow. In this release, LP deposit and withdrawal preflight expect an existing Horizon-visible core pool so the CLI can inspect reserve assets, current price, and risk context before submission.
 
 ## Testnet LP Mutation
 
@@ -83,6 +83,8 @@ stellar-agent market lp withdraw \
 ```
 
 Mainnet local auto-signing is blocked. See `docs/mainnet-safety.md#mainnet-liquidity`.
+
+`market lp deposit` targets existing core pools. Bootstrapping a brand-new core pool from only reserve assets is future work because the first deposit lacks Horizon reserve data for the current preflight model.
 
 ## Policy
 

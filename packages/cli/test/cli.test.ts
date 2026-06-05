@@ -504,6 +504,56 @@ describe("CLI market liquidity commands", () => {
     });
   });
 
+  it("rejects invalid market listener thresholds and reversed LP price bounds", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
+
+    const listener = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "market",
+      "listen",
+      "price",
+      "--pool",
+      poolIdFixture(),
+      "--above",
+      "not-a-price"
+    ]);
+    expect(listener).toMatchObject({
+      ok: false,
+      error: {
+        code: "INVALID_INPUT",
+        message: "above must be a decimal number."
+      }
+    });
+
+    const preflight = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "market",
+      "lp",
+      "preflight",
+      "--pool",
+      poolIdFixture(),
+      "--max-a",
+      "1",
+      "--max-b",
+      "2",
+      "--min-price",
+      "3",
+      "--max-price",
+      "2"
+    ]);
+    expect(preflight).toMatchObject({
+      ok: false,
+      error: {
+        code: "INVALID_INPUT",
+        message: "Liquidity deposit --min-price must be less than or equal to --max-price."
+      }
+    });
+  });
+
   it("blocks local Mainnet liquidity mutation", async () => {
     const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
 

@@ -1,19 +1,24 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { validateCodexPlugin, writeCodexPluginManifest } from "../src/index.js";
 
+const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
+const pluginRoot = join(repoRoot, "plugins", "codex");
+
 describe("codex plugin tooling", () => {
   it("validates the bundled Codex plugin", async () => {
-    const validation = await validateCodexPlugin(join(process.cwd(), "plugins", "codex"));
+    const validation = await validateCodexPlugin(pluginRoot);
     expect(validation).toMatchObject({
       valid: true,
       manifest: {
         name: "stellar-agent-bridge",
         skills: [
           { path: "skills/stellar-agent-testnet", title: "Stellar Agent Testnet" },
-          { path: "skills/stellar-agent-payments", title: "Stellar Agent Payments" }
+          { path: "skills/stellar-agent-payments", title: "Stellar Agent Payments" },
+          { path: "skills/stellar-agent-market-liquidity", title: "Stellar Agent Market Liquidity" }
         ]
       }
     });
@@ -21,15 +26,19 @@ describe("codex plugin tooling", () => {
   });
 
   it("keeps bundled skills aligned with implemented workflow families", async () => {
-    const root = join(process.cwd(), "plugins", "codex");
+    const root = pluginRoot;
     const testnetSkill = await readFile(join(root, "skills", "stellar-agent-testnet", "SKILL.md"), "utf8");
     const paymentsSkill = await readFile(join(root, "skills", "stellar-agent-payments", "SKILL.md"), "utf8");
+    const marketSkill = await readFile(join(root, "skills", "stellar-agent-market-liquidity", "SKILL.md"), "utf8");
 
     for (const expected of ["issued-asset-payment", "contract-asset-smoke", "trustline", "claimable", "contract asset-deploy"]) {
       expect(testnetSkill).toContain(expected);
     }
     for (const expected of ["pay x402", "pay mpp", "mpp-session", "approval create-transaction"]) {
       expect(paymentsSkill).toContain(expected);
+    }
+    for (const expected of ["market lp preflight", "market listen price", "strategy investigate liquidity", "adapter-required"]) {
+      expect(marketSkill).toContain(expected);
     }
   });
 
@@ -48,7 +57,7 @@ describe("codex plugin tooling", () => {
 
   it("writes a normalized plugin manifest", async () => {
     const output = join(tmpdir(), `stellar-agent-codex-plugin-manifest-${Date.now()}.json`);
-    await expect(writeCodexPluginManifest(join(process.cwd(), "plugins", "codex"), output)).resolves.toMatchObject({
+    await expect(writeCodexPluginManifest(pluginRoot, output)).resolves.toMatchObject({
       schemaVersion: "stellar-agent.codex-plugin.v1",
       name: "stellar-agent-bridge"
     });
