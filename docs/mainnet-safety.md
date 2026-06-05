@@ -130,3 +130,18 @@ Readiness checklist:
 - Receipts are enabled.
 - Logs are redacted.
 - The user understands real funds are involved.
+
+## Mainnet Liquidity
+
+Core Stellar liquidity-pool inspection, trade reads, position inspection, listeners, and strategy investigation may read Mainnet data. Mutating liquidity actions on Mainnet are blocked from local auto-signing.
+
+Mainnet liquidity-pool deposit, withdrawal, and pool-share trustline creation require a future external-signer flow with all of:
+
+- Mainnet enablement with `stellar-agent mainnet enable --i-understand-real-funds`.
+- Explicit real-funds flags for the submitting command.
+- A human-controlled external signer or browser-wallet flow.
+- `market.liquidity` policy approval.
+- Preflight output that shows pool id, reserve assets, price bounds, exposure, trustline requirements, and risk notes.
+- A receipt for any submitted transaction.
+
+Soroban AMM contracts are not treated as generic safe liquidity pools. `stellar-agent market soroban pool preflight` reports `adapter_required` until a protocol-specific adapter documents the contract interface, policy controls, simulation behavior, Mainnet signing model, and receipt metadata.

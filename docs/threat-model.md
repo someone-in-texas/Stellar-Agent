@@ -36,6 +36,10 @@
 - Log privacy leaks: URL query params are redacted by default.
 - Mainnet/Testnet confusion: Mainnet is disabled and marked `realFunds: true`; Mainnet signed-XDR submission and contract operations require explicit real-funds flags and refuse local Testnet wallet secrets.
 - DeFi leverage risk: Blend borrow and protocol exposure are governed by explicit policy limits, minimum health-factor checks, and preflight simulation requirements.
+- Liquidity-pool loss risk: core liquidity-pool deposits are governed by explicit pool, asset, action, exposure, and price-bound policy controls; estimates are marked as non-guaranteed snapshots.
+- Market listener staleness: listener output is an alert event, not execution approval, and commands must re-run preflight before mutation.
+- Asset issuer and trustline risk: liquidity preflight reports reserve assets and missing trustlines so agents do not silently deposit into unfamiliar issued-asset pools.
+- Generic Soroban AMM risk: Soroban liquidity contracts are read-only/adapter-required unless a protocol-specific adapter defines interfaces, policy controls, simulation, signing, and receipts.
 - Third-party protocol SDK compromise: protocol SDKs are isolated to adapter packages, loaded lazily, prohibited from core package and CLI startup paths by protocol SDK boundary checks, and cannot bypass policy evaluation, Soroban simulation, Mainnet auto-signing blocks, or receipt logging.
 - Malicious paid API: domain allowlists and policy checks gate payment.
 - Local approval bridge abuse: the localhost bridge requires a per-session API token for request and decision APIs, rejects cross-origin writes, and bounds request body size.

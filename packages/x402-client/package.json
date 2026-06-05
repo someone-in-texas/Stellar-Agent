@@ -1,6 +1,6 @@
 {
   "name": "@stellar-agent/x402-client",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Local Testnet x402-style payment demo client and server helpers for Stellar Agent Bridge.",
   "type": "module",
   "license": "MIT",

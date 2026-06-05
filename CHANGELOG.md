@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- Added `market` commands for core Stellar AMM pool listing, inspection, trade reads, LP position inspection, and finite JSON market alerts.
+- Added guarded Testnet `market lp` preflight, pool-share trustline creation, deposit, and withdrawal commands with policy checks before submission and receipt logging after successful transactions.
+- Added `market.liquidity` policy controls for allowed pools, assets, actions, exposure limits, and explicit deposit price bounds.
+- Added `strategy explain`, `strategy simulate`, and `strategy investigate liquidity` so agents can evaluate liquidity proposals without hidden signing or submission.
+- Added a Soroban pool investigation boundary: contract interface inspection is read-only, and generic Soroban AMM mutation reports `adapter_required` until a protocol-specific adapter, policy controls, simulation, and signing model exist.
+- Documented safe market-making scope, Mainnet liquidity guards, and liquidity-pool risk notes.
+
 ## 0.3.0
 
 - Added fee-stat-aware transaction building with `base`, `low`, `medium`, `high`, and `p95` fee strategies, including session caching and base-fee fallback behavior.
