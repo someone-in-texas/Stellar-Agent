@@ -1,4 +1,6 @@
-`stellar-agent-bridge` is an open-source CLI and local wallet bridge for safe agentic payments on Stellar. It gives developers and AI agents a Testnet-first way to create wallets, fund accounts, run payments, inspect ledger data, enforce spend policies, and produce auditable receipts - with guarded Mainnet support when users are ready.
+Build payment-capable agents on Stellar without giving them a blank check.
+
+`stellar-agent` gives agents a Testnet-first wallet, policy engine, receipt trail, and guarded contract/DeFi toolkit. Use it to prototype paid APIs, MPP sessions, issued-asset payments, Blend preflights, and approval-gated transactions while Mainnet stays locked behind explicit human signing.
 
 [![CI](https://github.com/someone-in-texas/Stellar-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/someone-in-texas/Stellar-Agent/actions/workflows/ci.yml)
 
