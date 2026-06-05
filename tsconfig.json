@@ -5,6 +5,7 @@
     { "path": "packages/policy" },
     { "path": "packages/ledger-logger" },
     { "path": "packages/stellar" },
+    { "path": "packages/defi" },
     { "path": "packages/testnet-suite" },
     { "path": "packages/x402-client" },
     { "path": "packages/mpp-client" },

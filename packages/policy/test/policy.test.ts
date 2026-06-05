@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_MAINNET_POLICY,
   DEFAULT_TESTNET_POLICY,
+  evaluateDefiBlendRequest,
   evaluatePaymentRequest,
   parsePolicyYaml,
   policyToYaml
@@ -156,5 +157,68 @@ describe("policy evaluation", () => {
 
   it("round-trips default policy YAML", () => {
     expect(parsePolicyYaml(policyToYaml(DEFAULT_TESTNET_POLICY)).name).toBe("default-testnet-policy");
+  });
+
+  it("allows default Testnet Blend supply-collateral preflight but denies borrow by default", () => {
+    const allowed = evaluateDefiBlendRequest(DEFAULT_TESTNET_POLICY, {
+      network: "testnet",
+      pool: "CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF",
+      requestTypes: ["supply_collateral"],
+      protocolExposureValue: "1",
+      healthFactorAfter: null
+    });
+    expect(allowed.status).toBe("allowed");
+    expect(allowed.matchedRules).toContain("defi_blend_request_types_allowed");
+
+    const denied = evaluateDefiBlendRequest(DEFAULT_TESTNET_POLICY, {
+      network: "testnet",
+      pool: "CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF",
+      requestTypes: ["borrow"],
+      borrowValue: "1",
+      protocolExposureValue: "1",
+      healthFactorAfter: 2
+    });
+    expect(denied.status).toBe("denied");
+    expect(denied.matchedRules).toContain("defi_blend_request_type_not_allowed");
+    expect(denied.matchedRules).toContain("defi_blend_borrow_over_limit");
+  });
+
+  it("enforces Blend allowed pools, exposure, and health factor", () => {
+    const policy = {
+      ...DEFAULT_TESTNET_POLICY,
+      defi: {
+        blend: {
+          ...DEFAULT_TESTNET_POLICY.defi.blend,
+          allowedPools: ["CALLOWEDPOOL"],
+          maxProtocolExposureValue: "10",
+          minimumHealthFactor: 1.5
+        }
+      }
+    };
+    const decision = evaluateDefiBlendRequest(policy, {
+      network: "testnet",
+      pool: "CDENIEDPOOL",
+      requestTypes: ["supply_collateral"],
+      protocolExposureValue: "11",
+      healthFactorAfter: 1.2
+    });
+    expect(decision.status).toBe("denied");
+    expect(decision.matchedRules).toContain("defi_blend_pool_not_allowed");
+    expect(decision.matchedRules).toContain("defi_blend_exposure_over_limit");
+    expect(decision.matchedRules).toContain("defi_blend_health_factor_too_low");
+  });
+
+  it("keeps Mainnet Blend disabled and approval-gated by default", () => {
+    const decision = evaluateDefiBlendRequest(DEFAULT_MAINNET_POLICY, {
+      network: "mainnet",
+      pool: "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+      requestTypes: ["supply_collateral"],
+      protocolExposureValue: "1",
+      healthFactorAfter: 3
+    });
+    expect(decision.realFunds).toBe(true);
+    expect(decision.status).toBe("denied");
+    expect(decision.matchedRules).toContain("defi_blend_disabled");
+    expect(decision.matchedRules).toContain("defi_blend_mainnet_requires_approval");
   });
 });

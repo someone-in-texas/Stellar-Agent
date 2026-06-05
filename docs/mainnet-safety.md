@@ -120,6 +120,10 @@ stellar-agent wallet balance --account treasury --json
 
 This stores only the public key and cannot sign transactions.
 
+## Mainnet DeFi
+
+Blend DeFi mutation on Mainnet follows the guarded Mainnet contract model. Mainnet Blend commands must not use local generated wallet secrets or autonomous auto-signing. Any future submitted Mainnet Blend transaction requires Mainnet enablement, explicit real-funds flags, an external signer or browser-wallet flow, DeFi policy approval, preflight simulation, and a receipt.
+
 Readiness checklist:
 
 - Policy requires approval for all Mainnet payments.

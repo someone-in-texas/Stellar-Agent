@@ -16,6 +16,7 @@ export const publishablePackageDirs = [
   "packages/ledger-logger",
   "packages/policy",
   "packages/stellar",
+  "packages/defi",
   "packages/freighter-bridge",
   "packages/mcp-server",
   "packages/testnet-suite",

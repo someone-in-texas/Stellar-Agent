@@ -68,4 +68,11 @@ describe("config and redaction", () => {
       hasSecret: true
     });
   });
+
+  it("does not redact public Blend bToken and dToken preflight metrics", () => {
+    expect(redactSensitive({ expectedTokens: { bTokens: "100", dTokens: "0" }, apiToken: "secret" })).toEqual({
+      expectedTokens: { bTokens: "100", dTokens: "0" },
+      apiToken: "[REDACTED]"
+    });
+  });
 });

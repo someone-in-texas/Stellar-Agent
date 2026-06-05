@@ -19,6 +19,7 @@
       "@stellar-agent/core": ["packages/core/src/index.ts"],
       "@stellar-agent/policy": ["packages/policy/src/index.ts"],
       "@stellar-agent/stellar": ["packages/stellar/src/index.ts"],
+      "@stellar-agent/defi": ["packages/defi/src/index.ts"],
       "@stellar-agent/testnet-suite": ["packages/testnet-suite/src/index.ts"],
       "@stellar-agent/ledger-logger": ["packages/ledger-logger/src/index.ts"],
       "@stellar-agent/freighter-bridge": ["packages/freighter-bridge/src/index.ts"],

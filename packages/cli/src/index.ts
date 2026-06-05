@@ -17,6 +17,17 @@ import {
 } from "@stellar-agent/core";
 import { latestLedger, lookupTransaction, parseStellarCliTransactionHash, resolveNetworkProfile } from "@stellar-agent/stellar";
 import {
+  blendDeployment,
+  blendNetworkForProfile,
+  fetchBlendDeployment,
+  inspectBlendPool,
+  inspectBlendPosition,
+  parseBlendRequest,
+  preflightBlendActions,
+  resolveBlendAsset,
+  resolveBlendPool
+} from "@stellar-agent/defi";
+import {
   appendEvent,
   latestReceipt,
   listReceipts,
@@ -30,6 +41,7 @@ import {
   DEFAULT_TESTNET_POLICY,
   Policy,
   defaultPolicyForNetwork,
+  evaluateDefiBlendRequest,
   evaluatePaymentRequest,
   parsePolicyYaml,
   policyToYaml
@@ -114,6 +126,7 @@ Common commands:
   addPayCommands(program);
   addClaimableCommands(program);
   addContractCommands(program);
+  addDefiCommands(program);
   addPolicyCommands(program);
   addLedgerCommands(program);
   addReceiptCommands(program);
@@ -1962,6 +1975,127 @@ function addContractCommands(program: Command): void {
     );
 }
 
+function addDefiCommands(program: Command): void {
+  const defi = program.command("defi").description("Inspect and preflight guarded DeFi workflows.");
+  const blend = defi.command("blend").description("Inspect Blend pools and preflight Blend pool requests.");
+
+  blend
+    .command("deployments")
+    .description("Show known Blend deployment contracts, assets, pools, and canonical trustline issuers.")
+    .option("--network <name>", "Blend deployment network: testnet or mainnet")
+    .option("--refresh", "Fetch current Blend deployment maps from blend-utils and blend-ui")
+    .action(
+      withContext(async (context, options: { network?: string; refresh?: boolean }) => {
+        const network = resolveBlendNetworkOption(context, options.network);
+        return options.refresh ? await fetchBlendDeployment(network) : blendDeployment(network);
+      }, "Blend deployments loaded.")
+    );
+
+  const pool = blend.command("pool").description("Inspect Blend pools.");
+  pool
+    .command("inspect")
+    .description("Load a Blend pool, reserves, APYs, and estimated aggregate pool values.")
+    .requiredOption("--pool <pool>", "Pool contract id or deployment alias")
+    .option("--network <name>", "Network profile to inspect: testnet or mainnet")
+    .option("--version <version>", "Pool version: v1 or v2")
+    .action(
+      withContext(async (context, options: { pool: string; network?: string; version?: string }) => {
+        const profile = resolveBlendProfile(context, options.network);
+        const deployment = blendDeployment(blendNetworkForProfile(profile));
+        const poolDeployment = resolveBlendPool(deployment, options.pool);
+        const poolVersion = resolveBlendPoolVersion(options.version ?? poolDeployment.version);
+        return inspectBlendPool({
+          profile,
+          poolId: poolDeployment.contractId,
+          ...(poolVersion === undefined ? {} : { poolVersion })
+        });
+      }, "Blend pool inspected.")
+    );
+
+  const position = blend.command("position").description("Inspect Blend user positions.");
+  position
+    .command("inspect")
+    .description("Load a user's Blend supply, collateral, liabilities, health factor, and APYs.")
+    .requiredOption("--pool <pool>", "Pool contract id or deployment alias")
+    .option("--account <account>", "Local wallet name or public key", "agent")
+    .option("--network <name>", "Network profile to inspect: testnet or mainnet")
+    .option("--version <version>", "Pool version: v1 or v2")
+    .action(
+      withContext(async (context, options: { pool: string; account: string; network?: string; version?: string }) => {
+        const profile = resolveBlendProfile(context, options.network);
+        const deployment = blendDeployment(blendNetworkForProfile(profile));
+        const poolDeployment = resolveBlendPool(deployment, options.pool);
+        const account = await resolvePublicAccount(context, options.account);
+        const poolVersion = resolveBlendPoolVersion(options.version ?? poolDeployment.version);
+        return inspectBlendPosition({
+          profile,
+          poolId: poolDeployment.contractId,
+          userId: account,
+          ...(poolVersion === undefined ? {} : { poolVersion })
+        });
+      }, "Blend position inspected.")
+    );
+
+  blend
+    .command("preflight")
+    .description("Preflight Blend requests with decoded request types, expected b/d tokens, position estimates, and policy.")
+    .requiredOption("--pool <pool>", "Pool contract id or deployment alias")
+    .option("--account <account>", "Local wallet name or public key", "agent")
+    .requiredOption("--request <type:asset:amount...>", "Blend request, repeatable", collectOption, [])
+    .option("--network <name>", "Network profile to inspect: testnet or mainnet")
+    .option("--version <version>", "Pool version: v1 or v2")
+    .action(
+      withContext(
+        async (
+          context,
+          options: { pool: string; account: string; request: string[]; network?: string; version?: string }
+        ) => {
+          const profile = resolveBlendProfile(context, options.network);
+          const deployment = blendDeployment(blendNetworkForProfile(profile));
+          const poolDeployment = resolveBlendPool(deployment, options.pool);
+          const account = await resolvePublicAccount(context, options.account);
+          const actions = options.request.map((entry) => {
+            const parsed = parseBlendRequest(entry);
+            const asset = resolveBlendAsset(deployment, parsed.asset);
+            return { ...parsed, asset: asset.contractId };
+          });
+          const poolVersion = resolveBlendPoolVersion(options.version ?? poolDeployment.version);
+          const preflight = await preflightBlendActions({
+            profile,
+            poolId: poolDeployment.contractId,
+            userId: account,
+            actions,
+            ...(poolVersion === undefined ? {} : { poolVersion })
+          });
+          const policy = await loadPolicy(context);
+          const borrowValue = preflight.actions
+            .filter((action) => action.type === "borrow")
+            .reduce((total, action) => total + (action.value ?? 0), 0);
+          const protocolExposureValue =
+            (preflight.after?.totalSupplied ?? preflight.before?.totalSupplied ?? 0) +
+            (preflight.after?.totalBorrowed ?? preflight.before?.totalBorrowed ?? 0);
+          const policyDecision = evaluateDefiBlendRequest(policy, {
+            network: profile.realFunds ? "mainnet" : "testnet",
+            pool: poolDeployment.contractId,
+            requestTypes: preflight.actions.map((action) => action.type),
+            borrowValue: String(borrowValue),
+            protocolExposureValue: String(protocolExposureValue),
+            ...(preflight.after?.healthFactor === undefined ? {} : { healthFactorAfter: preflight.after.healthFactor })
+          });
+          return {
+            deployment: {
+              network: deployment.network,
+              pool: poolDeployment
+            },
+            policyDecision,
+            preflight
+          };
+        },
+        "Blend preflight complete."
+      )
+    );
+}
+
 function addPolicyCommands(program: Command): void {
   const policy = program.command("policy").description("Manage and evaluate spend policies.");
   policy
@@ -2287,6 +2421,42 @@ async function loadPolicy(context: CliContext, explicitPath?: string) {
     if (error?.code === "ENOENT") return defaultPolicyForNetwork(context.profileName);
     throw error;
   }
+}
+
+function resolveBlendNetworkOption(context: CliContext, network?: string): "testnet" | "mainnet" {
+  if (!network) return blendNetworkForProfile(resolveNetworkProfile(context.profileName, context.config.profiles));
+  const normalized = network.toLowerCase();
+  if (normalized === "testnet" || normalized === "mainnet") return normalized;
+  throw new StellarAgentError({
+    code: "INVALID_INPUT",
+    message: "Blend network must be testnet or mainnet.",
+    docs: "docs/defi-blend.md"
+  });
+}
+
+function resolveBlendProfile(context: CliContext, network?: string): NetworkProfile {
+  return resolveNetworkProfile(resolveBlendNetworkOption(context, network), context.config.profiles);
+}
+
+function resolveBlendPoolVersion(version?: string): "v1" | "v2" | undefined {
+  if (version === undefined) return undefined;
+  const normalized = version.toLowerCase();
+  if (normalized === "v1" || normalized === "v2") return normalized;
+  throw new StellarAgentError({
+    code: "INVALID_INPUT",
+    message: "Blend pool version must be v1 or v2.",
+    docs: "docs/defi-blend.md"
+  });
+}
+
+async function resolvePublicAccount(context: CliContext, account: string): Promise<string> {
+  if (/^G[A-Z2-7]{55}$/.test(account)) return account;
+  return (await loadWalletPublic(context.config, account)).publicKey;
+}
+
+function collectOption(value: string, previous: string[]): string[] {
+  previous.push(value);
+  return previous;
 }
 
 async function loadSpendHistory(context: CliContext, request: PaymentRequest) {
@@ -2771,7 +2941,9 @@ async function resolvePaymentSourcePublicKey(
 }
 
 if (isCliEntrypoint()) {
-  await buildProgram().parseAsync(process.argv);
+  const argv =
+    process.argv[2] === "--" ? [process.argv[0] ?? "node", process.argv[1] ?? "stellar-agent", ...process.argv.slice(3)] : process.argv;
+  await buildProgram().parseAsync(argv);
 }
 
 export function isCliEntrypoint(argvPath = process.argv[1], moduleUrl = import.meta.url): boolean {

@@ -10,6 +10,7 @@
     { "path": "../core" },
     { "path": "../policy" },
     { "path": "../stellar" },
+    { "path": "../defi" },
     { "path": "../testnet-suite" },
     { "path": "../ledger-logger" },
     { "path": "../freighter-bridge" }

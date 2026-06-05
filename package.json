@@ -8,7 +8,7 @@
   "scripts": {
     "build": "tsc -b",
     "clean": "find packages -type d \\( -name dist -o -name .tsbuildinfo \\) -prune -exec rm -rf {} +",
-    "cli": "pnpm --filter @stellar-agent/cli exec stellar-agent",
+    "cli": "tsx packages/cli/src/index.ts",
     "lint": "eslint .",
     "format": "prettier --write .",
     "test": "vitest run",

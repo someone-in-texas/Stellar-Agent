@@ -33,6 +33,10 @@ const commands = [
   ["packages/cli/dist/index.js", "contract", "info", "--help"],
   ["packages/cli/dist/index.js", "contract", "extend", "--help"],
   ["packages/cli/dist/index.js", "contract", "restore", "--help"],
+  ["packages/cli/dist/index.js", "defi", "blend", "deployments", "--help"],
+  ["packages/cli/dist/index.js", "defi", "blend", "pool", "inspect", "--help"],
+  ["packages/cli/dist/index.js", "defi", "blend", "position", "inspect", "--help"],
+  ["packages/cli/dist/index.js", "defi", "blend", "preflight", "--help"],
   ["packages/cli/dist/index.js", "pay", "x402", "--help"],
   ["packages/cli/dist/index.js", "pay", "mpp", "--help"],
   ["packages/cli/dist/index.js", "pay", "mpp-session", "--help"]

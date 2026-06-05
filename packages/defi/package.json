@@ -1,0 +1,39 @@
+{
+  "name": "@stellar-agent/defi",
+  "version": "0.1.0",
+  "description": "Blend DeFi adapters for safe Stellar Agent inspection, preflight, and guarded request construction.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/someone-in-texas/Stellar-Agent.git",
+    "directory": "packages/defi"
+  },
+  "bugs": {
+    "url": "https://github.com/someone-in-texas/Stellar-Agent/issues"
+  },
+  "homepage": "https://github.com/someone-in-texas/Stellar-Agent#readme",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@blend-capital/blend-sdk": "3.2.2",
+    "@stellar-agent/core": "workspace:*",
+    "@stellar/stellar-sdk": "14.4.3"
+  }
+}

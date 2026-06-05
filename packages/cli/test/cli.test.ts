@@ -242,6 +242,27 @@ describe("CLI contract receipts", () => {
   });
 });
 
+describe("CLI DeFi commands", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+  });
+
+  it("prints known Blend deployments without network access", async () => {
+    const output = await runCli(["--json", "defi", "blend", "deployments", "--network", "testnet"]);
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        network: "testnet",
+        pools: expect.arrayContaining([expect.objectContaining({ name: "TestnetV2" })]),
+        assets: expect.arrayContaining([
+          expect.objectContaining({ symbol: "USDC", classicAsset: expect.stringContaining("USDC:G") })
+        ])
+      }
+    });
+  });
+});
+
 async function createCliFixture(args: { stdout: string; stderr: string }, options: { mainnetEnabled?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), "stellar-agent-cli-test-"));
   const config = createDefaultConfig(root);

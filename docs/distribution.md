@@ -28,6 +28,7 @@ The public package set is:
 @stellar-agent/ledger-logger
 @stellar-agent/policy
 @stellar-agent/stellar
+@stellar-agent/defi
 @stellar-agent/freighter-bridge
 @stellar-agent/mcp-server
 @stellar-agent/testnet-suite

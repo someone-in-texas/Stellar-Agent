@@ -36,6 +36,7 @@
   },
   "dependencies": {
     "@stellar-agent/core": "workspace:*",
+    "@stellar-agent/defi": "workspace:*",
     "@stellar-agent/ledger-logger": "workspace:*",
     "@stellar-agent/mpp-client": "workspace:*",
     "@stellar-agent/policy": "workspace:*",

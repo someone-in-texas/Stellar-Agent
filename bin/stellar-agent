@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+CLI="$ROOT_DIR/packages/cli/dist/index.js"
+
+if [ ! -f "$CLI" ]; then
+  echo "stellar-agent: built CLI not found. Run 'pnpm build' from $ROOT_DIR first." >&2
+  exit 1
+fi
+
+exec node "$CLI" "$@"

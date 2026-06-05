@@ -12,6 +12,13 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 
 export type PolicyDecisionStatus = "allowed" | "denied" | "requires_approval";
+export type DefiBlendRequestType =
+  | "supply"
+  | "withdraw"
+  | "supply_collateral"
+  | "withdraw_collateral"
+  | "borrow"
+  | "repay";
 
 export interface PolicyDecision {
   status: PolicyDecisionStatus;
@@ -32,6 +39,58 @@ export interface SpendHistory {
   knownDomains?: string[];
   unreadable?: boolean;
 }
+
+export interface DefiBlendPolicyRequest {
+  network: "testnet" | "mainnet" | "local";
+  pool: string;
+  requestTypes: DefiBlendRequestType[];
+  borrowValue?: string;
+  protocolExposureValue?: string;
+  healthFactorAfter?: number | null;
+}
+
+const defiBlendRequestTypeSchema = z.enum([
+  "supply",
+  "withdraw",
+  "supply_collateral",
+  "withdraw_collateral",
+  "borrow",
+  "repay"
+]);
+
+const defiPolicySchema = z
+  .object({
+    blend: z
+      .object({
+        enabled: z.boolean().default(false),
+        allowedPools: z.array(z.string().min(1)).default([]),
+        allowedRequestTypes: z.array(defiBlendRequestTypeSchema).default([]),
+        maxBorrowValue: z.string().min(1).default("0"),
+        maxProtocolExposureValue: z.string().min(1).default("0"),
+        minimumHealthFactor: z.number().positive().default(1.25),
+        requireSimulation: z.boolean().default(true)
+      })
+      .default({
+        enabled: false,
+        allowedPools: [],
+        allowedRequestTypes: [],
+        maxBorrowValue: "0",
+        maxProtocolExposureValue: "0",
+        minimumHealthFactor: 1.25,
+        requireSimulation: true
+      })
+  })
+  .default({
+    blend: {
+      enabled: false,
+      allowedPools: [],
+      allowedRequestTypes: [],
+      maxBorrowValue: "0",
+      maxProtocolExposureValue: "0",
+      minimumHealthFactor: 1.25,
+      requireSimulation: true
+    }
+  });
 
 export const policySchema = z.object({
   version: z.literal(1),
@@ -74,6 +133,7 @@ export const policySchema = z.object({
       blockOpaqueTransactions: z.boolean().default(true)
     })
     .optional(),
+  defi: defiPolicySchema,
   privacy: z.object({
     redactUrlQueryParamsInLogs: z.boolean().default(true),
     blockPiiInReason: z.boolean().default(true),
@@ -109,6 +169,17 @@ export const DEFAULT_TESTNET_POLICY: Policy = {
     maxPricePerRequest: "1 XLM",
     bindPaymentToUrl: true,
     denyRedirectPaymentChanges: true
+  },
+  defi: {
+    blend: {
+      enabled: true,
+      allowedPools: ["*"],
+      allowedRequestTypes: ["supply", "withdraw", "supply_collateral", "withdraw_collateral", "repay"],
+      maxBorrowValue: "0",
+      maxProtocolExposureValue: "1000",
+      minimumHealthFactor: 1.5,
+      requireSimulation: true
+    }
   },
   privacy: {
     redactUrlQueryParamsInLogs: true,
@@ -149,6 +220,17 @@ export const DEFAULT_MAINNET_POLICY: Policy = {
     explainTransactionRequired: true,
     blockBlindSigning: true,
     blockOpaqueTransactions: true
+  },
+  defi: {
+    blend: {
+      enabled: false,
+      allowedPools: [],
+      allowedRequestTypes: [],
+      maxBorrowValue: "0",
+      maxProtocolExposureValue: "0",
+      minimumHealthFactor: 2,
+      requireSimulation: true
+    }
   },
   privacy: {
     redactUrlQueryParamsInLogs: true,
@@ -317,6 +399,87 @@ export function evaluatePaymentRequest(
   return sanitizeDecision(policy, decision);
 }
 
+export function evaluateDefiBlendRequest(policyInput: Policy, request: DefiBlendPolicyRequest): PolicyDecision {
+  const policy = policySchema.parse(policyInput);
+  const decision: PolicyDecision = {
+    status: "allowed",
+    network: policy.network,
+    realFunds: policy.network === "mainnet" || request.network === "mainnet",
+    matchedRules: [],
+    reasons: []
+  };
+  const blend = policy.defi.blend;
+  const deny = (rule: string, reason: string) => {
+    decision.status = "denied";
+    decision.matchedRules.push(rule);
+    decision.reasons.push(reason);
+  };
+  const requireApproval = (rule: string, reason: string) => {
+    if (decision.status !== "denied") {
+      decision.status = "requires_approval";
+      decision.approval ??= { required: true, reason: rule };
+    }
+    decision.matchedRules.push(rule);
+    decision.reasons.push(reason);
+  };
+  const note = (rule: string, reason: string) => {
+    decision.matchedRules.push(rule);
+    decision.reasons.push(reason);
+  };
+
+  if (!blend.enabled) {
+    deny("defi_blend_disabled", "Blend DeFi requests are disabled by policy.");
+  } else {
+    note("defi_blend_enabled", "Blend DeFi requests are enabled by policy.");
+  }
+
+  const allowedPools = blend.allowedPools.map((pool) => pool.toUpperCase());
+  if (!allowedPools.includes("*") && !allowedPools.includes(request.pool.toUpperCase())) {
+    deny("defi_blend_pool_not_allowed", "Blend pool is not allowed by policy.");
+  } else {
+    note("defi_blend_pool_allowed", "Blend pool is allowed by policy.");
+  }
+
+  for (const requestType of request.requestTypes) {
+    if (!blend.allowedRequestTypes.includes(requestType)) {
+      deny("defi_blend_request_type_not_allowed", `Blend request type ${requestType} is not allowed by policy.`);
+    }
+  }
+  if (request.requestTypes.every((requestType) => blend.allowedRequestTypes.includes(requestType))) {
+    note("defi_blend_request_types_allowed", "Blend request types are allowed by policy.");
+  }
+
+  const borrowValue = parsePolicyNumber(request.borrowValue ?? "0", "borrow value");
+  const maxBorrowValue = parsePolicyNumber(blend.maxBorrowValue, "max borrow value");
+  if (borrowValue > maxBorrowValue) {
+    deny("defi_blend_borrow_over_limit", "Blend borrow value exceeds the policy limit.");
+  }
+
+  const exposureValue = parsePolicyNumber(request.protocolExposureValue ?? "0", "protocol exposure value");
+  const maxExposureValue = parsePolicyNumber(blend.maxProtocolExposureValue, "max protocol exposure value");
+  if (exposureValue > maxExposureValue) {
+    deny("defi_blend_exposure_over_limit", "Blend protocol exposure would exceed the policy limit.");
+  }
+
+  if (request.healthFactorAfter !== undefined && request.healthFactorAfter !== null) {
+    if (request.healthFactorAfter < blend.minimumHealthFactor) {
+      deny("defi_blend_health_factor_too_low", "Blend health factor would be below the policy minimum.");
+    } else {
+      note("defi_blend_health_factor_ok", "Blend health factor is above the policy minimum.");
+    }
+  }
+
+  if (decision.realFunds) {
+    requireApproval("defi_blend_mainnet_requires_approval", "Mainnet Blend requests require explicit approval.");
+  }
+
+  if (decision.status === "allowed") {
+    note("policy_allowed", "Blend DeFi request is allowed by policy.");
+  }
+
+  return sanitizeDecision(policy, decision);
+}
+
 function sanitizeDecision(policy: Policy, decision: PolicyDecision): PolicyDecision {
   if (!policy.privacy.redactUrlQueryParamsInLogs) return decision;
   return {
@@ -329,6 +492,18 @@ function containsBlockedMemo(memo: string | undefined, policy: Policy): boolean 
   if (!memo) return false;
   const lowered = memo.toLowerCase();
   return policy.privacy.blockedMemoPatterns.some((pattern) => lowered.includes(pattern.toLowerCase()));
+}
+
+function parsePolicyNumber(input: string, label: string): number {
+  const value = Number(input);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new StellarAgentError({
+      code: "POLICY_INVALID",
+      message: `Invalid ${label} in policy.`,
+      docs: "docs/troubleshooting.md#policy-denied"
+    });
+  }
+  return value;
 }
 
 function stripAssetSuffix(amount: string): string {

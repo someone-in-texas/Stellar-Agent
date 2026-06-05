@@ -426,6 +426,15 @@ export type PaymentRequest = z.infer<typeof paymentRequestSchema>;
 const sensitiveKeyPattern = /secret|private|seed|password|api[_-]?key|token/i;
 const secretLikePattern = /\bS[A-Z2-7]{55}\b/g;
 const urlWithQueryPattern = /(https?:\/\/[^\s?#]+)\?([^\s]+)/g;
+const publicTokenMetricKeys = new Set([
+  "expectedTokens",
+  "bTokens",
+  "dTokens",
+  "supplyBTokens",
+  "collateralBTokens",
+  "liabilityDTokens",
+  "claimedTokens"
+]);
 
 export function redactSensitive<T>(value: T): T {
   if (value === null || value === undefined) return value;
@@ -441,7 +450,7 @@ export function redactSensitive<T>(value: T): T {
       redacted[key] =
         key === "secretKeysIncluded" || key === "hasSecret"
           ? child
-          : sensitiveKeyPattern.test(key)
+          : sensitiveKeyPattern.test(key) && !publicTokenMetricKeys.has(key)
             ? "[REDACTED]"
             : redactSensitive(child);
     }
