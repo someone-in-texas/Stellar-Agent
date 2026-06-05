@@ -175,6 +175,77 @@ try {
     }
   });
 
+  const blendDeployments = runCli(["defi", "blend", "deployments", "--network", "testnet"]);
+  if (!blendDeployments.data.pools?.some((pool) => pool.name === "TestnetV2")) {
+    throw new Error(`Blend TestnetV2 pool was not listed: ${JSON.stringify(blendDeployments.data.pools)}`);
+  }
+  step("defi.blend.deployments", {
+    pools: blendDeployments.data.pools,
+    usdc: blendDeployments.data.assets?.find((asset) => asset.symbol === "USDC")
+  });
+  const blendTrustline = runCli(["defi", "blend", "trustline", "add", "--account", "agent", "--asset", "USDC"]);
+  const blendTrustlineReceipt = verifyOperationReceipt(
+    blendTrustline.data.receiptPath,
+    "defi.blend.trustline.add",
+    blendTrustline.data.transaction.hash
+  );
+  step("defi.blend.trustline.add", {
+    asset: blendTrustline.data.asset,
+    transaction: transactionSummary(blendTrustline.data),
+    receipt: blendTrustlineReceipt
+  });
+  const blendSupply = runCli([
+    "defi",
+    "blend",
+    "supply",
+    "--pool",
+    "TestnetV2",
+    "--source",
+    "agent",
+    "--asset",
+    "XLM",
+    "--amount",
+    "0.1",
+    "--collateral"
+  ]);
+  const blendSupplyReceipt = verifyOperationReceipt(
+    blendSupply.data.receiptPath,
+    "defi.blend.submit",
+    blendSupply.data.transaction.hash
+  );
+  step("defi.blend.supply", {
+    transaction: transactionSummary(blendSupply.data),
+    action: blendSupply.data.preflight.actions[0],
+    receipt: blendSupplyReceipt
+  });
+  const blendBatch = runCli([
+    "defi",
+    "blend",
+    "batch",
+    "--pool",
+    "TestnetV2",
+    "--source",
+    "agent",
+    "--request",
+    "supply_collateral:XLM:0.01",
+    "--request",
+    "withdraw_collateral:XLM:0.005"
+  ]);
+  const blendBatchReceipt = verifyOperationReceipt(
+    blendBatch.data.receiptPath,
+    "defi.blend.submit",
+    blendBatch.data.transaction.hash
+  );
+  if (blendBatch.data.preflight.actions.length !== 2) {
+    throw new Error(`Blend batch did not preserve both preflight actions: ${JSON.stringify(blendBatch.data.preflight.actions)}`);
+  }
+  step("defi.blend.batch", {
+    transaction: transactionSummary(blendBatch.data),
+    actions: blendBatch.data.preflight.actions,
+    simulationEvents: blendBatch.data.simulation.events?.length,
+    receipt: blendBatchReceipt
+  });
+
   const issuedClaimableCreate = runCli([
     "claimable",
     "create",

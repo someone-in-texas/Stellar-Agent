@@ -17,6 +17,7 @@ import {
 } from "@stellar-agent/core";
 import { latestLedger, lookupTransaction, parseStellarCliTransactionHash, resolveNetworkProfile } from "@stellar-agent/stellar";
 import {
+  BlendAction,
   blendDeployment,
   blendNetworkForProfile,
   fetchBlendDeployment,
@@ -25,7 +26,8 @@ import {
   parseBlendRequest,
   preflightBlendActions,
   resolveBlendAsset,
-  resolveBlendPool
+  resolveBlendPool,
+  submitBlendActions
 } from "@stellar-agent/defi";
 import {
   appendEvent,
@@ -40,6 +42,7 @@ import {
   DEFAULT_MAINNET_POLICY,
   DEFAULT_TESTNET_POLICY,
   Policy,
+  PolicyDecision,
   defaultPolicyForNetwork,
   evaluateDefiBlendRequest,
   evaluatePaymentRequest,
@@ -2094,6 +2097,134 @@ function addDefiCommands(program: Command): void {
         "Blend preflight complete."
       )
     );
+
+  blend
+    .command("supply")
+    .description("Submit a guarded Testnet Blend supply request.")
+    .requiredOption("--pool <pool>", "Pool contract id or deployment alias")
+    .requiredOption("--asset <asset>", "Blend asset symbol or contract id")
+    .requiredOption("--amount <amount>", "Asset amount")
+    .option("--source <account>", "Local Testnet wallet name", "agent")
+    .option("--collateral", "Supply as collateral")
+    .action(
+      withContext(async (context, options: { pool: string; asset: string; amount: string; source: string; collateral?: boolean }) => {
+        return runBlendSubmitCommand(context, {
+          command: "defi blend supply",
+          pool: options.pool,
+          source: options.source,
+          actions: [
+            {
+              type: options.collateral ? "supply_collateral" : "supply",
+              asset: options.asset,
+              amount: options.amount
+            }
+          ]
+        });
+      }, "Blend supply submitted.")
+    );
+
+  blend
+    .command("borrow")
+    .description("Submit a guarded Testnet Blend borrow request.")
+    .requiredOption("--pool <pool>", "Pool contract id or deployment alias")
+    .requiredOption("--asset <asset>", "Blend asset symbol or contract id")
+    .requiredOption("--amount <amount>", "Asset amount")
+    .option("--source <account>", "Local Testnet wallet name", "agent")
+    .action(
+      withContext(async (context, options: { pool: string; asset: string; amount: string; source: string }) => {
+        return runBlendSubmitCommand(context, {
+          command: "defi blend borrow",
+          pool: options.pool,
+          source: options.source,
+          actions: [{ type: "borrow", asset: options.asset, amount: options.amount }]
+        });
+      }, "Blend borrow submitted.")
+    );
+
+  blend
+    .command("repay")
+    .description("Submit a guarded Testnet Blend repay request.")
+    .requiredOption("--pool <pool>", "Pool contract id or deployment alias")
+    .requiredOption("--asset <asset>", "Blend asset symbol or contract id")
+    .requiredOption("--amount <amount>", "Asset amount")
+    .option("--source <account>", "Local Testnet wallet name", "agent")
+    .action(
+      withContext(async (context, options: { pool: string; asset: string; amount: string; source: string }) => {
+        return runBlendSubmitCommand(context, {
+          command: "defi blend repay",
+          pool: options.pool,
+          source: options.source,
+          actions: [{ type: "repay", asset: options.asset, amount: options.amount }]
+        });
+      }, "Blend repay submitted.")
+    );
+
+  blend
+    .command("withdraw")
+    .description("Submit a guarded Testnet Blend withdraw request.")
+    .requiredOption("--pool <pool>", "Pool contract id or deployment alias")
+    .requiredOption("--asset <asset>", "Blend asset symbol or contract id")
+    .requiredOption("--amount <amount>", "Asset amount")
+    .option("--source <account>", "Local Testnet wallet name", "agent")
+    .option("--collateral", "Withdraw from collateral")
+    .action(
+      withContext(async (context, options: { pool: string; asset: string; amount: string; source: string; collateral?: boolean }) => {
+        return runBlendSubmitCommand(context, {
+          command: "defi blend withdraw",
+          pool: options.pool,
+          source: options.source,
+          actions: [
+            {
+              type: options.collateral ? "withdraw_collateral" : "withdraw",
+              asset: options.asset,
+              amount: options.amount
+            }
+          ]
+        });
+      }, "Blend withdraw submitted.")
+    );
+
+  blend
+    .command("batch")
+    .description("Submit a guarded Testnet batch of Blend requests in one transaction.")
+    .requiredOption("--pool <pool>", "Pool contract id or deployment alias")
+    .option("--source <account>", "Local Testnet wallet name", "agent")
+    .requiredOption("--request <type:asset:amount...>", "Blend request, repeatable", collectOption, [])
+    .action(
+      withContext(async (context, options: { pool: string; source: string; request: string[] }) => {
+        return runBlendSubmitCommand(context, {
+          command: "defi blend batch",
+          pool: options.pool,
+          source: options.source,
+          actions: options.request.map(parseBlendRequest)
+        });
+      }, "Blend batch submitted.")
+    );
+
+  const trustline = blend.command("trustline").description("Resolve and create trustlines for Blend non-native reserves.");
+  trustline
+    .command("guide")
+    .description("Show the classic asset backing a Blend reserve and the trustline command to run.")
+    .requiredOption("--asset <asset>", "Blend asset symbol or contract id")
+    .option("--account <account>", "Local wallet name", "agent")
+    .option("--network <name>", "Network profile to inspect: testnet or mainnet")
+    .action(
+      withContext(async (context, options: { asset: string; account: string; network?: string }) => {
+        return blendTrustlineGuide(context, options);
+      }, "Blend trustline guidance loaded.")
+    );
+
+  trustline
+    .command("add")
+    .description("Create the classic issued-asset trustline for a Blend reserve on Testnet.")
+    .requiredOption("--asset <asset>", "Blend asset symbol or contract id")
+    .option("--account <account>", "Local Testnet wallet name", "agent")
+    .option("--limit <amount>", "Trustline limit")
+    .action(
+      withContext(async (context, options: { asset: string; account: string; limit?: string }) => {
+        return addBlendTrustline(context, options);
+      }, "Blend trustline added.")
+    );
 }
 
 function addPolicyCommands(program: Command): void {
@@ -2459,6 +2590,191 @@ function collectOption(value: string, previous: string[]): string[] {
   return previous;
 }
 
+async function runBlendSubmitCommand(
+  context: CliContext,
+  args: { command: string; pool: string; source: string; actions: BlendAction[] }
+): Promise<unknown> {
+  const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
+  if (profile.realFunds) {
+    throw new StellarAgentError({
+      code: "MAINNET_NOT_ENABLED",
+      message: "Mainnet Blend mutation requires an external signer and is not available through local auto-signing.",
+      hint: "Use Testnet for local Blend mutation workflows.",
+      docs: "docs/mainnet-safety.md#mainnet-defi"
+    });
+  }
+  const deployment = blendDeployment(blendNetworkForProfile(profile));
+  const pool = resolveBlendPool(deployment, args.pool);
+  const wallet = await loadWallet(context.config, args.source);
+  const actions = args.actions.map((action) => {
+    const asset = resolveBlendAsset(deployment, action.asset);
+    return { ...action, asset: asset.contractId };
+  });
+  const preflight = await preflightBlendActions({
+    profile,
+    poolId: pool.contractId,
+    userId: wallet.publicKey,
+    actions,
+    poolVersion: pool.version
+  });
+  const policy = await loadPolicy(context);
+  const policyDecision = evaluateDefiBlendRequest(policy, blendPolicyRequest(profile, pool.contractId, preflight));
+  if (policyDecision.status !== "allowed") throw defiPolicyDeniedError(policyDecision);
+
+  const submitted = await submitBlendActions({
+    profile,
+    poolId: pool.contractId,
+    userId: wallet.publicKey,
+    actions,
+    poolVersion: pool.version,
+    sourceSecretKey: wallet.secretKey
+  });
+  const receiptPath = await writeBlendReceipt(context, {
+    command: args.command,
+    policyDecision,
+    operation: {
+      type: "defi.blend.submit",
+      source: args.source,
+      account: wallet.publicKey,
+      details: {
+        blend: {
+          pool,
+          actions: submitted.preflight.actions,
+          before: submitted.preflight.before,
+          after: submitted.preflight.after,
+          simulation: submitted.simulation,
+          decodedEvents: submitted.decodedEvents
+        }
+      }
+    },
+    transaction: {
+      hash: submitted.hash,
+      ...(submitted.ledger === undefined ? {} : { ledger: submitted.ledger }),
+      successful: submitted.successful,
+      ...(submitted.feeCharged === undefined ? {} : { feeCharged: submitted.feeCharged })
+    }
+  });
+  return {
+    status: "submitted",
+    transaction: {
+      hash: submitted.hash,
+      ...(submitted.ledger === undefined ? {} : { ledger: submitted.ledger }),
+      successful: submitted.successful,
+      ...(submitted.feeCharged === undefined ? {} : { feeCharged: submitted.feeCharged })
+    },
+    receiptPath,
+    policyDecision,
+    preflight: submitted.preflight,
+    simulation: submitted.simulation,
+    decodedEvents: submitted.decodedEvents
+  };
+}
+
+function blendPolicyRequest(profile: NetworkProfile, pool: string, preflight: Awaited<ReturnType<typeof preflightBlendActions>>) {
+  const borrowValue = preflight.actions
+    .filter((action) => action.type === "borrow")
+    .reduce((total, action) => total + (action.value ?? 0), 0);
+  const protocolExposureValue =
+    (preflight.after?.totalSupplied ?? preflight.before?.totalSupplied ?? 0) +
+    (preflight.after?.totalBorrowed ?? preflight.before?.totalBorrowed ?? 0);
+  return {
+    network: profile.realFunds ? ("mainnet" as const) : ("testnet" as const),
+    pool,
+    requestTypes: preflight.actions.map((action) => action.type),
+    borrowValue: String(borrowValue),
+    protocolExposureValue: String(protocolExposureValue),
+    ...(preflight.after?.healthFactor === undefined ? {} : { healthFactorAfter: preflight.after.healthFactor })
+  };
+}
+
+function defiPolicyDeniedError(decision: PolicyDecision): StellarAgentError {
+  return new StellarAgentError({
+    code: "POLICY_DENIED",
+    message: "Blend DeFi request was denied by policy.",
+    hint: "Run defi blend preflight to inspect the matched rules.",
+    docs: "docs/defi-blend.md#policy",
+    details: decision
+  });
+}
+
+async function blendTrustlineGuide(
+  context: CliContext,
+  options: { asset: string; account: string; network?: string }
+): Promise<unknown> {
+  const profile = resolveBlendProfile(context, options.network);
+  const deployment = blendDeployment(blendNetworkForProfile(profile));
+  const asset = resolveBlendAsset(deployment, options.asset);
+  const account = await resolvePublicAccount(context, options.account);
+  const rawPublicAccount = /^G[A-Z2-7]{55}$/.test(options.account);
+  const trustlines =
+    profile.realFunds || asset.classicAsset === undefined || rawPublicAccount
+      ? []
+      : await walletTrustlines(context.config, options.account);
+  const hasTrustline = asset.classicAsset
+    ? trustlines.some((trustline) => trustline.asset.toUpperCase() === asset.classicAsset!.toUpperCase())
+    : false;
+  return {
+    network: deployment.network,
+    account,
+    asset,
+    requiresTrustline: asset.classicAsset !== undefined,
+    hasTrustline,
+    command:
+      asset.classicAsset === undefined || profile.realFunds || rawPublicAccount
+        ? null
+        : `stellar-agent defi blend trustline add --account ${options.account} --asset ${asset.symbol}`
+  };
+}
+
+async function addBlendTrustline(
+  context: CliContext,
+  options: { asset: string; account: string; limit?: string }
+): Promise<unknown> {
+  const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
+  if (profile.realFunds) {
+    throw new StellarAgentError({
+      code: "MAINNET_NOT_ENABLED",
+      message: "Mainnet trustline creation requires an external signer.",
+      docs: "docs/mainnet-safety.md#mainnet-defi"
+    });
+  }
+  const deployment = blendDeployment(blendNetworkForProfile(profile));
+  const asset = resolveBlendAsset(deployment, options.asset);
+  if (!asset.classicAsset) {
+    return {
+      status: "not_required",
+      asset,
+      message: "This Blend reserve does not require a classic issued-asset trustline."
+    };
+  }
+  const wallet = await loadWallet(context.config, options.account);
+  const { changeTrustline } = await import("@stellar-agent/stellar");
+  const transaction = await changeTrustline({
+    source: wallet,
+    asset: asset.classicAsset,
+    profile,
+    ...(options.limit === undefined ? {} : { limit: options.limit })
+  });
+  const receiptPath = await writeOperationReceipt(context, {
+    command: "defi blend trustline add",
+    operation: {
+      type: "defi.blend.trustline.add",
+      account: options.account,
+      asset: asset.classicAsset,
+      limit: transaction.limit,
+      details: { blend: { asset } }
+    },
+    transaction
+  });
+  return {
+    status: "trustline_added",
+    asset,
+    account: wallet.publicKey,
+    transaction,
+    receiptPath
+  };
+}
+
 async function loadSpendHistory(context: CliContext, request: PaymentRequest) {
   return spendHistoryFromReceipts(context.config.storage.receiptsDir, {
     profile: request.network,
@@ -2687,6 +3003,46 @@ async function writeOperationReceipt(
     realFunds: false,
     operation: args.operation,
     policyDecision: { status: "allowed", matchedRules: ["testnet_operation"] },
+    transaction: args.transaction,
+    ...(args.transaction.ledger === undefined ? {} : { ledger: { confirmedLedger: args.transaction.ledger } }),
+    eventLog
+  });
+  await appendEvent(eventLog, {
+    event: "receipt_written",
+    status: "success",
+    command: args.command,
+    profile: "testnet",
+    data: { receiptPath }
+  });
+  return receiptPath;
+}
+
+async function writeBlendReceipt(
+  context: CliContext,
+  args: {
+    command: string;
+    policyDecision: PolicyDecision;
+    operation: NonNullable<Parameters<typeof writeReceipt>[1]["operation"]>;
+    transaction: {
+      hash: string;
+      ledger?: number;
+      successful: boolean;
+      feeCharged?: string;
+    };
+  }
+): Promise<string> {
+  const eventLog = join(context.config.storage.logsDir, "events.jsonl");
+  const profile = resolveNetworkProfile("testnet", context.config.profiles);
+  const { path: receiptPath } = await writeReceipt(context.config.storage.receiptsDir, {
+    command: args.command,
+    profile: "testnet",
+    networkPassphrase: profile.networkPassphrase,
+    realFunds: false,
+    operation: args.operation,
+    policyDecision: {
+      status: args.policyDecision.status,
+      matchedRules: args.policyDecision.matchedRules
+    },
     transaction: args.transaction,
     ...(args.transaction.ledger === undefined ? {} : { ledger: { confirmedLedger: args.transaction.ledger } }),
     eventLog

@@ -58,6 +58,22 @@ export interface BlendPreflightInput {
   poolVersion?: BlendPoolVersion;
 }
 
+export interface SubmittedBlendTransaction {
+  hash: string;
+  ledger?: number;
+  successful: boolean;
+  feeCharged?: string;
+  status: string;
+  preflight: BlendPreflight;
+  simulation: {
+    successful: true;
+    minResourceFee?: string;
+    transactionData?: string;
+    events: unknown[];
+  };
+  decodedEvents: unknown[];
+}
+
 export interface BlendPreflight {
   pool: {
     id: string;
@@ -321,7 +337,7 @@ export async function inspectBlendPool(args: {
   return toPlainJson({
     pool: {
       id: pool.id,
-      version: pool.version,
+      version: normalizeLoadedPoolVersion(pool.version),
       metadata: pool.metadata,
       timestamp: pool.timestamp
     },
@@ -341,7 +357,7 @@ export async function inspectBlendPosition(args: {
   const oracle = await tryLoadOracle(pool);
   const estimate = oracle ? await tryBuildPositionEstimate(pool, oracle, user.positions) : undefined;
   return toPlainJson({
-    pool: { id: pool.id, version: pool.version },
+    pool: { id: pool.id, version: normalizeLoadedPoolVersion(pool.version) },
     user: args.userId,
     reserves: Array.from(pool.reserves.values()).map((reserve: any) => ({
       assetId: reserve.assetId,
@@ -367,7 +383,7 @@ export async function preflightBlendActions(args: BlendPreflightInput): Promise<
   return {
     pool: {
       id: pool.id,
-      version: pool.version
+      version: normalizeLoadedPoolVersion(pool.version)
     },
     user: args.userId,
     actions,
@@ -379,6 +395,111 @@ export async function preflightBlendActions(args: BlendPreflightInput): Promise<
       resourceFee: null
     },
     decodedEvents: []
+  };
+}
+
+export async function submitBlendActions(args: BlendPreflightInput & { sourceSecretKey: string }): Promise<SubmittedBlendTransaction> {
+  if (args.profile.realFunds) {
+    throw new StellarAgentError({
+      code: "MAINNET_NOT_ENABLED",
+      message: "Mainnet Blend auto-signing is blocked.",
+      hint: "Use an external signer or browser-wallet flow for Mainnet DeFi.",
+      docs: "docs/mainnet-safety.md#mainnet-defi"
+    });
+  }
+  if (!args.profile.rpcUrl) {
+    throw new StellarAgentError({
+      code: "RPC_UNAVAILABLE",
+      message: "Soroban RPC is not configured for the selected profile.",
+      docs: "docs/defi-blend.md"
+    });
+  }
+
+  const stellar: any = await import("@stellar/stellar-sdk");
+  const blend: any = await import("@blend-capital/blend-sdk");
+  const preflight = await preflightBlendActions(args);
+  const keypair = stellar.Keypair.fromSecret(args.sourceSecretKey);
+  const sourcePublicKey = keypair.publicKey();
+  if (sourcePublicKey !== args.userId) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Blend source secret key does not match the requested user account.",
+      docs: "docs/defi-blend.md"
+    });
+  }
+
+  const contract = preflight.pool.version === "v1" ? new blend.PoolContractV1(args.poolId) : new blend.PoolContractV2(args.poolId);
+  const operationXdr = contract.submit({
+    from: sourcePublicKey,
+    spender: sourcePublicKey,
+    to: sourcePublicKey,
+    requests: preflight.actions.map((action) => ({
+      request_type: action.requestType,
+      address: action.assetId,
+      amount: BigInt(action.amountRaw)
+    }))
+  });
+
+  const server = new stellar.rpc.Server(args.profile.rpcUrl, { allowHttp: args.profile.name === "local" });
+  const account = await server.getAccount(sourcePublicKey);
+  const operation = stellar.xdr.Operation.fromXDR(operationXdr, "base64");
+  const rawTransaction = new stellar.TransactionBuilder(account, {
+    fee: stellar.BASE_FEE,
+    networkPassphrase: args.profile.networkPassphrase
+  })
+    .addOperation(operation)
+    .setTimeout(60)
+    .build();
+  const simulation = await server.simulateTransaction(rawTransaction);
+  if (!stellar.rpc.Api.isSimulationSuccess(simulation)) {
+    throw new StellarAgentError({
+      code: "TRANSACTION_BUILD_FAILED",
+      message: "Blend transaction simulation failed.",
+      hint: "Check balances, trustlines, Blend pool status, and policy preflight output.",
+      docs: "docs/defi-blend.md",
+      details: toPlainJson(simulation)
+    });
+  }
+
+  const assembled = stellar.rpc.assembleTransaction(rawTransaction, simulation).build();
+  assembled.sign(keypair);
+  const sent = await server.sendTransaction(assembled);
+  if (sent.status === "ERROR") {
+    throw new StellarAgentError({
+      code: "TRANSACTION_SUBMIT_FAILED",
+      message: "Blend transaction submission failed.",
+      docs: "docs/defi-blend.md",
+      details: toPlainJson(sent)
+    });
+  }
+
+  const result = await pollRpcTransaction(server, sent.hash);
+  const successful = result.status === "SUCCESS";
+  if (!successful) {
+    throw new StellarAgentError({
+      code: "TRANSACTION_SUBMIT_FAILED",
+      message: "Blend transaction did not complete successfully.",
+      docs: "docs/defi-blend.md",
+      details: toPlainJson(result)
+    });
+  }
+
+  const decodedEvents = decodeRpcEvents(result);
+  const transactionData = xdrLikeToString(simulation.transactionData);
+  return {
+    hash: sent.hash,
+    ...(result.ledger === undefined ? {} : { ledger: Number(result.ledger) }),
+    successful: true,
+    ...(result.resultMeta?.feeCharged === undefined ? {} : { feeCharged: String(result.resultMeta.feeCharged) }),
+    status: result.status,
+    preflight,
+    simulation: {
+      successful: true,
+      ...(simulation.minResourceFee === undefined ? {} : { minResourceFee: String(simulation.minResourceFee) }),
+      ...(transactionData === undefined ? {} : { transactionData }),
+      events: summarizeEvents(simulation.events ?? [])
+    },
+    decodedEvents
   };
 }
 
@@ -591,6 +712,10 @@ function reserveSummary(reserve: any, oracle: any | undefined): unknown {
   });
 }
 
+function normalizeLoadedPoolVersion(version: unknown): BlendPoolVersion {
+  return String(version).toLowerCase() === "v1" ? "v1" : "v2";
+}
+
 function preflightAction(pool: any, oracle: any | undefined, action: BlendAction): BlendPreflight["actions"][number] {
   const reserve = reserveForAction(pool, action);
   const decimals = reserve.config?.decimals ?? 7;
@@ -713,6 +838,95 @@ function toPlainJson(value: unknown): any {
   }
   if (typeof value === "number" && !Number.isFinite(value)) return null;
   return value;
+}
+
+async function pollRpcTransaction(server: any, hash: string): Promise<any> {
+  let last: any;
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    last = await server.getTransaction(hash);
+    if (last.status === "SUCCESS" || last.status === "FAILED") return last;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new StellarAgentError({
+    code: "TRANSACTION_TIMEOUT",
+    message: "Timed out waiting for Blend transaction confirmation.",
+    docs: "docs/defi-blend.md",
+    details: toPlainJson(last)
+  });
+}
+
+function decodeRpcEvents(transaction: any): unknown[] {
+  const events = transaction.events ?? transaction.resultMeta?.events ?? [];
+  return summarizeEvents(events);
+}
+
+function xdrLikeToString(value: any): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "string") return value;
+  if (value && typeof value.toXDR === "function") return value.toXDR("base64");
+  return undefined;
+}
+
+function summarizeEvents(events: unknown): unknown[] {
+  if (!Array.isArray(events)) return [];
+  return events.slice(0, 25).map((event) => summarizeEvent(event));
+}
+
+function summarizeEvent(input: any): Record<string, unknown> {
+  const event = input?._attributes?.event ?? input?.event ?? input;
+  const eventAttributes = event?._attributes ?? event;
+  const body = eventAttributes?.body?._value?._attributes ?? eventAttributes?.body?.v0?._attributes;
+  const topics = body?.topics ?? [];
+  return {
+    ...(input?._attributes?.inSuccessfulContractCall === undefined
+      ? {}
+      : { inSuccessfulContractCall: Boolean(input._attributes.inSuccessfulContractCall) }),
+    ...(eventAttributes?.type === undefined ? {} : { type: eventAttributes.type.name ?? eventAttributes.type.value ?? eventAttributes.type }),
+    topics: Array.isArray(topics) ? topics.map((topic) => summarizeScVal(topic)) : [],
+    data: summarizeScVal(body?.data)
+  };
+}
+
+function summarizeScVal(value: any): unknown {
+  if (value === undefined || value === null) return undefined;
+  const arm = value._arm ?? value.arm;
+  const raw = value._value ?? value.value;
+  if (arm === "sym" || arm === "str" || value._switch?.name === "scvSymbol" || value._switch?.name === "scvString") {
+    return bytesToAscii(raw);
+  }
+  if (arm === "i128" || value._switch?.name === "scvI128") {
+    return {
+      i128: {
+        hi: String(raw?._attributes?.hi?._value ?? raw?.hi ?? "0"),
+        lo: String(raw?._attributes?.lo?._value ?? raw?.lo ?? "0")
+      }
+    };
+  }
+  if (arm === "u32" || value._switch?.name === "scvU32") return raw;
+  if (arm === "vec" && Array.isArray(raw)) return raw.map((entry) => summarizeScVal(entry));
+  if (arm === "map" && Array.isArray(raw)) {
+    return raw.map((entry) => ({
+      key: summarizeScVal(entry?._attributes?.key),
+      value: summarizeScVal(entry?._attributes?.val)
+    }));
+  }
+  if (arm === "address" || value._switch?.name === "scvAddress") return "address";
+  if (arm === "bytes" || value._switch?.name === "scvBytes") return "bytes";
+  if (value._switch?.name) return value._switch.name;
+  return undefined;
+}
+
+function bytesToAscii(value: any): string | undefined {
+  if (typeof value === "string") return value;
+  if (value instanceof Uint8Array || Buffer.isBuffer(value)) return Buffer.from(value).toString("utf8");
+  if (value && typeof value === "object") {
+    const bytes = Object.keys(value)
+      .filter((key) => /^\d+$/.test(key))
+      .sort((a, b) => Number(a) - Number(b))
+      .map((key) => Number(value[key]));
+    if (bytes.length > 0) return Buffer.from(bytes).toString("utf8");
+  }
+  return undefined;
 }
 
 export function blendNetworkForProfile(profile: NetworkProfile): BlendNetworkName {

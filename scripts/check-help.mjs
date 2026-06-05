@@ -37,6 +37,13 @@ const commands = [
   ["packages/cli/dist/index.js", "defi", "blend", "pool", "inspect", "--help"],
   ["packages/cli/dist/index.js", "defi", "blend", "position", "inspect", "--help"],
   ["packages/cli/dist/index.js", "defi", "blend", "preflight", "--help"],
+  ["packages/cli/dist/index.js", "defi", "blend", "supply", "--help"],
+  ["packages/cli/dist/index.js", "defi", "blend", "borrow", "--help"],
+  ["packages/cli/dist/index.js", "defi", "blend", "repay", "--help"],
+  ["packages/cli/dist/index.js", "defi", "blend", "withdraw", "--help"],
+  ["packages/cli/dist/index.js", "defi", "blend", "batch", "--help"],
+  ["packages/cli/dist/index.js", "defi", "blend", "trustline", "guide", "--help"],
+  ["packages/cli/dist/index.js", "defi", "blend", "trustline", "add", "--help"],
   ["packages/cli/dist/index.js", "pay", "x402", "--help"],
   ["packages/cli/dist/index.js", "pay", "mpp", "--help"],
   ["packages/cli/dist/index.js", "pay", "mpp-session", "--help"]

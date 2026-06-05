@@ -71,6 +71,8 @@ stellar-agent contract invoke --id C... --source agent --fn hello --arg to=world
 stellar-agent defi blend deployments --network testnet --json
 stellar-agent defi blend pool inspect --pool TestnetV2 --json
 stellar-agent defi blend preflight --pool TestnetV2 --account agent --request supply_collateral:USDC:1 --json
+stellar-agent defi blend trustline guide --asset USDC --account agent --json
+stellar-agent defi blend supply --pool TestnetV2 --source agent --asset XLM --amount 1 --collateral --json
 stellar-agent contract upload --source agent --wasm ./contract.wasm --json
 stellar-agent contract deploy --source agent --wasm ./contract.wasm --json
 stellar-agent contract asset-deploy --source agent --asset native --json

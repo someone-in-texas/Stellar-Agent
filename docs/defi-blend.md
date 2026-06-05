@@ -58,6 +58,46 @@ Request syntax is `type:asset:amount`. Supported request types are:
 
 Preflight output includes decoded request types, reserve contract ids, fixed-point raw amounts, expected bToken or dToken movement when available, before/after position estimates, health factor when liabilities exist, and the local DeFi policy decision.
 
+## Mutating Testnet Requests
+
+Mutating commands sign only with local Testnet wallets. Mainnet mutation remains blocked unless a future external-signer flow is added.
+
+```bash
+stellar-agent defi blend supply --pool TestnetV2 --source agent --asset XLM --amount 1 --collateral --json
+stellar-agent defi blend withdraw --pool TestnetV2 --source agent --asset XLM --amount 1 --collateral --json
+stellar-agent defi blend repay --pool TestnetV2 --source agent --asset XLM --amount 1 --json
+```
+
+Borrowing exists as a command but is denied by the default policy:
+
+```bash
+stellar-agent defi blend borrow --pool TestnetV2 --source agent --asset USDC --amount 1 --json
+```
+
+Use `batch` for safe multi-request transactions, such as supplying collateral and borrowing in a single transaction after policy allows the borrow:
+
+```bash
+stellar-agent defi blend batch \
+  --pool TestnetV2 \
+  --source agent \
+  --request supply_collateral:XLM:1 \
+  --request borrow:USDC:0.1 \
+  --json
+```
+
+Every mutating Blend command runs preflight, evaluates DeFi policy, simulates the Soroban transaction, signs only after those checks pass, submits through RPC, and writes a receipt with public Blend metadata.
+
+## Trustlines
+
+For non-native reserves, resolve the backing classic asset before funding or receiving the asset:
+
+```bash
+stellar-agent defi blend trustline guide --asset USDC --account agent --json
+stellar-agent defi blend trustline add --asset USDC --account agent --json
+```
+
+`trustline add` is Testnet-only for local signing. Mainnet trustline creation requires an external signer.
+
 ## Policy
 
 The policy file includes explicit Blend controls:

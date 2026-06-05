@@ -261,6 +261,32 @@ describe("CLI DeFi commands", () => {
       }
     });
   });
+
+  it("guides Blend trustline creation from SAC aliases", async () => {
+    const output = await runCli([
+      "--json",
+      "defi",
+      "blend",
+      "trustline",
+      "guide",
+      "--asset",
+      "USDC",
+      "--account",
+      "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+    ]);
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        requiresTrustline: true,
+        hasTrustline: false,
+        asset: {
+          symbol: "USDC",
+          classicAsset: expect.stringContaining("USDC:G")
+        },
+        command: null
+      }
+    });
+  });
 });
 
 async function createCliFixture(args: { stdout: string; stderr: string }, options: { mainnetEnabled?: boolean } = {}) {
