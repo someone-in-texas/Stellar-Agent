@@ -45,12 +45,13 @@ The unscoped root package remains private and is not the CLI package. Users shou
 npm publication is prepared but manual. Publish only the generated tarballs after confirming npm scope ownership and package access:
 
 ```bash
-for package in .release/artifacts/npm/*.tgz; do
-  npm publish "$package" --provenance --access public
-done
+pnpm release:publish:npm:dry-run
+pnpm release:publish:npm
 ```
 
 Do not publish from package source directories. The generated tarballs are the tested artifacts.
+
+Local token-backed publishing does not provide npm provenance. For provenance-backed publication, configure npm trusted publishing for each package and publish from a supported CI workflow with OIDC.
 
 ## Versioning and Changelog
 

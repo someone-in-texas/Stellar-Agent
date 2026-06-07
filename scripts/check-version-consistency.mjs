@@ -44,7 +44,7 @@ for (const expected of [
   "pnpm release:pack",
   "pnpm release:verify-artifacts",
   `stellar-agent-codex-plugin-v${releaseVersion}.tgz`,
-  "npm publish --provenance --access public"
+  "pnpm release:publish:npm"
 ]) {
   if (!releaseDoc.includes(expected)) errors.push(`RELEASE.md is missing ${expected}`);
 }

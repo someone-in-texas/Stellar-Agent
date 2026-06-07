@@ -2,12 +2,12 @@
 
 This repository supports verified GitHub releases with source, npm package tarballs, and a bundled Codex plugin artifact.
 
-The release process is still intentionally conservative: GitHub releases are automated around verified artifacts, while npm publication remains a separate manual provenance-backed step until the maintainer confirms npm org/package access.
+The release process is still intentionally conservative: GitHub releases are automated around verified artifacts, while npm publication remains a separate manual step until the maintainer confirms npm org/package access. Provenance-backed npm publication should use npm trusted publishing from a supported CI runner.
 
 ## Release Types
 
 - **GitHub release:** supported for `v0.1.0` and later. It includes npm tarballs for every publishable `@stellar-agent/*` package, the Codex plugin tarball, generated release notes, and `release-manifest.json` with SHA-256 checksums.
-- **npm package publication:** prepared but manual. Publish the same verified tarballs with `npm publish --provenance --access public` only after npm scope ownership and package access are confirmed.
+- **npm package publication:** prepared but manual. Publish the same verified tarballs with `pnpm release:publish:npm` only after npm scope ownership and package access are confirmed.
 - **Live Testnet verification:** strongly recommended before public release tags and required before releases that advertise new payment behavior.
 
 ## 0.4.0 Scope
@@ -164,12 +164,18 @@ If the tag or release already exists and points at different history, stop and i
 
 npm publication is intentionally separate from GitHub release creation.
 
-After a GitHub release has passed, publish only from the generated tarballs:
+After a GitHub release has passed, publish only from the generated tarballs.
+
+Dry-run the publish first:
 
 ```bash
-for package in .release/artifacts/npm/*.tgz; do
-  npm publish "$package" --provenance --access public
-done
+pnpm release:publish:npm:dry-run
+```
+
+Then publish with a locally authenticated npm account:
+
+```bash
+pnpm release:publish:npm
 ```
 
 Publish order is encoded by `scripts/release-utils.mjs` and the artifact manifest:
@@ -179,6 +185,7 @@ Publish order is encoded by `scripts/release-utils.mjs` and the artifact manifes
 @stellar-agent/ledger-logger
 @stellar-agent/policy
 @stellar-agent/stellar
+@stellar-agent/defi
 @stellar-agent/freighter-bridge
 @stellar-agent/mcp-server
 @stellar-agent/testnet-suite
@@ -188,7 +195,15 @@ Publish order is encoded by `scripts/release-utils.mjs` and the artifact manifes
 @stellar-agent/cli
 ```
 
+If npm requires a one-time password, pass it through the helper:
+
+```bash
+pnpm release:publish:npm -- --otp 123456
+```
+
 Do not publish npm packages until the maintainer has confirmed access to the `@stellar-agent` scope and reviewed `release-manifest.json`.
+
+For provenance-backed publication, configure npm trusted publishing for each package and publish from a GitHub Actions workflow with `id-token: write`. npm trusted publishing automatically generates provenance attestations for public packages from supported CI runners, so local token-backed publishing should be treated as a first manual publication path, not the long-term preferred path.
 
 ## Commit Guidance
 
