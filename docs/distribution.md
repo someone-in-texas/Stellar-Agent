@@ -44,6 +44,14 @@ The unscoped root package remains private and is not the CLI package. Users shou
 
 npm publication uses the protected `Publish npm` GitHub Actions workflow after npm trusted publishing is configured for the package set. The `Release` workflow queues `Publish npm` automatically after the GitHub release is created; a maintainer approves the `npm-production` environment before packages are published.
 
+The protected workflow verifies published package versions with retry/backoff because npm can briefly return 404s for a package version immediately after accepting a publish. If publish succeeds but verification fails, run:
+
+```bash
+node scripts/verify-published-npm.mjs
+```
+
+If the versions are visible, rerun the protected workflow rather than republishing from source directories; the publish helper skips existing package versions and confirms the already-published artifacts.
+
 Configure trusted publishing:
 
 ```bash

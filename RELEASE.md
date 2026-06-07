@@ -167,6 +167,14 @@ If the tag or release already exists and points at different history, stop and i
 
 npm publication is intentionally routed through a separate protected workflow. The release workflow queues `Publish npm` after the GitHub release is created; the workflow waits for approval on the `npm-production` environment, then uses npm trusted publishing through GitHub Actions OIDC without a long-lived npm token.
 
+After publishing, the workflow verifies every package version against npm with retries to allow for registry propagation. If the publish step succeeds but the verifier fails, first confirm the published versions:
+
+```bash
+node scripts/verify-published-npm.mjs
+```
+
+The publish helper skips package versions that already exist on npm, so rerunning the protected workflow after propagation is the preferred recovery path for a false verifier failure. Do not delete or retag a GitHub release for a publish verifier failure unless the release points at the wrong commit or the package contents are wrong.
+
 Before enabling trusted publishing:
 
 1. Create the GitHub environment `npm-production`.
