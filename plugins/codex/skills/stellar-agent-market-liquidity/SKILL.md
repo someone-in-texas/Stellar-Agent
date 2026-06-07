@@ -24,7 +24,8 @@ LP preflight and mutation:
 
 - Use `stellar-agent market lp preflight --pool <pool-id> --max-a <amount> --max-b <amount> --min-price <price> --max-price <price> --json` before deposits.
 - Use `stellar-agent market lp preflight --pool <pool-id> --action withdraw --shares <amount> --min-a <amount> --min-b <amount> --json` before withdrawals.
-- Create a Testnet pool-share trustline with `stellar-agent market lp trustline add --pool <pool-id> --account <alias> --json`.
+- Create a Testnet pool-share trustline with `stellar-agent market lp trustline add --pool <pool-id> --account <alias> --fee-strategy medium --json`.
+- Treat `nominalExposure.value` as a policy proxy (`max-a + max-b`), not as mark-to-market value or profit/loss.
 - Submit Testnet deposits or withdrawals only after preflight reports an allowed policy decision and the user asked for live Testnet mutation.
 - This release expects LP mutation to target an existing Horizon-visible core pool. Do not promise bootstrapping of a brand-new core pool from only reserve assets.
 

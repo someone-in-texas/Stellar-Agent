@@ -463,6 +463,10 @@ describe("CLI market liquidity commands", () => {
             maxAmountB: "2.0000000",
             estimatedShares: "0.5000000"
           },
+          nominalExposure: {
+            value: "3.0000000",
+            semantics: "sum_of_max_reserve_amounts_not_mark_to_market"
+          },
           trustlines: {
             reserveAssetsSatisfied: true,
             poolShareSatisfied: true
@@ -470,6 +474,16 @@ describe("CLI market liquidity commands", () => {
         }
       }
     });
+  });
+
+  it("exposes fee strategy for liquidity pool trustline creation", async () => {
+    const program = buildProgram();
+    const market = program.commands.find((command) => command.name() === "market");
+    const lp = market?.commands.find((command) => command.name() === "lp");
+    const trustline = lp?.commands.find((command) => command.name() === "trustline");
+    const add = trustline?.commands.find((command) => command.name() === "add");
+
+    expect(add?.helpInformation()).toContain("--fee-strategy <strategy>");
   });
 
   it("evaluates price listeners as finite JSON events", async () => {

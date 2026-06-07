@@ -29,7 +29,9 @@ stellar-agent market lp preflight \
   --json
 ```
 
-Deposit preflight reports reserve assets, current reserve price, trustline status, explicit price bounds, estimated pool shares, risk notes, and the `market.liquidity` policy decision.
+Deposit preflight reports reserve assets, current reserve price, trustline status, explicit price bounds, estimated pool shares, risk notes, nominal exposure, and the `market.liquidity` policy decision.
+
+`nominalExposure.value` is a policy-control proxy: for deposits it is `max-a + max-b` after Stellar amount normalization. It is not a mark-to-market, USD value, or profitability estimate because the two reserve assets can have different units and external values. Withdrawals report `0.0000000` with `not_applicable_to_withdrawal` semantics because they reduce pool-share exposure instead of adding new reserve amounts.
 
 Withdrawal preflight uses pool shares and minimum reserve outputs:
 
@@ -50,13 +52,13 @@ Quotes and estimates are Horizon snapshots. They can change before transaction s
 An account must hold a pool-share trustline before depositing into a core liquidity pool:
 
 ```bash
-stellar-agent market lp trustline add --pool 0123... --account agent --json
+stellar-agent market lp trustline add --pool 0123... --account agent --fee-strategy medium --json
 ```
 
 You can derive the pool-share trustline from reserve assets:
 
 ```bash
-stellar-agent market lp trustline add --asset-a XLM --asset-b USD:G... --account agent --json
+stellar-agent market lp trustline add --asset-a XLM --asset-b USD:G... --account agent --fee-strategy medium --json
 ```
 
 Trustline creation is Testnet-only for local signing. Mainnet trustline creation requires a future external-signer flow. In this release, LP deposit and withdrawal preflight expect an existing Horizon-visible core pool so the CLI can inspect reserve assets, current price, and risk context before submission.
@@ -105,7 +107,7 @@ market:
     requirePriceBounds: true
 ```
 
-Default Mainnet policy disables liquidity mutation. Policy can constrain pool ids, reserve assets, allowed actions, exposure values, and whether deposit price bounds are required.
+Default Mainnet policy disables liquidity mutation. Policy can constrain pool ids, reserve assets, allowed actions, nominal exposure values, and whether deposit price bounds are required.
 
 ## Market Listeners
 

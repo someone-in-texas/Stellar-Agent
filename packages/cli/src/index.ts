@@ -2246,8 +2246,9 @@ function addMarketCommands(program: Command): void {
     .option("--asset-b <asset>", "Second reserve asset when deriving a pool id")
     .option("--account <account>", "Local Testnet wallet name", "agent")
     .option("--limit <amount>", "Pool share trustline limit")
+    .option("--fee-strategy <strategy>", "Fee strategy: base, low, medium, high, p95", parseFeeStrategy, "medium")
     .action(
-      withContext(async (context, options: { pool?: string; assetA?: string; assetB?: string; account: string; limit?: string }) => {
+      withContext(async (context, options: { pool?: string; assetA?: string; assetB?: string; account: string; limit?: string; feeStrategy: "base" | "low" | "medium" | "high" | "p95" }) => {
         const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
         if (profile.realFunds) {
           throw new StellarAgentError({
@@ -2264,7 +2265,9 @@ function addMarketCommands(program: Command): void {
           ...(options.assetA === undefined ? {} : { assetA: options.assetA }),
           ...(options.assetB === undefined ? {} : { assetB: options.assetB }),
           ...(options.limit === undefined ? {} : { limit: options.limit }),
-          profile
+          profile,
+          feeStrategy: options.feeStrategy,
+          ...(context.options.noCache === undefined ? {} : { noCache: context.options.noCache })
         });
         const receiptPath = await writeOperationReceipt(context, {
           command: "market lp trustline add",
@@ -3284,6 +3287,7 @@ function liquidityPolicyRequest(profile: NetworkProfile, preflight: LiquidityPoo
 }
 
 function liquidityExposureValue(preflight: LiquidityPoolPreflight): string {
+  if (preflight.nominalExposure) return preflight.nominalExposure.value;
   if (preflight.deposit) {
     return String(Number(preflight.deposit.maxAmountA) + Number(preflight.deposit.maxAmountB));
   }

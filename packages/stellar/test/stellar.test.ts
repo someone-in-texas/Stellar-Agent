@@ -8,6 +8,7 @@ import {
   buildClaimableBalancePredicate,
   buildPaymentTransactionXdr,
   checkStellarCli,
+  changeLiquidityPoolTrustline,
   changeTrustline,
   clearStellarSessionCache,
   assetContractIdWithStellarCli,
@@ -18,7 +19,9 @@ import {
   extendContractWithStellarCli,
   fetchContractWasmWithStellarCli,
   invokeContractWithStellarCli,
+  inspectLiquidityPool,
   listClaimableBalances,
+  preflightLiquidityPoolDeposit,
   parseStellarCliTransactionHash,
   readContractWithStellarCli,
   resolveClaimableBalanceClaimants,
@@ -169,6 +172,68 @@ describe("stellar operations", () => {
     await expect(changeTrustline({ source: wallet, asset: "XLM" })).rejects.toMatchObject({
       code: "INVALID_ASSET"
     });
+  });
+
+  it("validates liquidity pool ids and price bounds before network access", async () => {
+    await expect(inspectLiquidityPool({ poolId: "not-a-pool", profile: testnetProfile() })).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      message: "Liquidity pool id must be a 64-character hexadecimal string."
+    });
+
+    await expect(
+      preflightLiquidityPoolDeposit({
+        poolId: poolIdFixture(),
+        maxAmountA: "1",
+        maxAmountB: "2",
+        minPrice: "3",
+        maxPrice: "2",
+        profile: testnetProfile()
+      })
+    ).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      message: "Liquidity deposit minPrice must be less than or equal to maxPrice."
+    });
+
+    await expect(
+      changeLiquidityPoolTrustline({
+        source: wallet,
+        poolId: "bad",
+        profile: testnetProfile()
+      })
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
+  it("reports nominal liquidity exposure semantics in package preflight", async () => {
+    const fetchImpl = globalThis.fetch;
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("/accounts/")) return new Response(JSON.stringify(accountFixture()));
+      return new Response(JSON.stringify(poolFixture()));
+    };
+    try {
+      await expect(
+        preflightLiquidityPoolDeposit({
+          poolId: poolIdFixture(),
+          maxAmountA: "1",
+          maxAmountB: "2",
+          minPrice: "1.5",
+          maxPrice: "2.5",
+          account: wallet.publicKey,
+          profile: testnetProfile()
+        })
+      ).resolves.toMatchObject({
+        nominalExposure: {
+          value: "3.0000000",
+          semantics: "sum_of_max_reserve_amounts_not_mark_to_market"
+        },
+        deposit: {
+          maxAmountA: "1.0000000",
+          maxAmountB: "2.0000000"
+        }
+      });
+    } finally {
+      globalThis.fetch = fetchImpl;
+    }
   });
 
   it("builds unconditional and time-bound claimable balance predicates", () => {
@@ -785,6 +850,49 @@ function signedPaymentXdrFixture(): string {
     .build();
   transaction.sign(signer);
   return transaction.toXDR();
+}
+
+function poolIdFixture(): string {
+  return "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+}
+
+function poolFixture() {
+  return {
+    id: poolIdFixture(),
+    paging_token: poolIdFixture(),
+    fee_bp: 30,
+    type: "constant_product",
+    total_trustlines: "3",
+    total_shares: "50.0000000",
+    reserves: [
+      { asset: "native", amount: "100.0000000" },
+      { asset: `USD:${wallet.publicKey}`, amount: "200.0000000" }
+    ]
+  };
+}
+
+function accountFixture() {
+  return {
+    id: wallet.publicKey,
+    account_id: wallet.publicKey,
+    sequence: "1",
+    balances: [
+      { asset_type: "native", balance: "100.0000000" },
+      {
+        asset_type: "credit_alphanum4",
+        asset_code: "USD",
+        asset_issuer: wallet.publicKey,
+        balance: "100.0000000",
+        limit: "1000.0000000"
+      },
+      {
+        asset_type: "liquidity_pool_shares",
+        liquidity_pool_id: poolIdFixture(),
+        balance: "5.0000000",
+        limit: "1000.0000000"
+      }
+    ]
+  };
 }
 
 async function fakeStellarBinary(): Promise<string> {

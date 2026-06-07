@@ -145,6 +145,10 @@ export interface LiquidityPoolPreflight {
   account?: string;
   assets: string[];
   currentPrice?: string;
+  nominalExposure: {
+    value: string;
+    semantics: "sum_of_max_reserve_amounts_not_mark_to_market" | "not_applicable_to_withdrawal";
+  };
   trustlines?: {
     reserveAssetsSatisfied: boolean;
     poolShareSatisfied: boolean;
@@ -565,6 +569,7 @@ export async function inspectLiquidityPool(args: {
   poolId: string;
   profile?: NetworkProfile;
 }): Promise<LiquidityPoolSummary> {
+  validateLiquidityPoolId(args.poolId);
   const profile = args.profile ?? TESTNET_PROFILE;
   if (!profile.horizonUrl) {
     throw new StellarAgentError({ code: "HORIZON_UNAVAILABLE", message: "Horizon is not configured." });
@@ -592,6 +597,7 @@ export async function liquidityPoolTrades(args: {
   profile?: NetworkProfile;
   limit?: number;
 }): Promise<HorizonCollectionResult<unknown>> {
+  validateLiquidityPoolId(args.poolId);
   const profile = args.profile ?? TESTNET_PROFILE;
   if (!profile.horizonUrl) {
     throw new StellarAgentError({ code: "HORIZON_UNAVAILABLE", message: "Horizon is not configured." });
@@ -608,6 +614,7 @@ export async function inspectLiquidityPoolPosition(args: {
   poolId?: string;
   profile?: NetworkProfile;
 }): Promise<{ account: string; positions: LiquidityPoolPosition[] }> {
+  if (args.poolId) validateLiquidityPoolId(args.poolId);
   const profile = args.profile ?? TESTNET_PROFILE;
   if (!profile.horizonUrl) {
     throw new StellarAgentError({ code: "HORIZON_UNAVAILABLE", message: "Horizon is not configured." });
@@ -646,6 +653,8 @@ export async function preflightLiquidityPoolDeposit(args: {
   account?: string;
   profile?: NetworkProfile;
 }): Promise<LiquidityPoolPreflight> {
+  validateLiquidityPoolId(args.poolId);
+  validatePoolPriceBounds(args.minPrice, args.maxPrice);
   const profile = args.profile ?? TESTNET_PROFILE;
   const pool = await inspectLiquidityPool({ poolId: args.poolId, profile });
   const reserves = requireTwoPoolReserves(pool);
@@ -659,6 +668,10 @@ export async function preflightLiquidityPoolDeposit(args: {
     ...(args.account === undefined ? {} : { account: args.account }),
     assets: reserves.map((reserve) => reserve.asset),
     ...(currentPrice === undefined ? {} : { currentPrice }),
+    nominalExposure: {
+      value: nominalDepositExposure(maxAmountA, maxAmountB),
+      semantics: "sum_of_max_reserve_amounts_not_mark_to_market"
+    },
     ...(args.account === undefined ? {} : { trustlines: await liquidityPoolTrustlineStatus(args.account, pool, profile) }),
     deposit: {
       maxAmountA,
@@ -679,6 +692,7 @@ export async function preflightLiquidityPoolWithdraw(args: {
   account?: string;
   profile?: NetworkProfile;
 }): Promise<LiquidityPoolPreflight> {
+  validateLiquidityPoolId(args.poolId);
   const profile = args.profile ?? TESTNET_PROFILE;
   const pool = await inspectLiquidityPool({ poolId: args.poolId, profile });
   const reserves = requireTwoPoolReserves(pool);
@@ -689,6 +703,10 @@ export async function preflightLiquidityPoolWithdraw(args: {
     pool,
     ...(args.account === undefined ? {} : { account: args.account }),
     assets: reserves.map((reserve) => reserve.asset),
+    nominalExposure: {
+      value: "0.0000000",
+      semantics: "not_applicable_to_withdrawal"
+    },
     ...(args.account === undefined ? {} : { trustlines: await liquidityPoolTrustlineStatus(args.account, pool, profile) }),
     withdraw: {
       shares,
@@ -733,6 +751,7 @@ export async function submitLiquidityPoolDeposit(args: {
   feeStrategy?: FeeStrategy;
   noCache?: boolean;
 }): Promise<SubmittedOperation & { preflight: LiquidityPoolPreflight }> {
+  validatePoolPriceBounds(args.minPrice, args.maxPrice);
   const profile = args.profile ?? TESTNET_PROFILE;
   const preflight = await preflightLiquidityPoolDeposit({
     poolId: args.poolId,
@@ -1699,6 +1718,7 @@ async function horizonGet(url: URL, message: string): Promise<unknown> {
 }
 
 function requireTwoPoolReserves(pool: LiquidityPoolSummary): [LiquidityPoolReserve, LiquidityPoolReserve] {
+  validateLiquidityPoolId(pool.id);
   if (pool.reserves.length !== 2 || !pool.reserves[0] || !pool.reserves[1]) {
     throw new StellarAgentError({
       code: "LEDGER_LOOKUP_FAILED",
@@ -1706,6 +1726,7 @@ function requireTwoPoolReserves(pool: LiquidityPoolSummary): [LiquidityPoolReser
       docs: "docs/market-liquidity.md#core-pool-inspection"
     });
   }
+  validateDistinctLiquidityPoolAssets(pool.reserves[0].asset, pool.reserves[1].asset);
   return [pool.reserves[0], pool.reserves[1]];
 }
 
@@ -1834,6 +1855,7 @@ async function resolveLiquidityPoolAssetForTrustline(args: {
 }
 
 function sortedLiquidityPoolAssets(assetA: string, assetB: string): [Asset, Asset] {
+  validateDistinctLiquidityPoolAssets(assetA, assetB);
   const left = stellarSdkAsset(assetA);
   const right = stellarSdkAsset(assetB);
   return Asset.compare(left, right) <= 0 ? [left, right] : [right, left];
@@ -1861,6 +1883,68 @@ function normalizeTrustlineLimit(input: string): string {
     });
   }
   return formatStroops(parsed.stroops);
+}
+
+function validateLiquidityPoolId(poolId: string): void {
+  if (!/^[0-9a-fA-F]{64}$/.test(poolId)) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Liquidity pool id must be a 64-character hexadecimal string.",
+      docs: "docs/market-liquidity.md#core-pool-inspection",
+      exitCode: EXIT_CODES.usage
+    });
+  }
+}
+
+function validatePoolPriceBounds(minPrice: string, maxPrice: string): void {
+  const min = parsePositiveDecimal(minPrice, "minPrice");
+  const max = parsePositiveDecimal(maxPrice, "maxPrice");
+  if (min > max) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Liquidity deposit minPrice must be less than or equal to maxPrice.",
+      docs: "docs/market-liquidity.md#lp-preflight",
+      exitCode: EXIT_CODES.usage
+    });
+  }
+}
+
+function parsePositiveDecimal(input: string, field: string): number {
+  if (!/^(0|[1-9]\d*)(\.\d+)?$/.test(input.trim())) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: `${field} must be a decimal number.`,
+      docs: "docs/market-liquidity.md#lp-preflight",
+      exitCode: EXIT_CODES.usage
+    });
+  }
+  const value = Number(input);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: `${field} must be greater than zero.`,
+      docs: "docs/market-liquidity.md#lp-preflight",
+      exitCode: EXIT_CODES.usage
+    });
+  }
+  return value;
+}
+
+function validateDistinctLiquidityPoolAssets(assetA: string, assetB: string): void {
+  const left = stellarSdkAsset(assetA);
+  const right = stellarSdkAsset(assetB);
+  if (Asset.compare(left, right) === 0) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Liquidity pool reserve assets must be distinct.",
+      docs: "docs/market-liquidity.md#core-pool-inspection",
+      exitCode: EXIT_CODES.usage
+    });
+  }
+}
+
+function nominalDepositExposure(maxAmountA: string, maxAmountB: string): string {
+  return formatStroops(parseAmount(maxAmountA).stroops + parseAmount(maxAmountB).stroops);
 }
 
 function uniqueClaimants(claimants: string[]): string[] {
