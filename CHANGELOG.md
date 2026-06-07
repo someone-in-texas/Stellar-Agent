@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.2
+
+- Added Aquarius AMM deployment discovery, pool inspection, account-position reads, LP deposit/withdraw preflight, swap quote/preflight, and rewards inspection.
+- Added `defi.aquarius` policy controls for allowed pools, assets, actions, nominal exposure, slippage bounds, and Mainnet approval gating.
+- Added Testnet example scripts for Blend and Aquarius DeFi workflows under `examples/defi/`, plus `pnpm examples:defi:testnet`.
+- Added a bundled `stellar-agent-defi` Codex skill covering Blend and Aquarius command sequencing, preflight requirements, policy boundaries, and Mainnet signing limits.
+- Documented Aquarius Testnet endpoints, examples, read-only/preflight-only boundaries, and Mainnet external-signer requirements.
+
 ## 0.4.1
 
 - Added MCP tools for core Stellar liquidity-pool listing, inspection, trade reads, LP position inspection, LP preflight, finite market listeners, and strategy liquidity investigation.

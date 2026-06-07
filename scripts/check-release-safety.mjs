@@ -22,6 +22,7 @@ const codexPluginReadme = await readFile(join(rootDir, "plugins", "codex", "READ
 const codexPluginYaml = await readFile(join(rootDir, "plugins", "codex", "plugin.yaml"), "utf8");
 const codexTestnetSkill = await readFile(join(rootDir, "plugins", "codex", "skills", "stellar-agent-testnet", "SKILL.md"), "utf8");
 const codexPaymentsSkill = await readFile(join(rootDir, "plugins", "codex", "skills", "stellar-agent-payments", "SKILL.md"), "utf8");
+const codexDefiSkill = await readFile(join(rootDir, "plugins", "codex", "skills", "stellar-agent-defi", "SKILL.md"), "utf8");
 const codexMarketSkill = await readFile(
   join(rootDir, "plugins", "codex", "skills", "stellar-agent-market-liquidity", "SKILL.md"),
   "utf8"
@@ -36,6 +37,7 @@ requireText("docs/threat-model.md", threatModel, [
   "Secret key leakage",
   "Spend-history bypass",
   "Mainnet/Testnet confusion",
+  "Aquarius AMM route risk",
   "Third-party protocol SDK compromise",
   "protocol SDK boundary checks",
   "tests and docs are required for safety-sensitive changes"
@@ -53,6 +55,7 @@ requireText("docs/security.md", securityGuide, [
 requireText("docs/mainnet-safety.md", mainnetSafety, [
   "Mainnet local auto-signing is blocked.",
   "do not pass raw Mainnet secret keys",
+  "Mainnet Aquarius mutation must not use local generated wallet secrets",
   "--allow-real-funds",
   "--i-understand-real-funds",
   "Receipts are enabled."
@@ -61,7 +64,8 @@ requireText("README.md", readme, [
   "Testnet is the default.",
   "Mainnet is disabled by default and cannot auto-sign payments.",
   "Secret keys are redacted from CLI output, logs, and receipts.",
-  "Policy evaluation runs before payment submission."
+  "Policy evaluation runs before payment submission.",
+  "Aquarius AMM inspection and policy-gated preflight"
 ]);
 requireText("RELEASE.md", releaseGuide, [
   "Codex plugin guidance is current",
@@ -71,6 +75,7 @@ requireText("RELEASE.md", releaseGuide, [
 requireText("docs/codex-plugin.md", codexPluginDocs, [
   "stellar-agent-testnet",
   "stellar-agent-payments",
+  "stellar-agent-defi",
   "stellar-agent-market-liquidity",
   "Maintenance checklist",
   "Run `pnpm release:safety` before release prep"
@@ -78,9 +83,12 @@ requireText("docs/codex-plugin.md", codexPluginDocs, [
 requireText("plugins/codex/plugin.yaml", codexPluginYaml, [
   "skills/stellar-agent-testnet",
   "skills/stellar-agent-payments",
+  "skills/stellar-agent-defi",
   "skills/stellar-agent-market-liquidity"
 ]);
 requireText("plugins/codex/README.md", codexPluginReadme, [
+  "Blend and Aquarius DeFi workflows",
+  "Treat Aquarius commands in this release as read-only or preflight-only",
   "market-liquidity investigation",
   "For liquidity-pool mutation, run `market lp preflight` first",
   "not a profitability guarantee"
@@ -96,6 +104,13 @@ requireText("plugins/codex/skills/stellar-agent-payments/SKILL.md", codexPayment
   "approval create-transaction",
   "pay x402",
   "pay mpp-session"
+]);
+requireText("plugins/codex/skills/stellar-agent-defi/SKILL.md", codexDefiSkill, [
+  "defi blend preflight",
+  "defi aquarius lp preflight",
+  "defi.aquarius.allowedPools",
+  "requireSlippageBounds",
+  "read-only or preflight-only"
 ]);
 requireText("plugins/codex/skills/stellar-agent-market-liquidity/SKILL.md", codexMarketSkill, [
   "market lp preflight",
@@ -115,6 +130,7 @@ requireText("packages/policy/test/policy.test.ts", policyTests, ["mainnet_requir
 requireText("packages/cli/test/cli.test.ts", cliTests, [
   "blocks Mainnet contract submissions unless guarded Mainnet mode is enabled",
   "submits externally signed Mainnet XDR only with explicit real-funds flags and writes a receipt",
+  "prints known Aquarius deployments without network access",
   "not.toContain(\"\\\"S\")"
 ]);
 requireText("package.json", rootPackage, [

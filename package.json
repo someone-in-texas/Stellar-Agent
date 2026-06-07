@@ -1,6 +1,6 @@
 {
   "name": "stellar-agent-bridge",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@9.15.4",
@@ -28,6 +28,7 @@
     "release:trust:npm:dry-run": "node scripts/configure-npm-trusted-publishing.mjs --dry-run",
     "release:preflight": "pnpm build && pnpm lint && pnpm test && pnpm smoke && pnpm release:check-versions && pnpm release:safety && pnpm release:audit && pnpm release:pack && pnpm release:verify-artifacts && pnpm release:notes",
     "demo:x402": "pnpm build && node apps/paid-api-demo/server.mjs",
+    "examples:defi:testnet": "pnpm build && node examples/defi/blend-testnet.mjs && node examples/defi/aquarius-testnet.mjs",
     "test:live:testnet": "LIVE_STELLAR_TESTNET=1 vitest run --project live-testnet"
   },
   "keywords": [

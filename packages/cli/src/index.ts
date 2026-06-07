@@ -19,7 +19,7 @@ import {
 } from "@stellar-agent/core";
 import { latestLedger, lookupTransaction, parseStellarCliTransactionHash, resolveNetworkProfile } from "@stellar-agent/stellar";
 import type { LiquidityPoolPreflight, LiquidityPoolSummary } from "@stellar-agent/stellar";
-import type { BlendAction, BlendPreflight } from "@stellar-agent/defi";
+import type { AquariusLpPreflight, AquariusSwapPreflight, BlendAction, BlendPreflight } from "@stellar-agent/defi";
 import {
   appendEvent,
   latestReceipt,
@@ -35,6 +35,7 @@ import {
   Policy,
   PolicyDecision,
   defaultPolicyForNetwork,
+  evaluateDefiAquariusRequest,
   evaluateDefiBlendRequest,
   evaluateMarketLiquidityRequest,
   evaluatePaymentRequest,
@@ -2705,6 +2706,196 @@ function addDefiCommands(program: Command): void {
         return addBlendTrustline(context, options);
       }, "Blend trustline added.")
     );
+
+  const aquarius = defi.command("aquarius").description("Inspect Aquarius pools and preflight guarded Aquarius AMM requests.");
+  aquarius
+    .command("deployments")
+    .description("Show Aquarius router, API, RPC endpoints, known assets, and optional current pools.")
+    .option("--network <name>", "Aquarius deployment network: testnet or mainnet")
+    .option("--pools", "Fetch current Aquarius pools from the Aquarius API")
+    .option("--search <term>", "Filter fetched pools by token, pool address, or symbol")
+    .option("--limit <count>", "Limit fetched pool records", parseIntegerOption)
+    .action(
+      withContext(
+        async (context, options: { network?: string; pools?: boolean; search?: string; limit?: number }) => {
+          const { aquariusDeployment, fetchAquariusPools } = await loadDefi();
+          const network = resolveAquariusNetworkOption(context, options.network);
+          const deployment = aquariusDeployment(network);
+          return {
+            ...deployment,
+            ...(options.pools
+              ? {
+                  pools: (
+                    await fetchAquariusPools({
+                      network,
+                      ...(options.search === undefined ? {} : { search: options.search }),
+                      limit: options.limit ?? 10
+                    })
+                  ).pools
+                }
+              : {})
+          };
+        },
+        "Aquarius deployments loaded."
+      )
+    );
+
+  const aquariusPool = aquarius.command("pool").description("Inspect Aquarius pools.");
+  aquariusPool
+    .command("inspect")
+    .description("Load Aquarius pool metadata from the Aquarius API.")
+    .requiredOption("--pool <pool>", "Pool contract id, pool index, token, or search term")
+    .option("--network <name>", "Network profile to inspect: testnet or mainnet")
+    .action(
+      withContext(async (context, options: { pool: string; network?: string }) => {
+        const { inspectAquariusPool } = await loadDefi();
+        return inspectAquariusPool({
+          network: resolveAquariusNetworkOption(context, options.network),
+          pool: options.pool
+        });
+      }, "Aquarius pool inspected.")
+    );
+
+  const aquariusAccount = aquarius.command("account").description("Inspect Aquarius account state.");
+  aquariusAccount
+    .command("position")
+    .description("Inspect account balances relevant to an Aquarius pool.")
+    .option("--account <account>", "Local wallet name or public key", "agent")
+    .option("--pool <pool>", "Aquarius pool contract id, pool index, token, or search term")
+    .option("--network <name>", "Network profile to inspect: testnet or mainnet")
+    .action(
+      withContext(async (context, options: { account: string; pool?: string; network?: string }) => {
+        const { inspectAquariusAccountPosition } = await loadDefi();
+        const account = await resolvePublicAccount(context, options.account);
+        return inspectAquariusAccountPosition({
+          network: resolveAquariusNetworkOption(context, options.network),
+          account,
+          ...(options.pool === undefined ? {} : { pool: options.pool })
+        });
+      }, "Aquarius account position inspected.")
+    );
+
+  const aquariusLp = aquarius.command("lp").description("Preflight Aquarius LP actions.");
+  aquariusLp
+    .command("preflight")
+    .description("Preflight Aquarius deposit or withdrawal without signing or submitting.")
+    .requiredOption("--pool <pool>", "Aquarius pool contract id, pool index, token, or search term")
+    .requiredOption("--action <action>", "LP action: deposit or withdraw")
+    .option("--account <account>", "Local wallet name or public key", "agent")
+    .option("--amount <amount...>", "Desired deposit amount, repeatable", collectOption, [])
+    .option("--min-shares <amount>", "Minimum pool shares for deposit")
+    .option("--shares <amount>", "Pool shares to withdraw")
+    .option("--min-amount <amount...>", "Minimum withdraw token amount, repeatable", collectOption, [])
+    .option("--network <name>", "Network profile to inspect: testnet or mainnet")
+    .action(
+      withContext(
+        async (
+          context,
+          options: {
+            pool: string;
+            action: string;
+            account: string;
+            amount: string[];
+            minShares?: string;
+            shares?: string;
+            minAmount: string[];
+            network?: string;
+          }
+        ) => {
+          const { preflightAquariusLp } = await loadDefi();
+          const network = resolveAquariusNetworkOption(context, options.network);
+          const action = parseAquariusLpAction(options.action);
+          const account = await resolvePublicAccount(context, options.account);
+          const preflight = await preflightAquariusLp({
+            network,
+            pool: options.pool,
+            account,
+            action,
+            ...(options.amount.length === 0 ? {} : { desiredAmounts: options.amount }),
+            ...(options.minShares === undefined ? {} : { minShares: options.minShares }),
+            ...(options.shares === undefined ? {} : { shareAmount: options.shares }),
+            ...(options.minAmount.length === 0 ? {} : { minAmounts: options.minAmount })
+          });
+          const policy = await loadPolicy(context);
+          const policyDecision = evaluateDefiAquariusRequest(policy, aquariusLpPolicyRequest(preflight));
+          return { policyDecision, preflight };
+        },
+        "Aquarius LP preflight complete."
+      )
+    );
+
+  const aquariusSwap = aquarius.command("swap").description("Quote and preflight Aquarius swaps.");
+  aquariusSwap
+    .command("quote")
+    .description("Fetch an Aquarius optimal-route swap quote without signing or submitting.")
+    .requiredOption("--from <asset>", "Input asset symbol or contract id")
+    .requiredOption("--to <asset>", "Output asset symbol or contract id")
+    .requiredOption("--amount <amount>", "Amount in asset units")
+    .option("--mode <mode>", "strict-send or strict-receive", "strict-send")
+    .option("--network <name>", "Network profile to inspect: testnet or mainnet")
+    .action(
+      withContext(async (context, options: { from: string; to: string; amount: string; mode: string; network?: string }) => {
+        const { quoteAquariusSwap } = await loadDefi();
+        return quoteAquariusSwap({
+          network: resolveAquariusNetworkOption(context, options.network),
+          tokenIn: options.from,
+          tokenOut: options.to,
+          amount: options.amount,
+          mode: parseAquariusSwapMode(options.mode)
+        });
+      }, "Aquarius swap quote loaded.")
+    );
+
+  aquariusSwap
+    .command("preflight")
+    .description("Preflight an Aquarius swap quote against policy without signing or submitting.")
+    .requiredOption("--from <asset>", "Input asset symbol or contract id")
+    .requiredOption("--to <asset>", "Output asset symbol or contract id")
+    .requiredOption("--amount <amount>", "Amount in asset units")
+    .option("--mode <mode>", "strict-send or strict-receive", "strict-send")
+    .requiredOption("--slippage-bps <bps>", "Explicit slippage bound in basis points", parseIntegerOption)
+    .option("--network <name>", "Network profile to inspect: testnet or mainnet")
+    .action(
+      withContext(
+        async (
+          context,
+          options: { from: string; to: string; amount: string; mode: string; slippageBps: number; network?: string }
+        ) => {
+          const { preflightAquariusSwap } = await loadDefi();
+          const preflight = await preflightAquariusSwap({
+            network: resolveAquariusNetworkOption(context, options.network),
+            tokenIn: options.from,
+            tokenOut: options.to,
+            amount: options.amount,
+            mode: parseAquariusSwapMode(options.mode),
+            slippageBps: options.slippageBps
+          });
+          const policy = await loadPolicy(context);
+          const policyDecision = evaluateDefiAquariusRequest(policy, aquariusSwapPolicyRequest(preflight));
+          return { policyDecision, preflight };
+        },
+        "Aquarius swap preflight complete."
+      )
+    );
+
+  const aquariusRewards = aquarius.command("rewards").description("Inspect Aquarius reward claim readiness.");
+  aquariusRewards
+    .command("inspect")
+    .description("Inspect Aquarius pool reward claim metadata without signing or submitting.")
+    .requiredOption("--pool <pool>", "Aquarius pool contract id, pool index, token, or search term")
+    .option("--account <account>", "Local wallet name or public key", "agent")
+    .option("--network <name>", "Network profile to inspect: testnet or mainnet")
+    .action(
+      withContext(async (context, options: { pool: string; account: string; network?: string }) => {
+        const { inspectAquariusRewards } = await loadDefi();
+        const account = await resolvePublicAccount(context, options.account);
+        return inspectAquariusRewards({
+          network: resolveAquariusNetworkOption(context, options.network),
+          account,
+          pool: options.pool
+        });
+      }, "Aquarius rewards inspected.")
+    );
 }
 
 function addPolicyCommands(program: Command): void {
@@ -3057,6 +3248,17 @@ function resolveBlendProfile(context: CliContext, network?: string): NetworkProf
   return resolveNetworkProfile(resolveBlendNetworkOption(context, network), context.config.profiles);
 }
 
+function resolveAquariusNetworkOption(context: CliContext, network?: string): "testnet" | "mainnet" {
+  if (!network) return blendNetworkForProfile(resolveNetworkProfile(context.profileName, context.config.profiles));
+  const normalized = network.toLowerCase();
+  if (normalized === "testnet" || normalized === "mainnet") return normalized;
+  throw new StellarAgentError({
+    code: "INVALID_INPUT",
+    message: "Aquarius network must be testnet or mainnet.",
+    docs: "docs/defi-aquarius.md"
+  });
+}
+
 function resolveBlendPoolVersion(version?: string): "v1" | "v2" | undefined {
   if (version === undefined) return undefined;
   const normalized = version.toLowerCase();
@@ -3065,6 +3267,27 @@ function resolveBlendPoolVersion(version?: string): "v1" | "v2" | undefined {
     code: "INVALID_INPUT",
     message: "Blend pool version must be v1 or v2.",
     docs: "docs/defi-blend.md"
+  });
+}
+
+function parseAquariusLpAction(action: string): "deposit" | "withdraw" {
+  const normalized = action.toLowerCase();
+  if (normalized === "deposit" || normalized === "withdraw") return normalized;
+  throw new StellarAgentError({
+    code: "INVALID_INPUT",
+    message: "Aquarius LP action must be deposit or withdraw.",
+    docs: "docs/defi-aquarius.md#lp-preflight"
+  });
+}
+
+function parseAquariusSwapMode(mode: string): "strict_send" | "strict_receive" {
+  const normalized = mode.toLowerCase().replaceAll("-", "_");
+  if (normalized === "strict_send" || normalized === "send") return "strict_send";
+  if (normalized === "strict_receive" || normalized === "receive") return "strict_receive";
+  throw new StellarAgentError({
+    code: "INVALID_INPUT",
+    message: "Aquarius swap mode must be strict-send or strict-receive.",
+    docs: "docs/defi-aquarius.md#swap-quoting-and-preflight"
   });
 }
 
@@ -3574,6 +3797,28 @@ function blendPolicyRequest(profile: NetworkProfile, pool: string, preflight: Bl
     borrowValue: String(borrowValue),
     protocolExposureValue: String(protocolExposureValue),
     ...(preflight.after?.healthFactor === undefined ? {} : { healthFactorAfter: preflight.after.healthFactor })
+  };
+}
+
+function aquariusLpPolicyRequest(preflight: AquariusLpPreflight) {
+  return {
+    network: preflight.network,
+    pool: preflight.pool.address,
+    assets: preflight.assets,
+    action: preflight.action,
+    nominalExposure: preflight.nominalExposure,
+    slippageBoundsProvided: preflight.slippageBoundsProvided
+  };
+}
+
+function aquariusSwapPolicyRequest(preflight: AquariusSwapPreflight) {
+  return {
+    network: preflight.network,
+    pool: preflight.quote.pools[0] ?? "*",
+    assets: [preflight.tokenIn, preflight.tokenOut, ...preflight.quote.tokenAddresses],
+    action: preflight.policyAction,
+    nominalExposure: preflight.amount,
+    slippageBoundsProvided: preflight.slippageBoundsProvided
   };
 }
 

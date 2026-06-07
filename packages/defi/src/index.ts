@@ -2,6 +2,10 @@ import { NetworkProfile, StellarAgentError } from "@stellar-agent/core";
 
 export type BlendNetworkName = "testnet" | "mainnet";
 export type BlendPoolVersion = "v1" | "v2";
+export type AquariusNetworkName = "testnet" | "mainnet";
+export type AquariusActionType = "deposit" | "withdraw" | "swap";
+export type AquariusLpActionType = "deposit" | "withdraw";
+export type AquariusSwapMode = "strict_send" | "strict_receive";
 export type BlendActionType =
   | "supply"
   | "withdraw"
@@ -115,8 +119,157 @@ export interface BlendPositionEstimate {
   borrowApy: number;
 }
 
+export interface AquariusDeployment {
+  network: AquariusNetworkName;
+  routerContractId: string;
+  apiBaseUrl: string;
+  sorobanRpcUrl: string;
+  horizonUrl: string;
+  docs: string[];
+  assets: AquariusAssetDeployment[];
+  notes: string[];
+}
+
+export interface AquariusAssetDeployment {
+  symbol: string;
+  contractId: string;
+  issuer?: string;
+  classicAsset?: string;
+}
+
+export interface AquariusPoolSummary {
+  index: string;
+  address: string;
+  tokens: string[];
+  tokenAddresses: string[];
+  poolType: string;
+  fee: string;
+  amplification?: string | null;
+  txCount?: number | null;
+  totalVolume?: number | string | null;
+}
+
+export interface AquariusLpPreflight {
+  network: AquariusNetworkName;
+  action: AquariusLpActionType;
+  pool: AquariusPoolSummary;
+  account: string;
+  desiredAmounts?: string[];
+  minShares?: string;
+  shareAmount?: string;
+  minAmounts?: string[];
+  assets: string[];
+  nominalExposure: string;
+  slippageBoundsProvided: boolean;
+  simulated: false;
+  submitted: false;
+  signing: false;
+  riskNotes: string[];
+}
+
+export interface AquariusSwapPreflight {
+  network: AquariusNetworkName;
+  mode: AquariusSwapMode;
+  tokenIn: string;
+  tokenOut: string;
+  amount: string;
+  slippageBps?: number;
+  quote: AquariusSwapQuote;
+  policyAction: "swap";
+  slippageBoundsProvided: boolean;
+  simulated: false;
+  submitted: false;
+  signing: false;
+  riskNotes: string[];
+}
+
+export interface AquariusSwapQuote {
+  success: boolean;
+  amount: string;
+  amountWithFee?: string;
+  swapChainXdr?: string;
+  pools: string[];
+  tokens: string[];
+  tokenAddresses: string[];
+  raw: unknown;
+}
+
+export interface AquariusAccountPosition {
+  network: AquariusNetworkName;
+  account: string;
+  pool?: AquariusPoolSummary;
+  balances: unknown[];
+  matchedBalances: unknown[];
+  submitted: false;
+  signing: false;
+  notes: string[];
+}
+
+export interface AquariusRewardsInspection {
+  network: AquariusNetworkName;
+  account: string;
+  pool: AquariusPoolSummary;
+  claimSupported: true;
+  claimSubmitted: false;
+  signing: false;
+  notes: string[];
+}
+
 const BLEND_UTILS_BASE = "https://raw.githubusercontent.com/blend-capital/blend-utils/main";
 const BLEND_UI_BASE = "https://raw.githubusercontent.com/blend-capital/blend-ui/main";
+
+const AQUARIUS_DEPLOYMENTS: Record<AquariusNetworkName, AquariusDeployment> = {
+  testnet: {
+    network: "testnet",
+    routerContractId: "CBCFTQSPDBAIZ6R6PJQKSQWKNKWH2QIV3I4J72SHWBIK3ADRRAM5A6GD",
+    apiBaseUrl: "https://amm-api-testnet.aqua.network/api/external/v1",
+    sorobanRpcUrl: "https://soroban-testnet.stellar.org:443",
+    horizonUrl: "https://horizon-testnet.stellar.org",
+    docs: [
+      "https://docs.aqua.network/developers/code-examples/prerequisites-and-basics",
+      "https://docs.aqua.network/developers/code-examples/get-pools-info",
+      "https://docs.aqua.network/developers/aquarius-soroban-functions"
+    ],
+    assets: [
+      { symbol: "XLM", contractId: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC" },
+      {
+        symbol: "AQUA",
+        contractId: "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE",
+        issuer: "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
+        classicAsset: "AQUA:GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER"
+      },
+      {
+        symbol: "USDC",
+        contractId: "CAZRY5GSFBFXD7H6GAFBA5YGYQTDXU4QKWKMYFWBAZFUCURN3WKX6LF5",
+        issuer: "GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER",
+        classicAsset: "USDC:GAHPYWLK6YRN7CVYZOO4H3VDRZ7PVF5UJGLZCSPAEIKJE2XSWF5LAGER"
+      }
+    ],
+    notes: ["Aquarius Testnet router address was updated in February 2026 per Aquarius documentation."]
+  },
+  mainnet: {
+    network: "mainnet",
+    routerContractId: "CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK",
+    apiBaseUrl: "https://amm-api.aqua.network/api/external/v1",
+    sorobanRpcUrl: "https://mainnet.sorobanrpc.com",
+    horizonUrl: "https://horizon.stellar.org",
+    docs: [
+      "https://docs.aqua.network/developers/code-examples/prerequisites-and-basics",
+      "https://docs.aqua.network/developers/code-examples/get-pools-info",
+      "https://docs.aqua.network/developers/aquarius-soroban-functions"
+    ],
+    assets: [
+      { symbol: "XLM", contractId: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA" },
+      {
+        symbol: "AQUA",
+        contractId: "CD54JJVY7BM5HCJ37YH2QYDAKL3CMS2UY4WQ66NCKH3QOX2K6WHK4G2Z",
+        issuer: "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+        classicAsset: "AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
+      }
+    ],
+    notes: ["Mainnet Aquarius mutation is not supported by stellar-agent local auto-signing."]
+  }
+};
 
 const STATIC_DEPLOYMENTS: Record<BlendNetworkName, BlendDeployment> = {
   testnet: {
@@ -268,6 +421,308 @@ const REQUEST_TYPE_BY_ACTION: Record<BlendActionType, number> = {
 
 export function blendDeployment(network: BlendNetworkName): BlendDeployment {
   return structuredClone(STATIC_DEPLOYMENTS[network]);
+}
+
+export function aquariusDeployment(network: AquariusNetworkName): AquariusDeployment {
+  return structuredClone(AQUARIUS_DEPLOYMENTS[network]);
+}
+
+export async function fetchAquariusPools(args: {
+  network: AquariusNetworkName;
+  search?: string;
+  limit?: number;
+  fetchImpl?: typeof fetch;
+}): Promise<{ network: AquariusNetworkName; apiBaseUrl: string; count?: number; pools: AquariusPoolSummary[]; raw: unknown }> {
+  const deployment = aquariusDeployment(args.network);
+  const url = new URL(`${deployment.apiBaseUrl}/pools/`);
+  if (args.search) url.searchParams.set("search", args.search);
+  if (args.limit !== undefined) url.searchParams.set("limit", String(validatePositiveInteger(args.limit, "limit")));
+  const response = await (args.fetchImpl ?? fetch)(url);
+  if (!response.ok) {
+    throw new StellarAgentError({
+      code: "RPC_UNAVAILABLE",
+      message: "Could not fetch Aquarius pool list.",
+      details: { url: url.toString(), status: response.status },
+      docs: "docs/defi-aquarius.md"
+    });
+  }
+  const raw = await response.json();
+  const records = Array.isArray((raw as any).results) ? (raw as any).results : Array.isArray(raw) ? raw : [];
+  return {
+    network: args.network,
+    apiBaseUrl: deployment.apiBaseUrl,
+    ...(typeof (raw as any).count === "number" ? { count: (raw as any).count } : {}),
+    pools: records.map(aquariusPoolFromApi),
+    raw
+  };
+}
+
+export async function inspectAquariusPool(args: {
+  network: AquariusNetworkName;
+  pool: string;
+  fetchImpl?: typeof fetch;
+}): Promise<{ network: AquariusNetworkName; pool: AquariusPoolSummary; raw?: unknown }> {
+  const listed = await fetchAquariusPools({
+    network: args.network,
+    search: args.pool,
+    limit: 20,
+    ...(args.fetchImpl === undefined ? {} : { fetchImpl: args.fetchImpl })
+  });
+  const needle = args.pool.toLowerCase();
+  const pool = listed.pools.find((candidate) => {
+    const tokens = [...candidate.tokens, ...candidate.tokenAddresses].map((token) => token.toLowerCase());
+    return candidate.address.toLowerCase() === needle || candidate.index.toLowerCase() === needle || tokens.includes(needle);
+  });
+  const firstPool = listed.pools[0];
+  if (!pool && firstPool !== undefined && !isContractId(args.pool)) {
+    return { network: args.network, pool: firstPool, raw: listed.raw };
+  }
+  if (pool) return { network: args.network, pool, raw: listed.raw };
+  if (isContractId(args.pool)) {
+    return {
+      network: args.network,
+      pool: {
+        index: "",
+        address: args.pool,
+        tokens: [],
+        tokenAddresses: [],
+        poolType: "unknown",
+        fee: "unknown"
+      }
+    };
+  }
+  throw new StellarAgentError({
+    code: "INVALID_INPUT",
+    message: `Aquarius pool '${args.pool}' was not found in the ${args.network} API results.`,
+    hint: "Run stellar-agent defi aquarius deployments --network testnet --json to list known pools.",
+    docs: "docs/defi-aquarius.md"
+  });
+}
+
+export async function preflightAquariusLp(args: {
+  network: AquariusNetworkName;
+  pool: string;
+  account: string;
+  action: AquariusLpActionType;
+  desiredAmounts?: string[];
+  minShares?: string;
+  shareAmount?: string;
+  minAmounts?: string[];
+  fetchImpl?: typeof fetch;
+}): Promise<AquariusLpPreflight> {
+  const { pool } = await inspectAquariusPool({
+    network: args.network,
+    pool: args.pool,
+    ...(args.fetchImpl === undefined ? {} : { fetchImpl: args.fetchImpl })
+  });
+  const assets = pool.tokenAddresses.length > 0 ? pool.tokenAddresses : pool.tokens;
+  if (args.action === "deposit") {
+    if (!args.desiredAmounts || args.desiredAmounts.length < 2) {
+      throw new StellarAgentError({
+        code: "INVALID_INPUT",
+        message: "Aquarius deposit preflight requires at least two --amount values.",
+        docs: "docs/defi-aquarius.md#lp-preflight"
+      });
+    }
+    for (const amount of args.desiredAmounts) validatePositiveDecimal(amount, "amount");
+    if (args.minShares !== undefined) validateNonnegativeDecimal(args.minShares, "min-shares");
+  } else {
+    if (!args.shareAmount) {
+      throw new StellarAgentError({
+        code: "INVALID_INPUT",
+        message: "Aquarius withdraw preflight requires --shares.",
+        docs: "docs/defi-aquarius.md#lp-preflight"
+      });
+    }
+    validatePositiveDecimal(args.shareAmount, "shares");
+    for (const amount of args.minAmounts ?? []) validateNonnegativeDecimal(amount, "min-amount");
+  }
+  return {
+    network: args.network,
+    action: args.action,
+    pool,
+    account: args.account,
+    ...(args.desiredAmounts === undefined ? {} : { desiredAmounts: args.desiredAmounts }),
+    ...(args.minShares === undefined ? {} : { minShares: args.minShares }),
+    ...(args.shareAmount === undefined ? {} : { shareAmount: args.shareAmount }),
+    ...(args.minAmounts === undefined ? {} : { minAmounts: args.minAmounts }),
+    assets,
+    nominalExposure:
+      args.action === "deposit" ? String(args.desiredAmounts!.reduce((total, amount) => total + Number(amount), 0)) : args.shareAmount!,
+    slippageBoundsProvided:
+      args.action === "deposit" ? args.minShares !== undefined : Array.isArray(args.minAmounts) && args.minAmounts.length > 0,
+    simulated: false,
+    submitted: false,
+    signing: false,
+    riskNotes: [
+      "Aquarius LP preflight is an API and input validation check, not a submitted transaction.",
+      "Pool state and reward eligibility can change before execution.",
+      "Mainnet Aquarius mutation requires an external signer flow and is not auto-signed locally."
+    ]
+  };
+}
+
+export async function quoteAquariusSwap(args: {
+  network: AquariusNetworkName;
+  tokenIn: string;
+  tokenOut: string;
+  amount: string;
+  mode: AquariusSwapMode;
+  fetchImpl?: typeof fetch;
+}): Promise<AquariusSwapQuote> {
+  validatePositiveDecimal(args.amount, "amount");
+  const deployment = aquariusDeployment(args.network);
+  const endpoint = args.mode === "strict_receive" ? "find-path-strict-receive" : "find-path";
+  const response = await (args.fetchImpl ?? fetch)(`${deployment.apiBaseUrl}/${endpoint}/`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      token_in_address: resolveAquariusAsset(deployment, args.tokenIn).contractId,
+      token_out_address: resolveAquariusAsset(deployment, args.tokenOut).contractId,
+      amount: decimalToStroops(args.amount)
+    })
+  });
+  if (!response.ok) {
+    throw new StellarAgentError({
+      code: "RPC_UNAVAILABLE",
+      message: "Could not fetch Aquarius swap quote.",
+      details: { status: response.status },
+      docs: "docs/defi-aquarius.md#swap-quoting-and-preflight"
+    });
+  }
+  const raw = await response.json();
+  return aquariusQuoteFromApi(raw);
+}
+
+export async function preflightAquariusSwap(args: {
+  network: AquariusNetworkName;
+  tokenIn: string;
+  tokenOut: string;
+  amount: string;
+  mode: AquariusSwapMode;
+  slippageBps?: number;
+  fetchImpl?: typeof fetch;
+}): Promise<AquariusSwapPreflight> {
+  const quote = await quoteAquariusSwap(args);
+  if (!quote.success) {
+    throw new StellarAgentError({
+      code: "TRANSACTION_BUILD_FAILED",
+      message: "Aquarius swap quote failed.",
+      details: quote.raw,
+      docs: "docs/defi-aquarius.md#swap-quoting-and-preflight"
+    });
+  }
+  if (args.slippageBps !== undefined && (!Number.isInteger(args.slippageBps) || args.slippageBps < 0 || args.slippageBps > 10_000)) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Aquarius --slippage-bps must be an integer from 0 to 10000.",
+      docs: "docs/defi-aquarius.md#swap-quoting-and-preflight"
+    });
+  }
+  return {
+    network: args.network,
+    mode: args.mode,
+    tokenIn: resolveAquariusAsset(aquariusDeployment(args.network), args.tokenIn).contractId,
+    tokenOut: resolveAquariusAsset(aquariusDeployment(args.network), args.tokenOut).contractId,
+    amount: args.amount,
+    ...(args.slippageBps === undefined ? {} : { slippageBps: args.slippageBps }),
+    quote,
+    policyAction: "swap",
+    slippageBoundsProvided: args.slippageBps !== undefined,
+    simulated: false,
+    submitted: false,
+    signing: false,
+    riskNotes: [
+      "Aquarius swap preflight quotes an API-generated route and XDR but does not sign or submit it.",
+      "Set explicit slippage bounds before any future submitted swap.",
+      "Routes can change between quote and execution."
+    ]
+  };
+}
+
+export async function inspectAquariusAccountPosition(args: {
+  network: AquariusNetworkName;
+  account: string;
+  pool?: string;
+  fetchImpl?: typeof fetch;
+}): Promise<AquariusAccountPosition> {
+  const deployment = aquariusDeployment(args.network);
+  const response = await (args.fetchImpl ?? fetch)(`${deployment.horizonUrl}/accounts/${args.account}`);
+  if (!response.ok) {
+    throw new StellarAgentError({
+      code: "LEDGER_LOOKUP_FAILED",
+      message: "Could not load account balances for Aquarius position inspection.",
+      details: { account: args.account, status: response.status },
+      docs: "docs/defi-aquarius.md#account-position"
+    });
+  }
+  const raw = await response.json();
+  const balances = Array.isArray((raw as any).balances) ? (raw as any).balances : [];
+  const pool = args.pool
+    ? (
+        await inspectAquariusPool({
+          network: args.network,
+          pool: args.pool,
+          ...(args.fetchImpl === undefined ? {} : { fetchImpl: args.fetchImpl })
+        })
+      ).pool
+    : undefined;
+  const matchedBalances = pool
+    ? balances.filter((balance: any) => JSON.stringify(balance).includes(pool.address) || pool.tokens.some((token) => JSON.stringify(balance).includes(token)))
+    : balances;
+  return {
+    network: args.network,
+    account: args.account,
+    ...(pool === undefined ? {} : { pool }),
+    balances,
+    matchedBalances,
+    submitted: false,
+    signing: false,
+    notes: [
+      "Position inspection is read-only and does not prove future LP withdrawal eligibility.",
+      "Soroban pool share and reward state can differ from classic Horizon balances."
+    ]
+  };
+}
+
+export async function inspectAquariusRewards(args: {
+  network: AquariusNetworkName;
+  account: string;
+  pool: string;
+  fetchImpl?: typeof fetch;
+}): Promise<AquariusRewardsInspection> {
+  const { pool } = await inspectAquariusPool({
+    network: args.network,
+    pool: args.pool,
+    ...(args.fetchImpl === undefined ? {} : { fetchImpl: args.fetchImpl })
+  });
+  return {
+    network: args.network,
+    account: args.account,
+    pool,
+    claimSupported: true,
+    claimSubmitted: false,
+    signing: false,
+    notes: [
+      "Aquarius rewards are claimed through the pool claim(user) contract method.",
+      "This command is read-only and does not sign or submit a claim transaction.",
+      "Run LP preflight and use an external signer for any future Mainnet reward claim."
+    ]
+  };
+}
+
+export function resolveAquariusAsset(deployment: AquariusDeployment, asset: string): AquariusAssetDeployment {
+  const found = deployment.assets.find(
+    (candidate) => candidate.symbol.toLowerCase() === asset.toLowerCase() || candidate.contractId === asset
+  );
+  if (found) return found;
+  if (isContractId(asset)) return { symbol: asset, contractId: asset };
+  throw new StellarAgentError({
+    code: "INVALID_INPUT",
+    message: `Aquarius asset '${asset}' was not found in the ${deployment.network} deployment map.`,
+    hint: "Use XLM, AQUA, USDC, or a contract id.",
+    docs: "docs/defi-aquarius.md"
+  });
 }
 
 export async function fetchBlendDeployment(
@@ -618,6 +1073,88 @@ function parseEnv(raw: string): Record<string, string> {
     values[match[1]!] = match[2]!.replace(/^['"]|['"]$/g, "");
   }
   return values;
+}
+
+function aquariusPoolFromApi(raw: any): AquariusPoolSummary {
+  return {
+    index: String(raw.index ?? ""),
+    address: String(raw.address ?? ""),
+    tokens: Array.isArray(raw.tokens_str) ? raw.tokens_str.map(String) : [],
+    tokenAddresses: Array.isArray(raw.tokens_addresses) ? raw.tokens_addresses.map(String) : [],
+    poolType: String(raw.pool_type ?? "unknown"),
+    fee: String(raw.fee ?? "unknown"),
+    ...(raw.a === undefined ? {} : { amplification: raw.a }),
+    ...(raw.tx_count === undefined ? {} : { txCount: raw.tx_count }),
+    ...(raw.total_volume === undefined ? {} : { totalVolume: raw.total_volume })
+  };
+}
+
+function aquariusQuoteFromApi(raw: any): AquariusSwapQuote {
+  return {
+    success: Boolean(raw.success),
+    amount: String(raw.amount ?? "0"),
+    ...(raw.amount_with_fee === undefined ? {} : { amountWithFee: String(raw.amount_with_fee) }),
+    ...(raw.swap_chain_xdr === undefined ? {} : { swapChainXdr: String(raw.swap_chain_xdr) }),
+    pools: Array.isArray(raw.pools) ? raw.pools.map(String) : [],
+    tokens: Array.isArray(raw.tokens) ? raw.tokens.map(String) : [],
+    tokenAddresses: Array.isArray(raw.tokens_addresses) ? raw.tokens_addresses.map(String) : [],
+    raw
+  };
+}
+
+function isContractId(input: string): boolean {
+  return /^C[A-Z2-7]{55}$/.test(input);
+}
+
+function validatePositiveInteger(input: number, label: string): number {
+  if (!Number.isInteger(input) || input <= 0) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: `${label} must be a positive integer.`,
+      docs: "docs/defi-aquarius.md"
+    });
+  }
+  return input;
+}
+
+function validatePositiveDecimal(input: string, label: string): void {
+  validateDecimal(input, label, false);
+}
+
+function validateNonnegativeDecimal(input: string, label: string): void {
+  validateDecimal(input, label, true);
+}
+
+function validateDecimal(input: string, label: string, allowZero: boolean): void {
+  if (!/^(0|[1-9]\d*)(\.\d+)?$/.test(input.trim())) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: `${label} must be a decimal number.`,
+      docs: "docs/defi-aquarius.md"
+    });
+  }
+  const value = Number(input);
+  if (!Number.isFinite(value) || value < 0 || (!allowZero && value <= 0)) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: `${label} must be ${allowZero ? "nonnegative" : "greater than zero"}.`,
+      docs: "docs/defi-aquarius.md"
+    });
+  }
+}
+
+function decimalToStroops(input: string): string {
+  validatePositiveDecimal(input, "amount");
+  const [whole, fraction = ""] = input.split(".");
+  const padded = `${fraction}0000000`.slice(0, 7);
+  if (fraction.length > 7) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Aquarius amounts support at most 7 decimal places.",
+      docs: "docs/defi-aquarius.md"
+    });
+  }
+  return String(BigInt(whole!) * 10_000_000n + BigInt(padded));
 }
 
 function parseBlockedPools(value: string | undefined): string[] {

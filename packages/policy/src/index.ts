@@ -19,6 +19,7 @@ export type DefiBlendRequestType =
   | "withdraw_collateral"
   | "borrow"
   | "repay";
+export type DefiAquariusAction = "deposit" | "withdraw" | "swap";
 export type MarketLiquidityAction = "deposit" | "withdraw";
 
 export interface PolicyDecision {
@@ -50,6 +51,15 @@ export interface DefiBlendPolicyRequest {
   healthFactorAfter?: number | null;
 }
 
+export interface DefiAquariusPolicyRequest {
+  network: "testnet" | "mainnet" | "local";
+  pool: string;
+  assets: string[];
+  action: DefiAquariusAction;
+  nominalExposure?: string;
+  slippageBoundsProvided?: boolean;
+}
+
 export interface MarketLiquidityPolicyRequest {
   network: "testnet" | "mainnet" | "local";
   pool: string;
@@ -67,6 +77,8 @@ const defiBlendRequestTypeSchema = z.enum([
   "borrow",
   "repay"
 ]);
+
+const defiAquariusActionSchema = z.enum(["deposit", "withdraw", "swap"]);
 
 const defiPolicySchema = z
   .object({
@@ -88,6 +100,23 @@ const defiPolicySchema = z
         maxProtocolExposureValue: "0",
         minimumHealthFactor: 1.25,
         requireSimulation: true
+      }),
+    aquarius: z
+      .object({
+        enabled: z.boolean().default(false),
+        allowedPools: z.array(z.string().min(1)).default([]),
+        allowedAssets: z.array(z.string().min(1)).default([]),
+        allowedActions: z.array(defiAquariusActionSchema).default([]),
+        maxNominalExposure: z.string().min(1).default("0"),
+        requireSlippageBounds: z.boolean().default(true)
+      })
+      .default({
+        enabled: false,
+        allowedPools: [],
+        allowedAssets: [],
+        allowedActions: [],
+        maxNominalExposure: "0",
+        requireSlippageBounds: true
       })
   })
   .default({
@@ -99,6 +128,14 @@ const defiPolicySchema = z
       maxProtocolExposureValue: "0",
       minimumHealthFactor: 1.25,
       requireSimulation: true
+    },
+    aquarius: {
+      enabled: false,
+      allowedPools: [],
+      allowedAssets: [],
+      allowedActions: [],
+      maxNominalExposure: "0",
+      requireSlippageBounds: true
     }
   });
 
@@ -223,6 +260,14 @@ export const DEFAULT_TESTNET_POLICY: Policy = {
       maxProtocolExposureValue: "1000",
       minimumHealthFactor: 1.5,
       requireSimulation: true
+    },
+    aquarius: {
+      enabled: true,
+      allowedPools: ["*"],
+      allowedAssets: ["*"],
+      allowedActions: ["deposit", "withdraw", "swap"],
+      maxNominalExposure: "1000",
+      requireSlippageBounds: true
     }
   },
   market: {
@@ -284,6 +329,14 @@ export const DEFAULT_MAINNET_POLICY: Policy = {
       maxProtocolExposureValue: "0",
       minimumHealthFactor: 2,
       requireSimulation: true
+    },
+    aquarius: {
+      enabled: false,
+      allowedPools: [],
+      allowedAssets: [],
+      allowedActions: [],
+      maxNominalExposure: "0",
+      requireSlippageBounds: true
     }
   },
   market: {
@@ -539,6 +592,84 @@ export function evaluateDefiBlendRequest(policyInput: Policy, request: DefiBlend
 
   if (decision.status === "allowed") {
     note("policy_allowed", "Blend DeFi request is allowed by policy.");
+  }
+
+  return sanitizeDecision(policy, decision);
+}
+
+export function evaluateDefiAquariusRequest(policyInput: Policy, request: DefiAquariusPolicyRequest): PolicyDecision {
+  const policy = policySchema.parse(policyInput);
+  const decision: PolicyDecision = {
+    status: "allowed",
+    network: policy.network,
+    realFunds: policy.network === "mainnet" || request.network === "mainnet",
+    matchedRules: [],
+    reasons: []
+  };
+  const aquarius = policy.defi.aquarius;
+  const deny = (rule: string, reason: string) => {
+    decision.status = "denied";
+    decision.matchedRules.push(rule);
+    decision.reasons.push(reason);
+  };
+  const requireApproval = (rule: string, reason: string) => {
+    if (decision.status !== "denied") {
+      decision.status = "requires_approval";
+      decision.approval ??= { required: true, reason: rule };
+    }
+    decision.matchedRules.push(rule);
+    decision.reasons.push(reason);
+  };
+  const note = (rule: string, reason: string) => {
+    decision.matchedRules.push(rule);
+    decision.reasons.push(reason);
+  };
+
+  if (!aquarius.enabled) {
+    deny("defi_aquarius_disabled", "Aquarius DeFi requests are disabled by policy.");
+  } else {
+    note("defi_aquarius_enabled", "Aquarius DeFi requests are enabled by policy.");
+  }
+
+  const allowedPools = aquarius.allowedPools.map((pool) => pool.toUpperCase());
+  if (!allowedPools.includes("*") && !allowedPools.includes(request.pool.toUpperCase())) {
+    deny("defi_aquarius_pool_not_allowed", "Aquarius pool is not allowed by policy.");
+  } else {
+    note("defi_aquarius_pool_allowed", "Aquarius pool is allowed by policy.");
+  }
+
+  const allowedAssets = aquarius.allowedAssets.map((asset) => asset.toUpperCase());
+  const deniedAssets = request.assets.filter(
+    (asset) => !allowedAssets.includes("*") && !allowedAssets.includes(asset.toUpperCase())
+  );
+  if (deniedAssets.length > 0) {
+    deny("defi_aquarius_asset_not_allowed", "One or more Aquarius assets are not allowed by policy.");
+  } else {
+    note("defi_aquarius_assets_allowed", "Aquarius assets are allowed by policy.");
+  }
+
+  if (!aquarius.allowedActions.includes(request.action)) {
+    deny("defi_aquarius_action_not_allowed", `Aquarius action ${request.action} is not allowed by policy.`);
+  } else {
+    note("defi_aquarius_action_allowed", "Aquarius action is allowed by policy.");
+  }
+
+  const nominalExposure = parsePolicyNumber(request.nominalExposure ?? "0", "Aquarius nominal exposure");
+  const maxNominalExposure = parsePolicyNumber(aquarius.maxNominalExposure, "max Aquarius nominal exposure");
+  if (nominalExposure > maxNominalExposure) {
+    deny("defi_aquarius_exposure_over_limit", "Aquarius nominal exposure would exceed the policy limit.");
+  }
+
+  if (aquarius.requireSlippageBounds && request.slippageBoundsProvided === false) {
+    deny("defi_aquarius_slippage_bounds_required", "Aquarius requests require explicit slippage bounds.");
+  }
+
+  if (decision.realFunds) {
+    requireApproval("defi_aquarius_mainnet_requires_approval", "Mainnet Aquarius requests require explicit approval.");
+  }
+
+  if (decision.status === "allowed") {
+    note("policy_allowed", "Aquarius DeFi request is allowed by policy.");
   }
 
   return sanitizeDecision(policy, decision);

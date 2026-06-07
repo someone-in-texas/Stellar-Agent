@@ -87,6 +87,16 @@ stellar-agent defi blend batch \
 
 Every mutating Blend command runs preflight, evaluates DeFi policy, simulates the Soroban transaction, signs only after those checks pass, submits through RPC, and writes a receipt with public Blend metadata.
 
+## Examples
+
+Run the Blend and Aquarius DeFi Testnet examples together:
+
+```bash
+pnpm examples:defi:testnet
+```
+
+The Blend example initializes an isolated Testnet config, loads deployments, inspects the Testnet pool, and runs a supply-collateral preflight without submitting a transaction.
+
 ## Trustlines
 
 For non-native reserves, resolve the backing classic asset before funding or receiving the asset:

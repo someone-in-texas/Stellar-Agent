@@ -1,0 +1,17 @@
+name: stellar-agent-defi
+description: Use for safe Blend and Aquarius DeFi inspection, preflight, and guarded Testnet workflows.
+triggers:
+  - stellar-agent defi
+  - Blend
+  - Aquarius
+  - defi blend
+  - defi aquarius
+  - Aquarius LP
+  - Aquarius swap
+instructions:
+  - Prefer read-only inspection before DeFi preflight.
+  - Run Blend or Aquarius preflight before any protocol mutation.
+  - Treat Aquarius commands in this release as read-only or preflight-only.
+  - Never weaken defi.blend or defi.aquarius policy fields.
+  - Block Mainnet DeFi local auto-signing.
+  - Never print secret keys.

@@ -18,6 +18,7 @@ describe("codex plugin tooling", () => {
         skills: [
           { path: "skills/stellar-agent-testnet", title: "Stellar Agent Testnet" },
           { path: "skills/stellar-agent-payments", title: "Stellar Agent Payments" },
+          { path: "skills/stellar-agent-defi", title: "Stellar Agent DeFi" },
           { path: "skills/stellar-agent-market-liquidity", title: "Stellar Agent Market Liquidity" }
         ]
       }
@@ -29,6 +30,7 @@ describe("codex plugin tooling", () => {
     const root = pluginRoot;
     const testnetSkill = await readFile(join(root, "skills", "stellar-agent-testnet", "SKILL.md"), "utf8");
     const paymentsSkill = await readFile(join(root, "skills", "stellar-agent-payments", "SKILL.md"), "utf8");
+    const defiSkill = await readFile(join(root, "skills", "stellar-agent-defi", "SKILL.md"), "utf8");
     const marketSkill = await readFile(join(root, "skills", "stellar-agent-market-liquidity", "SKILL.md"), "utf8");
 
     for (const expected of ["issued-asset-payment", "contract-asset-smoke", "trustline", "claimable", "contract asset-deploy"]) {
@@ -36,6 +38,9 @@ describe("codex plugin tooling", () => {
     }
     for (const expected of ["pay x402", "pay mpp", "mpp-session", "approval create-transaction"]) {
       expect(paymentsSkill).toContain(expected);
+    }
+    for (const expected of ["defi blend preflight", "defi aquarius lp preflight", "defi.aquarius", "slippage-bps"]) {
+      expect(defiSkill).toContain(expected);
     }
     for (const expected of ["market lp preflight", "market listen price", "strategy investigate liquidity", "adapter-required"]) {
       expect(marketSkill).toContain(expected);

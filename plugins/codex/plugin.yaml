@@ -1,7 +1,8 @@
 name: stellar-agent-bridge
-version: 0.4.1
+version: 0.4.2
 description: Codex skills for safe Stellar Agent Bridge Testnet, payment, and market workflows.
 skills:
   - skills/stellar-agent-testnet
   - skills/stellar-agent-payments
+  - skills/stellar-agent-defi
   - skills/stellar-agent-market-liquidity

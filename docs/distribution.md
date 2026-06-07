@@ -18,7 +18,7 @@ The release preflight builds, lints, tests, smoke-tests, checks release metadata
 Generated artifacts:
 
 - `.release/artifacts/npm/*.tgz` for scoped npm packages.
-- `.release/artifacts/codex/stellar-agent-codex-plugin-v0.4.1.tgz` for Codex plugin installation.
+- `.release/artifacts/codex/stellar-agent-codex-plugin-v0.4.2.tgz` for Codex plugin installation.
 - `.release/artifacts/release-manifest.json` for checksums and source commit evidence.
 
 The public package set is:
@@ -72,7 +72,7 @@ Trusted publishing through GitHub Actions OIDC provides npm provenance for publi
 
 ## Versioning and Changelog
 
-- `0.4.x` means installable Testnet-first release artifacts with fee-aware transaction submission, guarded bundled payments, Blend inspection and guarded Testnet mutation, core Stellar market-liquidity inspection/preflight, market alerts, strategy investigation, and stable CLI/JSON behavior for agent integration.
+- `0.4.x` means installable Testnet-first release artifacts with fee-aware transaction submission, guarded bundled payments, Blend inspection and guarded Testnet mutation, Aquarius AMM inspection/preflight, core Stellar market-liquidity inspection/preflight, market alerts, strategy investigation, and stable CLI/JSON behavior for agent integration.
 - Patch releases fix defects, documentation, packaging, and safety checks without broad command-shape churn.
 - Breaking command, JSON envelope, policy schema, or receipt schema changes should wait for the next minor release unless they repair a safety bug.
 - `CHANGELOG.md` is the source for GitHub release notes.

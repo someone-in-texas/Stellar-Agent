@@ -33,7 +33,7 @@ Example event:
 {"schemaVersion":"stellar-agent.event.v1","event":"policy_decision","status":"allowed"}
 ```
 
-Receipts include command, profile, network, policy decision, transaction hash, ledger fields when available, and redaction metadata. Payment receipts include a `payment` block. Non-payment transaction receipts, such as trustline, claimable-balance, submitting contract operations, and submitted Blend DeFi operations, include an `operation` block with the operation type and public metadata. Blend receipt metadata should include pool, reserve, action, amount, policy/preflight summaries, and decoded event summaries when available.
+Receipts include command, profile, network, policy decision, transaction hash, ledger fields when available, and redaction metadata. Payment receipts include a `payment` block. Non-payment transaction receipts, such as trustline, claimable-balance, submitting contract operations, and submitted Blend DeFi operations, include an `operation` block with the operation type and public metadata. Blend receipt metadata should include pool, reserve, action, amount, policy/preflight summaries, and decoded event summaries when available. Aquarius commands in this release are read-only or preflight-only, so they do not write transaction receipts unless a future submitted Aquarius flow is added.
 
 Redaction:
 

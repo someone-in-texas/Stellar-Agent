@@ -10,18 +10,20 @@ The release process is still intentionally conservative: GitHub releases are aut
 - **npm package publication:** supported through the protected `Publish npm` workflow after npm trusted publishing is configured. The same generated tarballs can still be published locally with `pnpm release:publish:npm` as a recovery path.
 - **Live Testnet verification:** strongly recommended before public release tags and required before releases that advertise new payment behavior.
 
-## 0.4.1 Scope
+## 0.4.2 Scope
 
-`0.4.1` is a market-aware Testnet-first release:
+`0.4.2` is a DeFi-expanded Testnet-first release:
 
-- CLI command surface, JSON envelopes, policy checks, receipt logging, Testnet wallets, Friendbot funding, direct payments, fee-stat-aware transaction submission, bundled Testnet payments, issued assets, claimable balances, approval requests, guarded signed-XDR flows, MCP tools, local x402/MPP demos, Blend DeFi inspection and guarded Testnet mutation, core Stellar liquidity-pool inspection/preflight/Testnet mutation, market listeners, strategy investigation, cache controls, and Codex plugin validation are included.
+- CLI command surface, JSON envelopes, policy checks, receipt logging, Testnet wallets, Friendbot funding, direct payments, fee-stat-aware transaction submission, bundled Testnet payments, issued assets, claimable balances, approval requests, guarded signed-XDR flows, MCP tools, local x402/MPP demos, Blend DeFi inspection and guarded Testnet mutation, Aquarius AMM inspection and policy-gated preflight, core Stellar liquidity-pool inspection/preflight/Testnet mutation, market listeners, strategy investigation, cache controls, and Codex plugin validation are included.
 - Mainnet local auto-signing remains blocked.
 - Raw Mainnet secret-key storage remains blocked.
 - Mainnet usage is limited to guarded externally signed XDR or explicitly acknowledged contract operations.
 - Mainnet batch auto-signing remains blocked.
 - Mainnet Blend DeFi mutation remains blocked until an external signer flow exists.
+- Mainnet Aquarius AMM mutation remains blocked until an external signer flow exists.
 - Mainnet liquidity-pool mutation remains blocked until an external signer flow exists.
 - Generic Soroban AMM mutation remains adapter-required until a protocol-specific adapter exists.
+- Aquarius commands in this release are read-only or preflight-only and do not sign or submit transactions.
 - Production facilitator-backed x402/MPP support remains future work.
 
 ## Preconditions
@@ -45,6 +47,10 @@ Before starting a release:
   - core Stellar liquidity mutation runs policy before submission
   - Mainnet liquidity mutation cannot auto-sign locally
   - Soroban AMM mutation reports `adapter_required` without a protocol adapter
+- DeFi boundaries remain intact:
+  - Blend Testnet mutation runs preflight, policy, simulation, and receipt logging before/after submission
+  - Aquarius AMM commands remain read-only or preflight-only
+  - Mainnet DeFi mutation cannot auto-sign locally
 - Codex plugin guidance is current:
   - every release headline workflow is represented in a bundled `SKILL.md` or documented as intentionally out of scope
   - `plugins/codex/plugin.yaml`, `plugins/codex/README.md`, and `docs/codex-plugin.md` describe the same skill set
@@ -98,13 +104,21 @@ LIVE_STELLAR_TESTNET=1 pnpm verify:live:testnet
 
 The live verifier creates temporary Testnet accounts and submits real Testnet transactions. Run it before releases that change payment, receipt, policy, wallet, contract, DeFi, market liquidity, or approval behavior.
 
+For non-mutating live DeFi examples that exercise current Testnet Blend and Aquarius endpoints, run:
+
+```bash
+pnpm examples:defi:testnet
+```
+
+The examples use isolated temp configs. The Blend example runs deployment and preflight checks; the Aquarius example loads deployments and pools, inspects pool/account/reward metadata, and preflights LP and swap requests without signing or submission.
+
 ## Generated Artifacts
 
 `pnpm release:pack` writes artifacts under `.release/artifacts/`:
 
 ```text
 .release/artifacts/npm/*.tgz
-.release/artifacts/codex/stellar-agent-codex-plugin-v0.4.1.tgz
+.release/artifacts/codex/stellar-agent-codex-plugin-v0.4.2.tgz
 .release/artifacts/release-manifest.json
 ```
 
@@ -122,7 +136,7 @@ Release packaging:
 2. `pnpm smoke` validates the bundled plugin.
 3. `pnpm release:pack` copies `plugins/codex` into a release staging directory.
 4. `stellar-agent-codex-plugin manifest` writes `plugin-manifest.json` into the staged plugin.
-5. The staged plugin is archived as `stellar-agent-codex-plugin-v0.4.1.tgz`.
+5. The staged plugin is archived as `stellar-agent-codex-plugin-v0.4.2.tgz`.
 6. `pnpm release:verify-artifacts` extracts that archive and validates it through the installed `stellar-agent-codex-plugin` binary from the packed npm artifact.
 
 This keeps Codex plugin packaging aligned with GitHub releases: the GitHub release contains the npm package that validates plugin manifests and the matching plugin artifact that Codex can install.
@@ -132,8 +146,8 @@ This keeps Codex plugin packaging aligned with GitHub releases: the GitHub relea
 Create and verify the tag locally:
 
 ```bash
-git tag -a v0.4.1 -m "Stellar Agent v0.4.1"
-git push origin v0.4.1
+git tag -a v0.4.2 -m "Stellar Agent v0.4.2"
+git push origin v0.4.2
 ```
 
 The `Release` workflow runs on `v*` tags. It runs `pnpm release:preflight`, uploads generated artifacts, creates the GitHub release, and queues the protected `Publish npm` workflow from:
@@ -152,11 +166,11 @@ Manual local fallback:
 
 ```bash
 pnpm release:preflight
-gh release create v0.4.1 \
+gh release create v0.4.2 \
   .release/artifacts/npm/*.tgz \
   .release/artifacts/codex/*.tgz \
   .release/artifacts/release-manifest.json \
-  --title "Stellar Agent v0.4.1" \
+  --title "Stellar Agent v0.4.2" \
   --notes-file .release/github-release-notes.md \
   --verify-tag
 ```

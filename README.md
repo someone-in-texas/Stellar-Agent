@@ -1,12 +1,12 @@
 Build payment-capable agents on Stellar without giving them a blank check.
 
-`stellar-agent` gives agents a Testnet-first wallet, policy engine, receipt trail, and guarded contract/DeFi/market toolkit. Use it to prototype paid APIs, MPP sessions, issued-asset payments, Blend preflights, core liquidity-pool monitoring, and approval-gated transactions while Mainnet stays locked behind explicit human signing.
+`stellar-agent` gives agents a Testnet-first wallet, policy engine, receipt trail, and guarded contract/DeFi/market toolkit. Use it to prototype paid APIs, MPP sessions, issued-asset payments, Blend and Aquarius preflights, core liquidity-pool monitoring, and approval-gated transactions while Mainnet stays locked behind explicit human signing.
 
 [![CI](https://github.com/someone-in-texas/Stellar-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/someone-in-texas/Stellar-Agent/actions/workflows/ci.yml)
 
 ## Status
 
-This repository is a `0.4.1` Testnet-first release. Core primitives, policy evaluation, local receipt logging, Testnet wallet creation, Friendbot funding, fee-aware Testnet payment submission, bundled Testnet payments, issued-asset trustlines, claimable balances, local approval bridge requests, local x402-style and MPP Testnet demos, Blend DeFi inspection and guarded Testnet mutation, core Stellar liquidity-pool inspection/preflight/Testnet mutation, market listeners, strategy investigation, MCP tools, Codex plugin packaging, cache controls, and the CLI command surface are present. Mainnet local auto-signing remains blocked; guarded Mainnet submission is limited to externally signed XDR and explicitly acknowledged real-funds contract operations.
+This repository is a `0.4.2` Testnet-first release. Core primitives, policy evaluation, local receipt logging, Testnet wallet creation, Friendbot funding, fee-aware Testnet payment submission, bundled Testnet payments, issued-asset trustlines, claimable balances, local approval bridge requests, local x402-style and MPP Testnet demos, Blend DeFi inspection and guarded Testnet mutation, Aquarius AMM inspection and policy-gated preflight, core Stellar liquidity-pool inspection/preflight/Testnet mutation, market listeners, strategy investigation, MCP tools, Codex plugin packaging, cache controls, and the CLI command surface are present. Mainnet local auto-signing remains blocked; guarded Mainnet submission is limited to externally signed XDR and explicitly acknowledged real-funds contract operations.
 
 ## Safety First
 
@@ -86,6 +86,11 @@ stellar-agent defi blend pool inspect --pool TestnetV2 --json
 stellar-agent defi blend preflight --pool TestnetV2 --account agent --request supply_collateral:USDC:1 --json
 stellar-agent defi blend trustline guide --asset USDC --account agent --json
 stellar-agent defi blend supply --pool TestnetV2 --source agent --asset XLM --amount 1 --collateral --json
+stellar-agent defi aquarius deployments --network testnet --pools --limit 10 --json
+stellar-agent defi aquarius pool inspect --pool XLM --network testnet --json
+stellar-agent defi aquarius lp preflight --pool XLM --action deposit --amount 0.01 --amount 10 --min-shares 0.0000001 --json
+stellar-agent defi aquarius swap quote --from XLM --to AQUA --amount 0.01 --json
+stellar-agent defi aquarius swap preflight --from XLM --to AQUA --amount 0.01 --slippage-bps 100 --json
 stellar-agent contract upload --source agent --wasm ./contract.wasm --json
 stellar-agent contract deploy --source agent --wasm ./contract.wasm --json
 stellar-agent contract asset-deploy --source agent --asset native --json
@@ -104,10 +109,10 @@ Agents should call the CLI with `--json`, parse the standard envelope, and stop 
 
 ## Release Artifacts
 
-`v0.4.1` GitHub releases contain:
+`v0.4.2` GitHub releases contain:
 
 - npm tarballs for the scoped `@stellar-agent/*` packages.
-- `stellar-agent-codex-plugin-v0.4.1.tgz` for the bundled Codex plugin.
+- `stellar-agent-codex-plugin-v0.4.2.tgz` for the bundled Codex plugin.
 - `release-manifest.json` with artifact SHA-256 checksums and source commit metadata.
 
 The generated tarballs are verified by `pnpm release:preflight` through a fresh temporary install before release.
@@ -119,6 +124,7 @@ The project is CLI-first with shared packages underneath:
 - `@stellar-agent/core` for types, amounts, errors, config, and redaction.
 - `@stellar-agent/policy` for policy schema and deterministic decisions.
 - `@stellar-agent/stellar` for Friendbot, Horizon, wallets, and Testnet payments.
+- DeFi helpers for Blend lending workflows and Aquarius AMM inspection/preflight.
 - Core Stellar AMM helpers for read-only pool inspection, LP preflight, and guarded Testnet pool operations.
 - `@stellar-agent/freighter-bridge` for local approval request storage and HTTP bridge APIs.
 - Stellar CLI integration for Soroban contract invocation when `stellar` is installed.
@@ -137,7 +143,7 @@ Mainnet uses real funds. It is disabled by default, requires explicit enablement
 1. Production facilitator-backed x402/MPP support.
 2. Trusted-publishing automation hardening for future npm releases.
 3. Broader Mainnet approval UX hardening without local Mainnet secret custody.
-4. Protocol-specific Soroban AMM adapters after stable interfaces, policy controls, simulation, and external-signer flows are documented.
+4. Submitted Aquarius transaction flows after stable simulation, receipt, and external-signer contracts are documented.
 
 ## Contributing
 

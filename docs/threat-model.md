@@ -36,6 +36,7 @@
 - Log privacy leaks: URL query params are redacted by default.
 - Mainnet/Testnet confusion: Mainnet is disabled and marked `realFunds: true`; Mainnet signed-XDR submission and contract operations require explicit real-funds flags and refuse local Testnet wallet secrets.
 - DeFi leverage risk: Blend borrow and protocol exposure are governed by explicit policy limits, minimum health-factor checks, and preflight simulation requirements.
+- Aquarius AMM route risk: Aquarius API responses, pool metadata, swap routes, and swap-chain XDR are untrusted inputs; policy gates allowed pools, assets, actions, nominal exposure, slippage bounds, and Mainnet approval before any future submitted action.
 - Liquidity-pool loss risk: core liquidity-pool deposits are governed by explicit pool, asset, action, exposure, and price-bound policy controls; estimates are marked as non-guaranteed snapshots.
 - Market listener staleness: listener output is an alert event, not execution approval, and commands must re-run preflight before mutation.
 - Asset issuer and trustline risk: liquidity preflight reports reserve assets and missing trustlines so agents do not silently deposit into unfamiliar issued-asset pools.

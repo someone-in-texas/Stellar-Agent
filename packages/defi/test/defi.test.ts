@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  aquariusDeployment,
   blendDeployment,
   blendHealthFactor,
+  fetchAquariusPools,
   fetchBlendDeployment,
+  inspectAquariusPool,
+  preflightAquariusLp,
+  preflightAquariusSwap,
   parseBlendRequest,
   resolveBlendAsset,
-  resolveBlendPool
+  resolveBlendPool,
+  quoteAquariusSwap
 } from "../src/index.js";
 
 describe("Blend deployment helpers", () => {
@@ -67,5 +73,141 @@ describe("Blend preflight helpers", () => {
   it("computes health factor from effective collateral and liabilities", () => {
     expect(blendHealthFactor({ totalEffectiveCollateral: 3, totalEffectiveLiabilities: 2 })).toBe(1.5);
     expect(blendHealthFactor({ totalEffectiveCollateral: 3, totalEffectiveLiabilities: 0 })).toBeNull();
+  });
+});
+
+describe("Aquarius helpers", () => {
+  it("loads Testnet deployment constants", () => {
+    const deployment = aquariusDeployment("testnet");
+    expect(deployment.routerContractId).toBe("CBCFTQSPDBAIZ6R6PJQKSQWKNKWH2QIV3I4J72SHWBIK3ADRRAM5A6GD");
+    expect(deployment.apiBaseUrl).toContain("amm-api-testnet");
+    expect(deployment.assets).toEqual(expect.arrayContaining([expect.objectContaining({ symbol: "AQUA" })]));
+  });
+
+  it("maps Aquarius API pools into stable summaries", async () => {
+    const fetchImpl = async () =>
+      new Response(
+        JSON.stringify({
+          count: 1,
+          results: [
+            {
+              index: "pool-hash",
+              address: "CPOOL",
+              tokens_addresses: ["CXLM", "CAQUA"],
+              tokens_str: ["native", "AQUA:GISSUER"],
+              pool_type: "constant_product",
+              fee: "0.0030",
+              tx_count: 4,
+              total_volume: 12
+            }
+          ]
+        })
+      );
+    const pools = await fetchAquariusPools({ network: "testnet", fetchImpl: fetchImpl as typeof fetch });
+    expect(pools.pools[0]).toMatchObject({
+      index: "pool-hash",
+      address: "CPOOL",
+      tokens: ["native", "AQUA:GISSUER"],
+      tokenAddresses: ["CXLM", "CAQUA"],
+      poolType: "constant_product",
+      fee: "0.0030"
+    });
+  });
+
+  it("resolves Aquarius pool search terms to the first API match", async () => {
+    const fetchImpl = async () =>
+      new Response(
+        JSON.stringify({
+          results: [
+            {
+              index: "pool-hash",
+              address: "CPOOL",
+              tokens_addresses: ["CXLM", "CAQUA"],
+              tokens_str: ["native", "AQUA:GISSUER"],
+              pool_type: "constant_product",
+              fee: "0.0030"
+            }
+          ]
+        })
+      );
+    const inspected = await inspectAquariusPool({ network: "testnet", pool: "XLM", fetchImpl: fetchImpl as typeof fetch });
+    expect(inspected.pool.address).toBe("CPOOL");
+  });
+
+  it("preflights Aquarius LP deposits without signing or submitting", async () => {
+    const fetchImpl = async () =>
+      new Response(
+        JSON.stringify({
+          results: [
+            {
+              index: "pool-hash",
+              address: "CPOOL",
+              tokens_addresses: ["CXLM", "CAQUA"],
+              tokens_str: ["native", "AQUA:GISSUER"],
+              pool_type: "constant_product",
+              fee: "0.0030"
+            }
+          ]
+        })
+      );
+    const preflight = await preflightAquariusLp({
+      network: "testnet",
+      pool: "CPOOL",
+      account: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      action: "deposit",
+      desiredAmounts: ["0.1", "25"],
+      minShares: "0.0000001",
+      fetchImpl: fetchImpl as typeof fetch
+    });
+    expect(preflight).toMatchObject({
+      action: "deposit",
+      submitted: false,
+      signing: false,
+      slippageBoundsProvided: true,
+      nominalExposure: "25.1"
+    });
+  });
+
+  it("quotes and preflights Aquarius swaps from API routes", async () => {
+    const fetchImpl = async () =>
+      new Response(
+        JSON.stringify({
+          success: true,
+          amount: 57842595,
+          amount_with_fee: 57842595,
+          swap_chain_xdr: "AAAA",
+          pools: ["CPOOL"],
+          tokens: ["native", "AQUA:GISSUER"],
+          tokens_addresses: [
+            "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+            "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"
+          ]
+        })
+      );
+    const quote = await quoteAquariusSwap({
+      network: "testnet",
+      tokenIn: "XLM",
+      tokenOut: "AQUA",
+      amount: "0.01",
+      mode: "strict_send",
+      fetchImpl: fetchImpl as typeof fetch
+    });
+    expect(quote).toMatchObject({ success: true, amount: "57842595", pools: ["CPOOL"] });
+
+    const preflight = await preflightAquariusSwap({
+      network: "testnet",
+      tokenIn: "XLM",
+      tokenOut: "AQUA",
+      amount: "0.01",
+      mode: "strict_send",
+      slippageBps: 100,
+      fetchImpl: fetchImpl as typeof fetch
+    });
+    expect(preflight).toMatchObject({
+      submitted: false,
+      signing: false,
+      slippageBoundsProvided: true,
+      policyAction: "swap"
+    });
   });
 });

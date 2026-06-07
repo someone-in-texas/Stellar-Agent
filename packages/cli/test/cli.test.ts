@@ -387,6 +387,21 @@ describe("CLI DeFi commands", () => {
       }
     });
   });
+
+  it("prints known Aquarius deployments without network access", async () => {
+    const output = await runCli(["--json", "defi", "aquarius", "deployments", "--network", "testnet"]);
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        network: "testnet",
+        routerContractId: "CBCFTQSPDBAIZ6R6PJQKSQWKNKWH2QIV3I4J72SHWBIK3ADRRAM5A6GD",
+        apiBaseUrl: expect.stringContaining("amm-api-testnet"),
+        assets: expect.arrayContaining([
+          expect.objectContaining({ symbol: "AQUA", classicAsset: expect.stringContaining("AQUA:G") })
+        ])
+      }
+    });
+  });
 });
 
 describe("CLI market liquidity commands", () => {

@@ -117,6 +117,14 @@ stellar-agent tx submit-approval appr_...
 
 ## Live Verification
 
+Run non-mutating DeFi examples against current Testnet Blend and Aquarius endpoints:
+
+```bash
+pnpm examples:defi:testnet
+```
+
+The examples use isolated temp configs. Blend runs deployment and preflight checks. Aquarius loads deployments and pools, inspects pool/account/reward metadata, and preflights LP and swap requests without signing or submitting transactions.
+
 The broad live verifier is opt-in because it creates Testnet accounts and submits multiple Testnet transactions:
 
 ```bash

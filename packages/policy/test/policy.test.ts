@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_MAINNET_POLICY,
   DEFAULT_TESTNET_POLICY,
+  evaluateDefiAquariusRequest,
   evaluateDefiBlendRequest,
   evaluateMarketLiquidityRequest,
   evaluatePaymentRequest,
@@ -221,6 +222,75 @@ describe("policy evaluation", () => {
     expect(decision.status).toBe("denied");
     expect(decision.matchedRules).toContain("defi_blend_disabled");
     expect(decision.matchedRules).toContain("defi_blend_mainnet_requires_approval");
+  });
+
+  it("allows default Testnet Aquarius preflight only with slippage bounds", () => {
+    const allowed = evaluateDefiAquariusRequest(DEFAULT_TESTNET_POLICY, {
+      network: "testnet",
+      pool: "CPOOL",
+      assets: ["XLM", "AQUA"],
+      action: "swap",
+      nominalExposure: "1",
+      slippageBoundsProvided: true
+    });
+    expect(allowed.status).toBe("allowed");
+    expect(allowed.matchedRules).toContain("defi_aquarius_action_allowed");
+    expect(allowed.matchedRules).toContain("policy_allowed");
+
+    const denied = evaluateDefiAquariusRequest(DEFAULT_TESTNET_POLICY, {
+      network: "testnet",
+      pool: "CPOOL",
+      assets: ["XLM", "AQUA"],
+      action: "swap",
+      nominalExposure: "1",
+      slippageBoundsProvided: false
+    });
+    expect(denied.status).toBe("denied");
+    expect(denied.matchedRules).toContain("defi_aquarius_slippage_bounds_required");
+  });
+
+  it("enforces Aquarius allowed pools, assets, actions, and exposure", () => {
+    const policy = {
+      ...DEFAULT_TESTNET_POLICY,
+      defi: {
+        ...DEFAULT_TESTNET_POLICY.defi,
+        aquarius: {
+          ...DEFAULT_TESTNET_POLICY.defi.aquarius,
+          allowedPools: ["CALLOWEDPOOL"],
+          allowedAssets: ["XLM"],
+          allowedActions: ["withdraw" as const],
+          maxNominalExposure: "10"
+        }
+      }
+    };
+    const decision = evaluateDefiAquariusRequest(policy, {
+      network: "testnet",
+      pool: "CDENIEDPOOL",
+      assets: ["XLM", "AQUA"],
+      action: "deposit",
+      nominalExposure: "11",
+      slippageBoundsProvided: true
+    });
+    expect(decision.status).toBe("denied");
+    expect(decision.matchedRules).toContain("defi_aquarius_pool_not_allowed");
+    expect(decision.matchedRules).toContain("defi_aquarius_asset_not_allowed");
+    expect(decision.matchedRules).toContain("defi_aquarius_action_not_allowed");
+    expect(decision.matchedRules).toContain("defi_aquarius_exposure_over_limit");
+  });
+
+  it("keeps Mainnet Aquarius disabled and approval-gated by default", () => {
+    const decision = evaluateDefiAquariusRequest(DEFAULT_MAINNET_POLICY, {
+      network: "mainnet",
+      pool: "CPOOL",
+      assets: ["XLM", "AQUA"],
+      action: "deposit",
+      nominalExposure: "1",
+      slippageBoundsProvided: true
+    });
+    expect(decision.realFunds).toBe(true);
+    expect(decision.status).toBe("denied");
+    expect(decision.matchedRules).toContain("defi_aquarius_disabled");
+    expect(decision.matchedRules).toContain("defi_aquarius_mainnet_requires_approval");
   });
 
   it("allows default Testnet core liquidity deposits and withdrawals within policy", () => {
