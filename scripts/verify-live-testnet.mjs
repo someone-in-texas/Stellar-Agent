@@ -261,6 +261,73 @@ try {
     receipt: blendBatchReceipt
   });
 
+  const marketPools = runCli(["market", "pools", "list", "--limit", "50"]);
+  const marketPool = firstUsableMarketPool(marketPools.data.records ?? []);
+  if (!marketPool) {
+    throw new Error(`No usable Testnet core liquidity pool was returned for market verification: ${JSON.stringify(marketPools.data)}`);
+  }
+  const marketPoolId = marketPool.id;
+  const marketInspect = runCli(["market", "pool", "inspect", "--pool", marketPoolId]);
+  const marketPrice = poolReservePrice(marketInspect.data);
+  const minMarketPrice = formatMarketPrice(marketPrice * 0.5);
+  const maxMarketPrice = formatMarketPrice(marketPrice * 1.5);
+  const marketPreflight = runCli([
+    "market",
+    "lp",
+    "preflight",
+    "--pool",
+    marketPoolId,
+    "--account",
+    "agent",
+    "--max-a",
+    "0.0000001",
+    "--max-b",
+    "0.0000001",
+    "--min-price",
+    minMarketPrice,
+    "--max-price",
+    maxMarketPrice
+  ]);
+  if (marketPreflight.data.preflight?.pool?.id !== marketPoolId) {
+    throw new Error(`Market LP preflight returned the wrong pool: ${JSON.stringify(marketPreflight.data)}`);
+  }
+  if (marketPreflight.data.policyDecision?.status !== "allowed") {
+    throw new Error(`Market LP preflight policy was not allowed: ${JSON.stringify(marketPreflight.data.policyDecision)}`);
+  }
+  const marketTrades = runCli(["market", "pool", "trades", "--pool", marketPoolId, "--limit", "3"]);
+  const marketPosition = runCli(["market", "pool", "position", "--account", "agent", "--pool", marketPoolId]);
+  const marketListener = runCli(["market", "listen", "price", "--pool", marketPoolId, "--below", maxMarketPrice]);
+  const marketInvestigation = runCli([
+    "strategy",
+    "investigate",
+    "liquidity",
+    "--pool",
+    marketPoolId,
+    "--limit",
+    "3"
+  ]);
+  step("market.core.read-preflight", {
+    poolId: marketPoolId,
+    assets: marketInspect.data.reserves?.map((reserve) => reserve.asset),
+    currentPrice: formatMarketPrice(marketPrice),
+    priceBounds: { min: minMarketPrice, max: maxMarketPrice },
+    preflight: {
+      policyDecision: marketPreflight.data.policyDecision,
+      nominalExposure: marketPreflight.data.preflight.nominalExposure,
+      trustlines: marketPreflight.data.preflight.trustlines
+    },
+    trades: marketTrades.data.records?.length ?? 0,
+    positionCount: marketPosition.data.positions?.length ?? 0,
+    listener: {
+      triggered: marketListener.data.triggered,
+      events: marketListener.data.events?.length ?? 0
+    },
+    investigation: {
+      submitted: marketInvestigation.data.execution?.submitted,
+      mutationSupported: marketInvestigation.data.execution?.mutationSupported
+    }
+  });
+
   const issuedClaimableCreate = runCli([
     "claimable",
     "create",
@@ -732,6 +799,29 @@ async function allowPolicyAsset(asset) {
   policy.assets.allow = Array.from(new Set([...(policy.assets.allow ?? []), asset]));
   await writeFile(policyPath, stringifyYaml(policy), { mode: 0o600 });
   step("policy.allow-issued-asset", { asset, policyPath });
+}
+
+function firstUsableMarketPool(records) {
+  return records.find((pool) => {
+    if (!pool?.id || !Array.isArray(pool.reserves) || pool.reserves.length !== 2) return false;
+    const [reserveA, reserveB] = pool.reserves;
+    return Number(reserveA?.amount) > 0 && Number(reserveB?.amount) > 0;
+  });
+}
+
+function poolReservePrice(pool) {
+  const [reserveA, reserveB] = pool.reserves ?? [];
+  const reserveAValue = Number(reserveA?.amount);
+  const reserveBValue = Number(reserveB?.amount);
+  if (!Number.isFinite(reserveAValue) || !Number.isFinite(reserveBValue) || reserveAValue <= 0 || reserveBValue <= 0) {
+    throw new Error(`Market pool reserves did not contain a usable price: ${JSON.stringify(pool)}`);
+  }
+  return reserveBValue / reserveAValue;
+}
+
+function formatMarketPrice(value) {
+  if (!Number.isFinite(value) || value <= 0) throw new Error(`Market price must be positive: ${value}`);
+  return value.toFixed(7);
 }
 
 function startPaidApiDemoChild(recipient) {
