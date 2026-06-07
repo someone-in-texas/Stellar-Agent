@@ -5,9 +5,11 @@ import { readJson, releaseManifestPath, rootDir, run } from "./release-utils.mjs
 const args = process.argv.slice(2);
 const dryRun = args.includes("--dry-run");
 const skipExisting = !args.includes("--no-skip-existing");
+const skipAuthCheck = args.includes("--skip-auth-check");
 const provenance = args.includes("--provenance");
 const tag = readOption("--tag") ?? "latest";
 const otp = readOption("--otp");
+const packageFilter = readOption("--package");
 
 const passthroughArgs = ["--access", "public", "--tag", tag];
 if (dryRun) passthroughArgs.push("--dry-run");
@@ -16,7 +18,7 @@ if (otp) passthroughArgs.push("--otp", otp);
 
 const manifest = await readJson(releaseManifestPath);
 
-if (!dryRun) {
+if (!dryRun && !skipAuthCheck) {
   const whoami = run("npm", ["whoami"], { allowFailure: true });
   if (whoami.status !== 0) {
     process.stderr.write(
@@ -32,7 +34,12 @@ if (!dryRun) {
   }
 }
 
-for (const pkg of manifest.npmPackages) {
+const packages = packageFilter ? manifest.npmPackages.filter((pkg) => pkg.name === packageFilter) : manifest.npmPackages;
+if (packageFilter && packages.length === 0) {
+  throw new Error(`Package ${packageFilter} was not found in ${releaseManifestPath}.`);
+}
+
+for (const pkg of packages) {
   const tarball = resolve(rootDir, pkg.tarball);
   if (!existsSync(tarball)) {
     throw new Error(`Missing npm tarball for ${pkg.name}: ${pkg.tarball}`);

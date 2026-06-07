@@ -1,0 +1,67 @@
+name: Publish npm
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish, for example v0.5.0"
+        required: true
+        default: "v0.4.0"
+      dry_run:
+        description: "Run npm publish dry-run only"
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  npm-publish:
+    runs-on: ubuntu-latest
+    environment: npm-production
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: corepack enable
+      - run: corepack prepare pnpm@9.15.4 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm release:preflight
+      - name: Publish npm packages
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            pnpm release:publish:npm:dry-run
+          else
+            pnpm release:publish:npm -- --skip-auth-check
+          fi
+      - name: Verify published npm versions
+        if: env.DRY_RUN != 'true'
+        run: |
+          node - <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const { execFileSync } = require("node:child_process");
+          const manifest = JSON.parse(readFileSync(".release/artifacts/release-manifest.json", "utf8"));
+          for (const pkg of manifest.npmPackages) {
+            const version = execFileSync("npm", ["view", `${pkg.name}@${pkg.version}`, "version", "--json"], {
+              encoding: "utf8"
+            }).trim();
+            if (JSON.parse(version) !== pkg.version) {
+              throw new Error(`${pkg.name}@${pkg.version} was not visible on npm after publish.`);
+            }
+            console.log(`${pkg.name}@${pkg.version} is visible on npm.`);
+          }
+          NODE

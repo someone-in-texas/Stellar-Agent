@@ -26,7 +26,7 @@ await writeFile(
     "",
     "## Boundaries",
     "",
-    "- npm publication is prepared but remains a separate manual provenance-backed step.",
+    "- npm publication is handled by the separate protected `Publish npm` workflow.",
     "- Testnet remains the default.",
     "- Mainnet local auto-signing and Mainnet secret-key storage remain blocked.",
     ""

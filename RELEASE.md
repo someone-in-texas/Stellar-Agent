@@ -2,12 +2,12 @@
 
 This repository supports verified GitHub releases with source, npm package tarballs, and a bundled Codex plugin artifact.
 
-The release process is still intentionally conservative: GitHub releases are automated around verified artifacts, while npm publication remains a separate manual step until the maintainer confirms npm org/package access. Provenance-backed npm publication should use npm trusted publishing from a supported CI runner.
+The release process is still intentionally conservative: GitHub releases are automated around verified artifacts, while npm publication runs from a separate protected workflow after npm org/package access is configured.
 
 ## Release Types
 
 - **GitHub release:** supported for `v0.1.0` and later. It includes npm tarballs for every publishable `@stellar-agent/*` package, the Codex plugin tarball, generated release notes, and `release-manifest.json` with SHA-256 checksums.
-- **npm package publication:** prepared but manual. Publish the same verified tarballs with `pnpm release:publish:npm` only after npm scope ownership and package access are confirmed.
+- **npm package publication:** supported through the protected `Publish npm` workflow after npm trusted publishing is configured. The same generated tarballs can still be published locally with `pnpm release:publish:npm` as a recovery path.
 - **Live Testnet verification:** strongly recommended before public release tags and required before releases that advertise new payment behavior.
 
 ## 0.4.0 Scope
@@ -162,9 +162,45 @@ If the tag or release already exists and points at different history, stop and i
 
 ## npm Publication
 
-npm publication is intentionally separate from GitHub release creation.
+npm publication is intentionally separate from GitHub release creation. The preferred path is the protected `Publish npm` workflow, which uses npm trusted publishing through GitHub Actions OIDC and does not require a long-lived npm token.
 
-After a GitHub release has passed, publish only from the generated tarballs.
+Before enabling trusted publishing:
+
+1. Create the GitHub environment `npm-production`.
+2. Add yourself as a required reviewer for that environment.
+3. Confirm every package already exists on npm and is public:
+
+```bash
+npm access list packages @stellar-agent --json
+npm view @stellar-agent/cli version
+```
+
+Configure npm trusted publishing for every package:
+
+```bash
+pnpm release:trust:npm:dry-run
+pnpm release:trust:npm
+```
+
+The trust helper configures each package for:
+
+```text
+repo: someone-in-texas/Stellar-Agent
+workflow file: npm-publish.yml
+environment: npm-production
+allowed action: npm publish
+```
+
+You can configure or inspect one package at a time:
+
+```bash
+pnpm release:trust:npm:dry-run -- --package @stellar-agent/cli
+npm trust list @stellar-agent/cli
+```
+
+After trusted publishing is configured, publish future npm releases by approving the `Publish npm` workflow run triggered from a published GitHub release, or run it manually with a release tag.
+
+The local recovery path still publishes only from generated tarballs.
 
 Dry-run the publish first:
 
@@ -203,7 +239,7 @@ pnpm release:publish:npm -- --otp 123456
 
 Do not publish npm packages until the maintainer has confirmed access to the `@stellar-agent` scope and reviewed `release-manifest.json`.
 
-For provenance-backed publication, configure npm trusted publishing for each package and publish from a GitHub Actions workflow with `id-token: write`. npm trusted publishing automatically generates provenance attestations for public packages from supported CI runners, so local token-backed publishing should be treated as a first manual publication path, not the long-term preferred path.
+Trusted publishing automatically generates provenance attestations for public packages from supported CI runners. Local token-backed publishing does not provide npm provenance and should be treated as a recovery path.
 
 ## Commit Guidance
 
@@ -231,7 +267,7 @@ After pushing:
 2. Push the release tag or run the `Release` workflow manually with `create_github_release=true`.
 3. For important payment-flow milestones, run the `Live Testnet Smoke` workflow manually.
 
-The `Release` workflow creates GitHub releases and artifacts only. It does not publish npm packages.
+The `Release` workflow creates GitHub releases and artifacts only. The separate `Publish npm` workflow handles npm publication after environment approval.
 
 ## Release Notes Template
 
@@ -249,7 +285,7 @@ The `Release` workflow creates GitHub releases and artifacts only. It does not p
 
 ## Known Boundaries
 
-- npm publishing is prepared but not automatic.
+- npm publishing is handled by the separate protected `Publish npm` workflow after environment approval.
 - Production facilitator-backed x402/MPP is future work.
 - Mainnet local auto-signing and Mainnet secret-key storage are intentionally blocked.
 ```

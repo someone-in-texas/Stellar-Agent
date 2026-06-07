@@ -47,4 +47,4 @@ jobs:
             --notes-file .release/github-release-notes.md \
             --target "$GITHUB_SHA" \
             --verify-tag
-      - run: echo "npm publishing remains a separate manual provenance-backed step."
+      - run: echo "npm publishing is handled by the separate protected Publish npm workflow."

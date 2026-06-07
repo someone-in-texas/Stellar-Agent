@@ -10,7 +10,7 @@ pnpm cli -- testnet smoke-test
 pnpm cli -- receipts latest
 ```
 
-GitHub releases include verified package tarballs, but npm publication remains a separate manual provenance-backed step. See `docs/distribution.md` for the release and install-artifact policy.
+GitHub releases include verified package tarballs, and npm publication is handled by the protected trusted-publishing workflow. See `docs/distribution.md` for the release and install-artifact policy.
 
 Expected shape:
 

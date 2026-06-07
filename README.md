@@ -19,7 +19,7 @@ This repository is a `0.4.0` Testnet-first release. Core primitives, policy eval
 
 ## 10-Minute Quickstart
 
-GitHub releases include verified npm package tarballs and a matching Codex plugin artifact. npm publication remains a separate manual provenance-backed step, so the local checkout workflow is still the default install path:
+GitHub releases include verified npm package tarballs and a matching Codex plugin artifact. npm publication is handled by the protected trusted-publishing workflow, and the local checkout workflow remains the most direct way to try unreleased changes:
 
 ```bash
 pnpm install

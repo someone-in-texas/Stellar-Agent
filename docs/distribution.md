@@ -42,7 +42,16 @@ The unscoped root package remains private and is not the CLI package. Users shou
 
 ## npm Publication
 
-npm publication is prepared but manual. Publish only the generated tarballs after confirming npm scope ownership and package access:
+npm publication should use the protected `Publish npm` GitHub Actions workflow after npm trusted publishing is configured for the package set.
+
+Configure trusted publishing:
+
+```bash
+pnpm release:trust:npm:dry-run
+pnpm release:trust:npm
+```
+
+Publish locally only as a recovery path, and only from generated tarballs:
 
 ```bash
 pnpm release:publish:npm:dry-run
@@ -51,7 +60,7 @@ pnpm release:publish:npm
 
 Do not publish from package source directories. The generated tarballs are the tested artifacts.
 
-Local token-backed publishing does not provide npm provenance. For provenance-backed publication, configure npm trusted publishing for each package and publish from a supported CI workflow with OIDC.
+Trusted publishing through GitHub Actions OIDC provides npm provenance for public packages. Local token-backed publishing does not provide npm provenance.
 
 ## Versioning and Changelog
 
