@@ -42,7 +42,7 @@ The unscoped root package remains private and is not the CLI package. Users shou
 
 ## npm Publication
 
-npm publication should use the protected `Publish npm` GitHub Actions workflow after npm trusted publishing is configured for the package set.
+npm publication uses the protected `Publish npm` GitHub Actions workflow after npm trusted publishing is configured for the package set. The `Release` workflow queues `Publish npm` automatically after the GitHub release is created; a maintainer approves the `npm-production` environment before packages are published.
 
 Configure trusted publishing:
 

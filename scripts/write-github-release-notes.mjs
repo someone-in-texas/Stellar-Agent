@@ -26,7 +26,7 @@ await writeFile(
     "",
     "## Boundaries",
     "",
-    "- npm publication is handled by the separate protected `Publish npm` workflow.",
+    "- npm publication is queued through the separate protected `Publish npm` workflow and requires `npm-production` approval.",
     "- Testnet remains the default.",
     "- Mainnet local auto-signing and Mainnet secret-key storage remain blocked.",
     ""

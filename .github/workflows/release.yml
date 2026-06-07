@@ -17,6 +17,7 @@ on:
       - "v*"
 
 permissions:
+  actions: write
   contents: write
 
 jobs:
@@ -47,4 +48,14 @@ jobs:
             --notes-file .release/github-release-notes.md \
             --target "$GITHUB_SHA" \
             --verify-tag
-      - run: echo "npm publishing is handled by the separate protected Publish npm workflow."
+      - name: Queue protected npm publish workflow
+        if: startsWith(github.ref, 'refs/tags/') || inputs.create_github_release == true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag }}
+        run: |
+          gh workflow run npm-publish.yml \
+            --ref main \
+            -f tag="$RELEASE_TAG" \
+            -f dry_run=false
+          echo "Queued protected Publish npm workflow for $RELEASE_TAG. Approve the npm-production environment to publish."

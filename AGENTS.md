@@ -29,6 +29,7 @@
 - Run `pnpm release:preflight`.
 - Check the Codex plugin with `node packages/codex-plugin/dist/cli.js validate plugins/codex`.
 - Confirm every release headline feature is represented in either an existing Codex skill or a deliberately documented non-skill boundary.
+- After a GitHub release is created, confirm the protected `Publish npm` workflow was queued and is waiting for `npm-production` approval.
 
 ## Do not
 
