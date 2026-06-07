@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { publishablePackageDirs, readJson, rootDir } from "./release-utils.mjs";
 
@@ -49,6 +49,8 @@ for (const expected of [
   if (!releaseDoc.includes(expected)) errors.push(`RELEASE.md is missing ${expected}`);
 }
 
+await checkUserFacingDocsForStaleReleaseLines(releaseVersion);
+
 if (errors.length > 0) {
   for (const error of errors) console.error(`release version check: ${error}`);
   process.exit(1);
@@ -63,4 +65,42 @@ function parseSimpleYaml(raw) {
     if (match) parsed[match[1]] = match[2].trim();
   }
   return parsed;
+}
+
+async function checkUserFacingDocsForStaleReleaseLines(version) {
+  const staleLine = previousMinorLine(version);
+  if (!staleLine) return;
+  const docs = [
+    "README.md",
+    "RELEASE.md",
+    "docs/codex-plugin.md",
+    "docs/distribution.md",
+    "docs/quickstart.md",
+    "docs/quickstart-testnet.md",
+    "packages/mcp-server/README.md",
+    "packages/codex-plugin/README.md",
+    "plugins/codex/README.md",
+    ...(await skillDocs())
+  ];
+  for (const doc of docs) {
+    const body = await readFile(join(rootDir, doc), "utf8");
+    if (body.includes(staleLine)) {
+      errors.push(`${doc} contains stale previous release line ${staleLine}; update docs or move historical notes to CHANGELOG.md`);
+    }
+  }
+}
+
+function previousMinorLine(version) {
+  const match = /^(\d+)\.(\d+)\./.exec(version);
+  if (!match) return undefined;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  if (!Number.isInteger(major) || !Number.isInteger(minor) || minor < 1) return undefined;
+  return `${major}.${minor - 1}.x`;
+}
+
+async function skillDocs() {
+  const skillsDir = join(rootDir, "plugins", "codex", "skills");
+  const entries = await readdir(skillsDir, { withFileTypes: true });
+  return entries.filter((entry) => entry.isDirectory()).map((entry) => `plugins/codex/skills/${entry.name}/SKILL.md`);
 }

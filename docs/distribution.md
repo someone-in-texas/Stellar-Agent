@@ -1,6 +1,6 @@
 # Distribution Readiness
 
-This repository is a pnpm workspace. The `0.3.x` release strategy is to publish scoped `@stellar-agent/*` package tarballs from a verified GitHub release. Source manifests keep `workspace:*` dependency ranges for local development; `pnpm release:pack` rewrites those ranges to the release version inside the staged package tarballs only.
+This repository is a pnpm workspace. The `0.4.x` release strategy is to publish scoped `@stellar-agent/*` packages from verified release artifacts, with npm publication routed through trusted publishing. Source manifests keep `workspace:*` dependency ranges for local development; `pnpm release:pack` rewrites those ranges to the release version inside the staged package tarballs only.
 
 ## Current Release Gate
 
@@ -64,7 +64,7 @@ Trusted publishing through GitHub Actions OIDC provides npm provenance for publi
 
 ## Versioning and Changelog
 
-- `0.3.x` means installable Testnet-first release artifacts with fee-aware transaction submission, guarded bundled payments, and stable CLI/JSON behavior for agent integration.
+- `0.4.x` means installable Testnet-first release artifacts with fee-aware transaction submission, guarded bundled payments, Blend inspection and guarded Testnet mutation, core Stellar market-liquidity inspection/preflight, market alerts, strategy investigation, and stable CLI/JSON behavior for agent integration.
 - Patch releases fix defects, documentation, packaging, and safety checks without broad command-shape churn.
 - Breaking command, JSON envelope, policy schema, or receipt schema changes should wait for the next minor release unless they repair a safety bug.
 - `CHANGELOG.md` is the source for GitHub release notes.

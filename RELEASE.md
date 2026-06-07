@@ -78,6 +78,7 @@ pnpm release:notes
 The release gate verifies:
 
 - package and plugin versions are aligned
+- user-facing docs do not carry stale previous-minor release-line references
 - package metadata is publishable
 - Mainnet safety invariants are present in docs, tests, and CLI behavior
 - bundled Codex plugin guidance still covers the current workflow families
