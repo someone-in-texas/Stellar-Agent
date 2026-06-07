@@ -1,20 +1,16 @@
 # @stellar-agent/freighter-bridge
 
-Local approval bridge primitives for `stellar-agent`.
+Local approval request storage and Freighter-compatible signing bridge for Stellar Agent.
 
 This package stores auditable approval requests and serves a localhost HTTP API/UI for human approval. It never stores raw secret keys.
 
-Implemented:
+## Install
 
-- payment approval request creation
-- transaction XDR approval request creation
-- approve/deny/signed decision recording
-- signed-XDR substitution checks for transaction approval requests
-- request hash matching for payment approvals
-- localhost HTTP endpoints under `/api/requests`
-- a small static approval UI at `/` with optional Freighter `signTransaction` support
+```bash
+npm install @stellar-agent/freighter-bridge
+```
 
-CLI entry points:
+## CLI Entry Points
 
 ```bash
 stellar-agent approval create-payment --to G... --amount 6 --json
@@ -26,4 +22,22 @@ stellar-agent pay send --to G... --amount 6 --approval-id appr_... --json
 stellar-agent tx submit-approval appr_... --json
 ```
 
+## Implemented
+
+- Payment approval request creation.
+- Transaction XDR approval request creation.
+- Approve, deny, and signed decision recording.
+- Signed-XDR substitution checks for transaction approval requests.
+- Request hash matching for payment approvals.
+- Localhost HTTP endpoints under `/api/requests`.
+- A small static approval UI at `/` with optional Freighter `signTransaction` support.
+
+## Safety
+
 The UI uses Freighter's browser API when available. It posts `signedTransactionXdr` and `signerPublicKey` back to the bridge without exposing secrets to the CLI. The bridge accepts signed transaction XDR only when it has at least one signature and its transaction body matches the original approval request. Signed transaction approvals can then be submitted to Testnet with `tx submit-approval`. Mainnet submission is available only with Mainnet enabled, an active Mainnet profile, and `--allow-real-funds --i-understand-real-funds`; the CLI still never imports or stores Mainnet secret keys.
+
+## Links
+
+- GitHub: https://github.com/someone-in-texas/Stellar-Agent
+- Mainnet safety: https://github.com/someone-in-texas/Stellar-Agent/blob/main/docs/mainnet-safety.md
+- npm CLI package: https://www.npmjs.com/package/@stellar-agent/cli

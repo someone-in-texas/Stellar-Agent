@@ -117,6 +117,25 @@ Agents should call the CLI with `--json`, parse the standard envelope, and stop 
 
 The generated tarballs are verified by `pnpm release:preflight` through a fresh temporary install before release.
 
+## npm Packages
+
+The public npm packages are:
+
+| Package | Purpose |
+| --- | --- |
+| [`@stellar-agent/cli`](https://www.npmjs.com/package/@stellar-agent/cli) | End-user `stellar-agent` command line interface. |
+| [`@stellar-agent/core`](https://www.npmjs.com/package/@stellar-agent/core) | Shared config, types, amounts, errors, and redaction helpers. |
+| [`@stellar-agent/policy`](https://www.npmjs.com/package/@stellar-agent/policy) | Deterministic policy parsing and decision logic. |
+| [`@stellar-agent/stellar`](https://www.npmjs.com/package/@stellar-agent/stellar) | Stellar SDK and Stellar CLI adapters. |
+| [`@stellar-agent/defi`](https://www.npmjs.com/package/@stellar-agent/defi) | Blend and Aquarius DeFi inspection and preflight helpers. |
+| [`@stellar-agent/ledger-logger`](https://www.npmjs.com/package/@stellar-agent/ledger-logger) | Receipts, JSONL event logs, and spend-history helpers. |
+| [`@stellar-agent/freighter-bridge`](https://www.npmjs.com/package/@stellar-agent/freighter-bridge) | Local approval and Freighter-compatible signing bridge primitives. |
+| [`@stellar-agent/mcp-server`](https://www.npmjs.com/package/@stellar-agent/mcp-server) | MCP stdio server that delegates to `stellar-agent --json`. |
+| [`@stellar-agent/testnet-suite`](https://www.npmjs.com/package/@stellar-agent/testnet-suite) | Reusable Testnet wallet, Friendbot, and smoke-test workflows. |
+| [`@stellar-agent/x402-client`](https://www.npmjs.com/package/@stellar-agent/x402-client) | Local Testnet x402-style demo client and server helpers. |
+| [`@stellar-agent/mpp-client`](https://www.npmjs.com/package/@stellar-agent/mpp-client) | Local Testnet MPP one-time and session-budget demo helpers. |
+| [`@stellar-agent/codex-plugin`](https://www.npmjs.com/package/@stellar-agent/codex-plugin) | Codex plugin validation and manifest tooling. |
+
 ## Architecture
 
 The project is CLI-first with shared packages underneath:

@@ -40,6 +40,8 @@ The public package set is:
 
 The unscoped root package remains private and is not the CLI package. Users should install or run `@stellar-agent/cli` once npm publication is enabled.
 
+Every publishable package must include a package-local `README.md`. npm renders that file on the package page, so README changes require a new package version before they appear on npmjs.com.
+
 ## npm Publication
 
 npm publication uses the protected `Publish npm` GitHub Actions workflow after npm trusted publishing is configured for the package set. The `Release` workflow queues `Publish npm` automatically after the GitHub release is created; a maintainer approves the `npm-production` environment before packages are published.

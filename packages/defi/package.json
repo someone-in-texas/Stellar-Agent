@@ -1,7 +1,7 @@
 {
   "name": "@stellar-agent/defi",
   "version": "0.4.2",
-  "description": "Blend DeFi adapters for safe Stellar Agent inspection, preflight, and guarded request construction.",
+  "description": "Blend and Aquarius DeFi adapters for safe Stellar Agent inspection, preflight, and guarded request construction.",
   "type": "module",
   "license": "MIT",
   "repository": {

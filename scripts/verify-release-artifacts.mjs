@@ -24,6 +24,13 @@ for (const pkg of manifest.npmPackages) {
   if (!packageJson.files?.includes("dist")) {
     workspaceLeakErrors.push(`${packageJson.name} package does not declare files: [dist]`);
   }
+  if (!pkg.files?.includes("README.md")) {
+    workspaceLeakErrors.push(`${packageJson.name} tarball does not include README.md for npm package pages`);
+  }
+  const tarballFiles = run("tar", ["-tf", tarball]).stdout.split(/\r?\n/);
+  if (!tarballFiles.includes("package/README.md")) {
+    workspaceLeakErrors.push(`${packageJson.name} tarball is missing package/README.md`);
+  }
 }
 
 if (workspaceLeakErrors.length > 0) {

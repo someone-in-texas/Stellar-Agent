@@ -12,6 +12,7 @@ if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(releaseVersion)) {
 for (const packageDir of publishablePackageDirs) {
   const packageJsonPath = join(rootDir, packageDir, "package.json");
   const packageJson = await readJson(packageJsonPath);
+  const packageReadmePath = join(rootDir, packageDir, "README.md");
   if (packageJson.version !== releaseVersion) {
     errors.push(`${packageDir} version ${packageJson.version} does not match ${releaseVersion}`);
   }
@@ -26,6 +27,14 @@ for (const packageDir of publishablePackageDirs) {
   }
   if (!packageJson.repository?.url?.includes("someone-in-texas/Stellar-Agent")) {
     errors.push(`${packageDir} repository URL must point at someone-in-texas/Stellar-Agent`);
+  }
+  try {
+    const packageReadme = await readFile(packageReadmePath, "utf8");
+    if (!packageReadme.includes(`# ${packageJson.name}`)) {
+      errors.push(`${packageDir}/README.md must start with or include '# ${packageJson.name}'`);
+    }
+  } catch {
+    errors.push(`${packageDir} is missing README.md for npm package pages`);
   }
 }
 
@@ -77,8 +86,7 @@ async function checkUserFacingDocsForStaleReleaseLines(version) {
     "docs/distribution.md",
     "docs/quickstart.md",
     "docs/quickstart-testnet.md",
-    "packages/mcp-server/README.md",
-    "packages/codex-plugin/README.md",
+    ...(await packageReadmes()),
     "plugins/codex/README.md",
     ...(await skillDocs())
   ];
@@ -97,6 +105,10 @@ function previousMinorLine(version) {
   const minor = Number(match[2]);
   if (!Number.isInteger(major) || !Number.isInteger(minor) || minor < 1) return undefined;
   return `${major}.${minor - 1}.x`;
+}
+
+async function packageReadmes() {
+  return publishablePackageDirs.map((packageDir) => `${packageDir}/README.md`);
 }
 
 async function skillDocs() {
