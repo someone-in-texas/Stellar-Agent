@@ -107,8 +107,8 @@ describe("Aquarius helpers", () => {
     expect(pools.pools[0]).toMatchObject({
       index: "pool-hash",
       address: "CPOOL",
-      tokens: ["native", "AQUA:GISSUER"],
-      tokenAddresses: ["CXLM", "CAQUA"],
+      assetLabels: ["native", "AQUA:GISSUER"],
+      assetContractIds: ["CXLM", "CAQUA"],
       poolType: "constant_product",
       fee: "0.0030"
     });
@@ -164,7 +164,12 @@ describe("Aquarius helpers", () => {
       submitted: false,
       signing: false,
       slippageBoundsProvided: true,
-      nominalExposure: "25.1"
+      nominalExposure: "25.1",
+      assets: ["native", "XLM", "CXLM", "AQUA:GISSUER", "AQUA", "CAQUA"],
+      assetGroups: [
+        ["native", "XLM", "CXLM"],
+        ["AQUA:GISSUER", "AQUA", "CAQUA"]
+      ]
     });
   });
 
@@ -186,8 +191,8 @@ describe("Aquarius helpers", () => {
       );
     const quote = await quoteAquariusSwap({
       network: "testnet",
-      tokenIn: "XLM",
-      tokenOut: "AQUA",
+      inputAsset: "XLM",
+      outputAsset: "AQUA",
       amount: "0.01",
       mode: "strict_send",
       fetchImpl: fetchImpl as typeof fetch
@@ -196,8 +201,8 @@ describe("Aquarius helpers", () => {
 
     const preflight = await preflightAquariusSwap({
       network: "testnet",
-      tokenIn: "XLM",
-      tokenOut: "AQUA",
+      inputAsset: "XLM",
+      outputAsset: "AQUA",
       amount: "0.01",
       mode: "strict_send",
       slippageBps: 100,
@@ -207,7 +212,12 @@ describe("Aquarius helpers", () => {
       submitted: false,
       signing: false,
       slippageBoundsProvided: true,
-      policyAction: "swap"
+      policyAction: "swap",
+      assets: expect.arrayContaining(["XLM", "AQUA", "native", "AQUA:GISSUER"]),
+      assetGroups: expect.arrayContaining([
+        expect.arrayContaining(["XLM", "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"]),
+        expect.arrayContaining(["AQUA", "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"])
+      ])
     });
   });
 });

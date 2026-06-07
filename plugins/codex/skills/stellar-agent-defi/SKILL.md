@@ -26,7 +26,7 @@ Aquarius:
 
 - Show router/API endpoints and known assets with `stellar-agent defi aquarius deployments --network testnet --json`.
 - Fetch current Testnet pools with `stellar-agent defi aquarius deployments --network testnet --pools --limit 10 --json`.
-- Inspect a pool with `stellar-agent defi aquarius pool inspect --pool <pool-contract-or-token> --network testnet --json`.
+- Inspect a pool with `stellar-agent defi aquarius pool inspect --pool <pool-contract-or-asset> --network testnet --json`.
 - Inspect account state with `stellar-agent defi aquarius account position --account <alias-or-G...> --pool <pool> --json`.
 - Preflight LP deposits with `stellar-agent defi aquarius lp preflight --pool <pool> --action deposit --amount <a> --amount <b> --min-shares <shares> --json`.
 - Preflight LP withdrawals with `stellar-agent defi aquarius lp preflight --pool <pool> --action withdraw --shares <shares> --min-amount <a> --min-amount <b> --json`.

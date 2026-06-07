@@ -2838,8 +2838,8 @@ function addDefiCommands(program: Command): void {
         const { quoteAquariusSwap } = await loadDefi();
         return quoteAquariusSwap({
           network: resolveAquariusNetworkOption(context, options.network),
-          tokenIn: options.from,
-          tokenOut: options.to,
+          inputAsset: options.from,
+          outputAsset: options.to,
           amount: options.amount,
           mode: parseAquariusSwapMode(options.mode)
         });
@@ -2853,7 +2853,7 @@ function addDefiCommands(program: Command): void {
     .requiredOption("--to <asset>", "Output asset symbol or contract id")
     .requiredOption("--amount <amount>", "Amount in asset units")
     .option("--mode <mode>", "strict-send or strict-receive", "strict-send")
-    .requiredOption("--slippage-bps <bps>", "Explicit slippage bound in basis points", parseIntegerOption)
+    .requiredOption("--slippage-bps <bps>", "Explicit slippage bound in basis points", parseSlippageBpsOption)
     .option("--network <name>", "Network profile to inspect: testnet or mainnet")
     .action(
       withContext(
@@ -2864,8 +2864,8 @@ function addDefiCommands(program: Command): void {
           const { preflightAquariusSwap } = await loadDefi();
           const preflight = await preflightAquariusSwap({
             network: resolveAquariusNetworkOption(context, options.network),
-            tokenIn: options.from,
-            tokenOut: options.to,
+            inputAsset: options.from,
+            outputAsset: options.to,
             amount: options.amount,
             mode: parseAquariusSwapMode(options.mode),
             slippageBps: options.slippageBps
@@ -3805,6 +3805,7 @@ function aquariusLpPolicyRequest(preflight: AquariusLpPreflight) {
     network: preflight.network,
     pool: preflight.pool.address,
     assets: preflight.assets,
+    assetGroups: preflight.assetGroups,
     action: preflight.action,
     nominalExposure: preflight.nominalExposure,
     slippageBoundsProvided: preflight.slippageBoundsProvided
@@ -3815,7 +3816,8 @@ function aquariusSwapPolicyRequest(preflight: AquariusSwapPreflight) {
   return {
     network: preflight.network,
     pool: preflight.quote.pools[0] ?? "*",
-    assets: [preflight.tokenIn, preflight.tokenOut, ...preflight.quote.tokenAddresses],
+    assets: preflight.assets,
+    assetGroups: preflight.assetGroups,
     action: preflight.policyAction,
     nominalExposure: preflight.amount,
     slippageBoundsProvided: preflight.slippageBoundsProvided
@@ -4184,6 +4186,18 @@ function parseIntegerOption(value: string): number {
       code: "INVALID_INPUT",
       message: "Limit must be an integer between 1 and 200.",
       docs: "docs/ledger-logging.md"
+    });
+  }
+  return parsed;
+}
+
+function parseSlippageBpsOption(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 10_000) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Slippage must be an integer between 0 and 10000 basis points.",
+      docs: "docs/defi-aquarius.md#swap-quoting-and-preflight"
     });
   }
   return parsed;

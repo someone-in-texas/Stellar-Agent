@@ -7,6 +7,7 @@
 - Added Testnet example scripts for Blend and Aquarius DeFi workflows under `examples/defi/`, plus `pnpm examples:defi:testnet`.
 - Added a bundled `stellar-agent-defi` Codex skill covering Blend and Aquarius command sequencing, preflight requirements, policy boundaries, and Mainnet signing limits.
 - Documented Aquarius Testnet endpoints, examples, read-only/preflight-only boundaries, and Mainnet external-signer requirements.
+- Kept Aquarius public asset metadata visible in redacted CLI output and tightened slippage-bound and asset-allowlist policy checks.
 
 ## 0.4.1
 

@@ -13,7 +13,7 @@ run(["testnet", "init"]);
 
 const deployments = run(["defi", "aquarius", "deployments", "--network", "testnet", "--pools", "--limit", "10"]);
 assert(deployments.data.routerContractId === "CBCFTQSPDBAIZ6R6PJQKSQWKNKWH2QIV3I4J72SHWBIK3ADRRAM5A6GD", "Unexpected Aquarius Testnet router.");
-const pool = deployments.data.pools?.find((candidate) => candidate.tokens?.includes("native")) ?? deployments.data.pools?.[0];
+const pool = deployments.data.pools?.find((candidate) => candidate.assetLabels?.includes("native")) ?? deployments.data.pools?.[0];
 assert(pool?.address, "Aquarius Testnet pools were not returned.");
 
 const inspected = run(["defi", "aquarius", "pool", "inspect", "--pool", pool.address, "--network", "testnet"]);

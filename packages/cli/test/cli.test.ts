@@ -402,6 +402,114 @@ describe("CLI DeFi commands", () => {
       }
     });
   });
+
+  it("prints public Aquarius pool assets without redacting them", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          results: [
+            {
+              index: "pool-hash",
+              address: "CPOOL",
+              tokens_addresses: ["CXLM", "CAQUA"],
+              tokens_str: ["native", "AQUA:GISSUER"],
+              pool_type: "constant_product",
+              fee: "0.0030"
+            }
+          ]
+        })
+      )
+    );
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "defi",
+      "aquarius",
+      "pool",
+      "inspect",
+      "--pool",
+      "XLM",
+      "--network",
+      "testnet"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        pool: {
+          assetLabels: ["native", "AQUA:GISSUER"],
+          assetContractIds: ["CXLM", "CAQUA"]
+        },
+        raw: {
+          results: [
+            expect.objectContaining({
+              assetLabels: ["native", "AQUA:GISSUER"],
+              assetContractIds: ["CXLM", "CAQUA"]
+            })
+          ]
+        }
+      }
+    });
+    expect(JSON.stringify(output)).not.toContain("[REDACTED]");
+  });
+
+  it("accepts Aquarius swap slippage bounds above list limits", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          success: true,
+          amount: 57842595,
+          amount_with_fee: 57842595,
+          swap_chain_xdr: "AAAA",
+          pools: ["CPOOL"],
+          tokens: ["native", "AQUA:GISSUER"],
+          tokens_addresses: [
+            "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+            "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"
+          ]
+        })
+      )
+    );
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "defi",
+      "aquarius",
+      "swap",
+      "preflight",
+      "--from",
+      "XLM",
+      "--to",
+      "AQUA",
+      "--amount",
+      "0.01",
+      "--slippage-bps",
+      "500",
+      "--network",
+      "testnet"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        policyDecision: { status: "allowed" },
+        preflight: {
+          slippageBps: 500,
+          assets: expect.arrayContaining(["XLM", "AQUA", "native", "AQUA:GISSUER"]),
+          assetGroups: expect.arrayContaining([
+            expect.arrayContaining(["XLM", "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"]),
+            expect.arrayContaining(["AQUA", "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"])
+          ])
+        }
+      }
+    });
+  });
 });
 
 describe("CLI market liquidity commands", () => {

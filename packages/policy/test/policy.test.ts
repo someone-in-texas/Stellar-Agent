@@ -247,6 +247,46 @@ describe("policy evaluation", () => {
     });
     expect(denied.status).toBe("denied");
     expect(denied.matchedRules).toContain("defi_aquarius_slippage_bounds_required");
+
+    const omitted = evaluateDefiAquariusRequest(DEFAULT_TESTNET_POLICY, {
+      network: "testnet",
+      pool: "CPOOL",
+      assets: ["XLM", "AQUA"],
+      action: "swap",
+      nominalExposure: "1"
+    });
+    expect(omitted.status).toBe("denied");
+    expect(omitted.matchedRules).toContain("defi_aquarius_slippage_bounds_required");
+  });
+
+  it("allows Aquarius assets when any identifier in each asset group is allowed", () => {
+    const policy = {
+      ...DEFAULT_TESTNET_POLICY,
+      defi: {
+        ...DEFAULT_TESTNET_POLICY.defi,
+        aquarius: {
+          ...DEFAULT_TESTNET_POLICY.defi.aquarius,
+          allowedAssets: ["XLM", "AQUA"]
+        }
+      }
+    };
+    const decision = evaluateDefiAquariusRequest(policy, {
+      network: "testnet",
+      pool: "CPOOL",
+      assets: [
+        "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+        "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"
+      ],
+      assetGroups: [
+        ["native", "XLM", "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"],
+        ["AQUA:GISSUER", "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"]
+      ],
+      action: "swap",
+      nominalExposure: "1",
+      slippageBoundsProvided: true
+    });
+    expect(decision.status).toBe("allowed");
+    expect(decision.matchedRules).toContain("defi_aquarius_assets_allowed");
   });
 
   it("enforces Aquarius allowed pools, assets, actions, and exposure", () => {

@@ -21,13 +21,13 @@ The Testnet router is `CBCFTQSPDBAIZ6R6PJQKSQWKNKWH2QIV3I4J72SHWBIK3ADRRAM5A6GD`
 
 ## Pool Inspection
 
-Inspect a pool by contract id, pool index, token, or search term:
+Inspect a pool by contract id, pool index, asset label, or search term:
 
 ```bash
 stellar-agent defi aquarius pool inspect --pool XLM --network testnet --json
 ```
 
-Pool inspection reads Aquarius API metadata such as pool contract address, pool hash, token contracts, token strings, pool type, fee, transaction count, and reported volume.
+Pool inspection reads Aquarius API metadata such as pool contract address, pool hash, public asset labels, asset contract ids, pool type, fee, transaction count, and reported volume.
 
 ## Account Position
 
@@ -96,7 +96,7 @@ stellar-agent defi aquarius swap preflight \
   --json
 ```
 
-`swap quote` and `swap preflight` call Aquarius `find-path` or `find-path-strict-receive` APIs and return the route, pools, token path, amount, and swap-chain XDR when available. The commands do not execute the XDR.
+`swap quote` and `swap preflight` call Aquarius `find-path` or `find-path-strict-receive` APIs and return the route, pools, asset path, amount, and swap-chain XDR when available. The commands do not execute the XDR.
 
 ## Rewards
 

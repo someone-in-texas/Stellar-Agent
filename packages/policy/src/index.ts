@@ -55,6 +55,7 @@ export interface DefiAquariusPolicyRequest {
   network: "testnet" | "mainnet" | "local";
   pool: string;
   assets: string[];
+  assetGroups?: string[][];
   action: DefiAquariusAction;
   nominalExposure?: string;
   slippageBoundsProvided?: boolean;
@@ -639,10 +640,11 @@ export function evaluateDefiAquariusRequest(policyInput: Policy, request: DefiAq
   }
 
   const allowedAssets = aquarius.allowedAssets.map((asset) => asset.toUpperCase());
-  const deniedAssets = request.assets.filter(
-    (asset) => !allowedAssets.includes("*") && !allowedAssets.includes(asset.toUpperCase())
+  const assetGroups = aquariusPolicyAssetGroups(request);
+  const deniedAssetGroups = assetGroups.filter(
+    (group) => !allowedAssets.includes("*") && !group.some((asset) => allowedAssets.includes(asset.toUpperCase()))
   );
-  if (deniedAssets.length > 0) {
+  if (deniedAssetGroups.length > 0) {
     deny("defi_aquarius_asset_not_allowed", "One or more Aquarius assets are not allowed by policy.");
   } else {
     note("defi_aquarius_assets_allowed", "Aquarius assets are allowed by policy.");
@@ -660,7 +662,7 @@ export function evaluateDefiAquariusRequest(policyInput: Policy, request: DefiAq
     deny("defi_aquarius_exposure_over_limit", "Aquarius nominal exposure would exceed the policy limit.");
   }
 
-  if (aquarius.requireSlippageBounds && request.slippageBoundsProvided === false) {
+  if (aquarius.requireSlippageBounds && request.slippageBoundsProvided !== true) {
     deny("defi_aquarius_slippage_bounds_required", "Aquarius requests require explicit slippage bounds.");
   }
 
@@ -673,6 +675,27 @@ export function evaluateDefiAquariusRequest(policyInput: Policy, request: DefiAq
   }
 
   return sanitizeDecision(policy, decision);
+}
+
+function aquariusPolicyAssetGroups(request: DefiAquariusPolicyRequest): string[][] {
+  const groups = request.assetGroups && request.assetGroups.length > 0 ? request.assetGroups : request.assets.map((asset) => [asset]);
+  return groups.map((group) => {
+    const identifiers = new Set<string>();
+    for (const asset of group) {
+      for (const identifier of aquariusPolicyAssetIdentifiers(asset)) identifiers.add(identifier);
+    }
+    return [...identifiers];
+  });
+}
+
+function aquariusPolicyAssetIdentifiers(asset: string): string[] {
+  const trimmed = asset.trim();
+  if (!trimmed) return [];
+  const identifiers = new Set<string>([trimmed]);
+  if (trimmed.toLowerCase() === "native") identifiers.add("XLM");
+  const [code] = trimmed.split(":");
+  if (code) identifiers.add(code);
+  return [...identifiers];
 }
 
 export function evaluateMarketLiquidityRequest(

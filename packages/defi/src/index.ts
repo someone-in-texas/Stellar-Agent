@@ -140,8 +140,8 @@ export interface AquariusAssetDeployment {
 export interface AquariusPoolSummary {
   index: string;
   address: string;
-  tokens: string[];
-  tokenAddresses: string[];
+  assetLabels: string[];
+  assetContractIds: string[];
   poolType: string;
   fee: string;
   amplification?: string | null;
@@ -159,6 +159,7 @@ export interface AquariusLpPreflight {
   shareAmount?: string;
   minAmounts?: string[];
   assets: string[];
+  assetGroups: string[][];
   nominalExposure: string;
   slippageBoundsProvided: boolean;
   simulated: false;
@@ -170,8 +171,10 @@ export interface AquariusLpPreflight {
 export interface AquariusSwapPreflight {
   network: AquariusNetworkName;
   mode: AquariusSwapMode;
-  tokenIn: string;
-  tokenOut: string;
+  inputAsset: string;
+  outputAsset: string;
+  assets: string[];
+  assetGroups: string[][];
   amount: string;
   slippageBps?: number;
   quote: AquariusSwapQuote;
@@ -189,8 +192,8 @@ export interface AquariusSwapQuote {
   amountWithFee?: string;
   swapChainXdr?: string;
   pools: string[];
-  tokens: string[];
-  tokenAddresses: string[];
+  assetLabels: string[];
+  assetContractIds: string[];
   raw: unknown;
 }
 
@@ -448,12 +451,13 @@ export async function fetchAquariusPools(args: {
   }
   const raw = await response.json();
   const records = Array.isArray((raw as any).results) ? (raw as any).results : Array.isArray(raw) ? raw : [];
+  const publicRaw = aquariusPublicRaw(raw);
   return {
     network: args.network,
     apiBaseUrl: deployment.apiBaseUrl,
     ...(typeof (raw as any).count === "number" ? { count: (raw as any).count } : {}),
     pools: records.map(aquariusPoolFromApi),
-    raw
+    raw: publicRaw
   };
 }
 
@@ -470,8 +474,8 @@ export async function inspectAquariusPool(args: {
   });
   const needle = args.pool.toLowerCase();
   const pool = listed.pools.find((candidate) => {
-    const tokens = [...candidate.tokens, ...candidate.tokenAddresses].map((token) => token.toLowerCase());
-    return candidate.address.toLowerCase() === needle || candidate.index.toLowerCase() === needle || tokens.includes(needle);
+    const assets = [...candidate.assetLabels, ...candidate.assetContractIds].map((asset) => asset.toLowerCase());
+    return candidate.address.toLowerCase() === needle || candidate.index.toLowerCase() === needle || assets.includes(needle);
   });
   const firstPool = listed.pools[0];
   if (!pool && firstPool !== undefined && !isContractId(args.pool)) {
@@ -484,8 +488,8 @@ export async function inspectAquariusPool(args: {
       pool: {
         index: "",
         address: args.pool,
-        tokens: [],
-        tokenAddresses: [],
+        assetLabels: [],
+        assetContractIds: [],
         poolType: "unknown",
         fee: "unknown"
       }
@@ -515,7 +519,8 @@ export async function preflightAquariusLp(args: {
     pool: args.pool,
     ...(args.fetchImpl === undefined ? {} : { fetchImpl: args.fetchImpl })
   });
-  const assets = pool.tokenAddresses.length > 0 ? pool.tokenAddresses : pool.tokens;
+  const assetGroups = aquariusAssetGroupsFromPool(pool);
+  const assets = uniqueAquariusAssetIdentifiers(assetGroups.flat());
   if (args.action === "deposit") {
     if (!args.desiredAmounts || args.desiredAmounts.length < 2) {
       throw new StellarAgentError({
@@ -547,6 +552,7 @@ export async function preflightAquariusLp(args: {
     ...(args.shareAmount === undefined ? {} : { shareAmount: args.shareAmount }),
     ...(args.minAmounts === undefined ? {} : { minAmounts: args.minAmounts }),
     assets,
+    assetGroups,
     nominalExposure:
       args.action === "deposit" ? String(args.desiredAmounts!.reduce((total, amount) => total + Number(amount), 0)) : args.shareAmount!,
     slippageBoundsProvided:
@@ -564,8 +570,8 @@ export async function preflightAquariusLp(args: {
 
 export async function quoteAquariusSwap(args: {
   network: AquariusNetworkName;
-  tokenIn: string;
-  tokenOut: string;
+  inputAsset: string;
+  outputAsset: string;
   amount: string;
   mode: AquariusSwapMode;
   fetchImpl?: typeof fetch;
@@ -577,8 +583,8 @@ export async function quoteAquariusSwap(args: {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      token_in_address: resolveAquariusAsset(deployment, args.tokenIn).contractId,
-      token_out_address: resolveAquariusAsset(deployment, args.tokenOut).contractId,
+      token_in_address: resolveAquariusAsset(deployment, args.inputAsset).contractId,
+      token_out_address: resolveAquariusAsset(deployment, args.outputAsset).contractId,
       amount: decimalToStroops(args.amount)
     })
   });
@@ -596,8 +602,8 @@ export async function quoteAquariusSwap(args: {
 
 export async function preflightAquariusSwap(args: {
   network: AquariusNetworkName;
-  tokenIn: string;
-  tokenOut: string;
+  inputAsset: string;
+  outputAsset: string;
   amount: string;
   mode: AquariusSwapMode;
   slippageBps?: number;
@@ -619,11 +625,21 @@ export async function preflightAquariusSwap(args: {
       docs: "docs/defi-aquarius.md#swap-quoting-and-preflight"
     });
   }
+  const deployment = aquariusDeployment(args.network);
+  const inputAsset = resolveAquariusAsset(deployment, args.inputAsset);
+  const outputAsset = resolveAquariusAsset(deployment, args.outputAsset);
+  const assetGroups = [
+    uniqueAquariusAssetIdentifiers([args.inputAsset, inputAsset.symbol, inputAsset.contractId]),
+    uniqueAquariusAssetIdentifiers([args.outputAsset, outputAsset.symbol, outputAsset.contractId]),
+    ...aquariusAssetGroupsFromParallel(quote.assetLabels, quote.assetContractIds)
+  ];
   return {
     network: args.network,
     mode: args.mode,
-    tokenIn: resolveAquariusAsset(aquariusDeployment(args.network), args.tokenIn).contractId,
-    tokenOut: resolveAquariusAsset(aquariusDeployment(args.network), args.tokenOut).contractId,
+    inputAsset: inputAsset.contractId,
+    outputAsset: outputAsset.contractId,
+    assets: uniqueAquariusAssetIdentifiers(assetGroups.flat()),
+    assetGroups,
     amount: args.amount,
     ...(args.slippageBps === undefined ? {} : { slippageBps: args.slippageBps }),
     quote,
@@ -668,7 +684,7 @@ export async function inspectAquariusAccountPosition(args: {
       ).pool
     : undefined;
   const matchedBalances = pool
-    ? balances.filter((balance: any) => JSON.stringify(balance).includes(pool.address) || pool.tokens.some((token) => JSON.stringify(balance).includes(token)))
+    ? balances.filter((balance: any) => JSON.stringify(balance).includes(pool.address) || pool.assetLabels.some((asset) => JSON.stringify(balance).includes(asset)))
     : balances;
   return {
     network: args.network,
@@ -1079,8 +1095,8 @@ function aquariusPoolFromApi(raw: any): AquariusPoolSummary {
   return {
     index: String(raw.index ?? ""),
     address: String(raw.address ?? ""),
-    tokens: Array.isArray(raw.tokens_str) ? raw.tokens_str.map(String) : [],
-    tokenAddresses: Array.isArray(raw.tokens_addresses) ? raw.tokens_addresses.map(String) : [],
+    assetLabels: Array.isArray(raw.tokens_str) ? raw.tokens_str.map(String) : [],
+    assetContractIds: Array.isArray(raw.tokens_addresses) ? raw.tokens_addresses.map(String) : [],
     poolType: String(raw.pool_type ?? "unknown"),
     fee: String(raw.fee ?? "unknown"),
     ...(raw.a === undefined ? {} : { amplification: raw.a }),
@@ -1096,9 +1112,9 @@ function aquariusQuoteFromApi(raw: any): AquariusSwapQuote {
     ...(raw.amount_with_fee === undefined ? {} : { amountWithFee: String(raw.amount_with_fee) }),
     ...(raw.swap_chain_xdr === undefined ? {} : { swapChainXdr: String(raw.swap_chain_xdr) }),
     pools: Array.isArray(raw.pools) ? raw.pools.map(String) : [],
-    tokens: Array.isArray(raw.tokens) ? raw.tokens.map(String) : [],
-    tokenAddresses: Array.isArray(raw.tokens_addresses) ? raw.tokens_addresses.map(String) : [],
-    raw
+    assetLabels: Array.isArray(raw.tokens) ? raw.tokens.map(String) : [],
+    assetContractIds: Array.isArray(raw.tokens_addresses) ? raw.tokens_addresses.map(String) : [],
+    raw: aquariusPublicRaw(raw)
   };
 }
 
@@ -1155,6 +1171,49 @@ function decimalToStroops(input: string): string {
     });
   }
   return String(BigInt(whole!) * 10_000_000n + BigInt(padded));
+}
+
+function uniqueAquariusAssetIdentifiers(values: string[]): string[] {
+  const identifiers = new Set<string>();
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    identifiers.add(trimmed);
+    if (trimmed.toLowerCase() === "native") identifiers.add("XLM");
+    const [code] = trimmed.split(":");
+    if (code) identifiers.add(code);
+  }
+  return [...identifiers];
+}
+
+function aquariusAssetGroupsFromPool(pool: AquariusPoolSummary): string[][] {
+  return aquariusAssetGroupsFromParallel(pool.assetLabels, pool.assetContractIds);
+}
+
+function aquariusAssetGroupsFromParallel(labels: string[], contractIds: string[]): string[][] {
+  const length = Math.max(labels.length, contractIds.length);
+  const groups: string[][] = [];
+  for (let index = 0; index < length; index += 1) {
+    const group = uniqueAquariusAssetIdentifiers([labels[index] ?? "", contractIds[index] ?? ""]);
+    if (group.length > 0) groups.push(group);
+  }
+  return groups;
+}
+
+function aquariusPublicRaw(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => aquariusPublicRaw(item));
+  if (value === null || typeof value !== "object") return value;
+  const publicObject: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    publicObject[aquariusPublicRawKey(key)] = aquariusPublicRaw(child);
+  }
+  return publicObject;
+}
+
+function aquariusPublicRawKey(key: string): string {
+  if (key === "tokens" || key === "tokens_str") return "assetLabels";
+  if (key === "tokens_addresses" || key === "token_addresses") return "assetContractIds";
+  return key;
 }
 
 function parseBlockedPools(value: string | undefined): string[] {
