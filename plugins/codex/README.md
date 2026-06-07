@@ -14,7 +14,7 @@ Generate a normalized manifest:
 node packages/codex-plugin/dist/cli.js manifest plugins/codex plugins/codex/plugin-manifest.json
 ```
 
-GitHub releases package this plugin as `stellar-agent-codex-plugin-v0.4.0.tgz` alongside the npm tarball for `@stellar-agent/codex-plugin`. The release preflight validates the staged plugin artifact with the packaged validator so the Codex plugin and GitHub release remain aligned.
+GitHub releases package this plugin as `stellar-agent-codex-plugin-v0.4.1.tgz` alongside the npm tarball for `@stellar-agent/codex-plugin`. The release preflight validates the staged plugin artifact with the packaged validator so the Codex plugin and GitHub release remain aligned.
 
 Rules:
 

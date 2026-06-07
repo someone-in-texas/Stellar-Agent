@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.1
+
+- Added MCP tools for core Stellar liquidity-pool listing, inspection, trade reads, LP position inspection, LP preflight, finite market listeners, and strategy liquidity investigation.
+- Added package-level LP input validation for pool ids, distinct reserve assets, and deposit price bounds.
+- Added nominal LP exposure metadata to preflight output and documented that it is a policy proxy, not a mark-to-market value or profitability estimate.
+- Added `--fee-strategy` to `market lp trustline add` for consistency with other mutating Testnet commands.
+- Added live Testnet verifier coverage for read-only market workflows and LP preflight against an existing Testnet core pool.
+- Fixed stale release-line documentation and added a release metadata guard for previous-minor doc drift.
+
 ## 0.4.0
 
 - Added `market` commands for core Stellar AMM pool listing, inspection, trade reads, LP position inspection, and finite JSON market alerts.

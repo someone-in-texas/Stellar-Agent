@@ -6,7 +6,7 @@ Build payment-capable agents on Stellar without giving them a blank check.
 
 ## Status
 
-This repository is a `0.4.0` Testnet-first release. Core primitives, policy evaluation, local receipt logging, Testnet wallet creation, Friendbot funding, fee-aware Testnet payment submission, bundled Testnet payments, issued-asset trustlines, claimable balances, local approval bridge requests, local x402-style and MPP Testnet demos, Blend DeFi inspection and guarded Testnet mutation, core Stellar liquidity-pool inspection/preflight/Testnet mutation, market listeners, strategy investigation, MCP tools, Codex plugin packaging, cache controls, and the CLI command surface are present. Mainnet local auto-signing remains blocked; guarded Mainnet submission is limited to externally signed XDR and explicitly acknowledged real-funds contract operations.
+This repository is a `0.4.1` Testnet-first release. Core primitives, policy evaluation, local receipt logging, Testnet wallet creation, Friendbot funding, fee-aware Testnet payment submission, bundled Testnet payments, issued-asset trustlines, claimable balances, local approval bridge requests, local x402-style and MPP Testnet demos, Blend DeFi inspection and guarded Testnet mutation, core Stellar liquidity-pool inspection/preflight/Testnet mutation, market listeners, strategy investigation, MCP tools, Codex plugin packaging, cache controls, and the CLI command surface are present. Mainnet local auto-signing remains blocked; guarded Mainnet submission is limited to externally signed XDR and explicitly acknowledged real-funds contract operations.
 
 ## Safety First
 
@@ -73,7 +73,7 @@ stellar-agent market pools list --asset-a XLM --asset-b USD:G... --json
 stellar-agent market pool inspect --pool 0123... --json
 stellar-agent market pool position --account agent --pool 0123... --json
 stellar-agent market lp preflight --pool 0123... --max-a 1 --max-b 2 --min-price 1.5 --max-price 2.5 --json
-stellar-agent market lp trustline add --pool 0123... --account agent --json
+stellar-agent market lp trustline add --pool 0123... --account agent --fee-strategy medium --json
 stellar-agent market lp deposit --pool 0123... --max-a 1 --max-b 2 --min-price 1.5 --max-price 2.5 --json
 stellar-agent market listen price --pool 0123... --above 2 --json
 stellar-agent strategy investigate liquidity --pair XLM/USD:G... --json
@@ -104,10 +104,10 @@ Agents should call the CLI with `--json`, parse the standard envelope, and stop 
 
 ## Release Artifacts
 
-`v0.4.0` GitHub releases contain:
+`v0.4.1` GitHub releases contain:
 
 - npm tarballs for the scoped `@stellar-agent/*` packages.
-- `stellar-agent-codex-plugin-v0.4.0.tgz` for the bundled Codex plugin.
+- `stellar-agent-codex-plugin-v0.4.1.tgz` for the bundled Codex plugin.
 - `release-manifest.json` with artifact SHA-256 checksums and source commit metadata.
 
 The generated tarballs are verified by `pnpm release:preflight` through a fresh temporary install before release.
@@ -135,7 +135,7 @@ Mainnet uses real funds. It is disabled by default, requires explicit enablement
 ## Roadmap
 
 1. Production facilitator-backed x402/MPP support.
-2. npm publication after maintainer confirmation of scope access and provenance setup.
+2. Trusted-publishing automation hardening for future npm releases.
 3. Broader Mainnet approval UX hardening without local Mainnet secret custody.
 4. Protocol-specific Soroban AMM adapters after stable interfaces, policy controls, simulation, and external-signer flows are documented.
 
