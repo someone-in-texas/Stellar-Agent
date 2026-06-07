@@ -2,7 +2,7 @@
 
 MCP stdio server for `stellar-agent`.
 
-The server exposes agent-safe tools for the existing CLI workflows instead of duplicating payment logic. Tools include Testnet init/doctor/Friendbot funding, issued-asset and contract-asset smoke scenarios, wallet creation and balances, trustline add/remove, fee-aware payment quote/send, guarded Testnet batch payments, local x402 and MPP HTTP payments, claimable balance create/list/claim, and Stellar CLI-backed contract operations including asset deploy, info, read, fetch, invoke, upload, deploy, extend, and restore.
+The server exposes agent-safe tools for the existing CLI workflows instead of duplicating payment logic. Tools include Testnet init/doctor/Friendbot funding, issued-asset and contract-asset smoke scenarios, wallet creation and balances, trustline add/remove, fee-aware payment quote/send, guarded Testnet batch payments, local x402 and MPP HTTP payments, claimable balance create/list/claim, core Stellar liquidity-pool list/inspect/trade/position/preflight/listener workflows, strategy liquidity investigation, and Stellar CLI-backed contract operations including asset deploy, info, read, fetch, invoke, upload, deploy, extend, and restore.
 
 Build and run from a checkout:
 

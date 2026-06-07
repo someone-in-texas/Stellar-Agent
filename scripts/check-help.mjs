@@ -111,6 +111,20 @@ if (!MCP_TOOLS.some((tool) => tool.name === "stellar_testnet_scenario_issued_ass
 if (!MCP_TOOLS.some((tool) => tool.name === "stellar_testnet_scenario_contract_asset_smoke")) {
   throw new Error("MCP tool list does not include stellar_testnet_scenario_contract_asset_smoke.");
 }
+for (const toolName of [
+  "stellar_market_pools_list",
+  "stellar_market_pool_inspect",
+  "stellar_market_pool_trades",
+  "stellar_market_pool_position",
+  "stellar_market_lp_preflight",
+  "stellar_market_listen_price",
+  "stellar_market_listen_position",
+  "stellar_strategy_investigate_liquidity"
+]) {
+  if (!MCP_TOOLS.some((tool) => tool.name === toolName)) {
+    throw new Error(`MCP tool list does not include ${toolName}.`);
+  }
+}
 const contractInvokeArgs = buildCliArgs("stellar_contract_invoke", {
   id: "C123",
   source: "agent",

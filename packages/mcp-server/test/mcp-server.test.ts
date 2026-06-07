@@ -29,6 +29,14 @@ describe("mcp server", () => {
         expect.objectContaining({ name: "stellar_tx_submit_approval" }),
         expect.objectContaining({ name: "stellar_wallet_trustline_list" }),
         expect.objectContaining({ name: "stellar_claimable_claim" }),
+        expect.objectContaining({ name: "stellar_market_pools_list" }),
+        expect.objectContaining({ name: "stellar_market_pool_inspect" }),
+        expect.objectContaining({ name: "stellar_market_pool_trades" }),
+        expect.objectContaining({ name: "stellar_market_pool_position" }),
+        expect.objectContaining({ name: "stellar_market_lp_preflight" }),
+        expect.objectContaining({ name: "stellar_market_listen_price" }),
+        expect.objectContaining({ name: "stellar_market_listen_position" }),
+        expect.objectContaining({ name: "stellar_strategy_investigate_liquidity" }),
         expect.objectContaining({ name: "stellar_contract_invoke" }),
         expect.objectContaining({ name: "stellar_contract_asset_deploy" }),
         expect.objectContaining({ name: "stellar_contract_read" }),
@@ -240,6 +248,95 @@ describe("mcp server", () => {
     ]);
   });
 
+  it("builds CLI arguments for market tools", () => {
+    expect(
+      buildCliArgs("stellar_market_pools_list", {
+        assetA: "XLM",
+        assetB: "USD:GISSUER",
+        limit: 3
+      })
+    ).toEqual([
+      "--json",
+      "market",
+      "pools",
+      "list",
+      "--asset-a",
+      "XLM",
+      "--asset-b",
+      "USD:GISSUER",
+      "--limit",
+      "3"
+    ]);
+
+    expect(
+      buildCliArgs("stellar_market_lp_preflight", {
+        pool: poolIdFixture(),
+        maxA: "1",
+        maxB: "2",
+        minPrice: "1.5",
+        maxPrice: "2.5"
+      })
+    ).toEqual([
+      "--json",
+      "market",
+      "lp",
+      "preflight",
+      "--pool",
+      poolIdFixture(),
+      "--account",
+      "agent",
+      "--max-a",
+      "1",
+      "--max-b",
+      "2",
+      "--min-price",
+      "1.5",
+      "--max-price",
+      "2.5"
+    ]);
+
+    expect(
+      buildCliArgs("stellar_market_listen_price", {
+        pool: poolIdFixture(),
+        above: "2",
+        polls: 2,
+        intervalMs: 250
+      })
+    ).toEqual([
+      "--json",
+      "market",
+      "listen",
+      "price",
+      "--pool",
+      poolIdFixture(),
+      "--above",
+      "2",
+      "--polls",
+      "2",
+      "--interval-ms",
+      "250"
+    ]);
+
+    expect(
+      buildCliArgs("stellar_strategy_investigate_liquidity", {
+        pair: "XLM/USD:GISSUER",
+        network: "testnet",
+        limit: 5
+      })
+    ).toEqual([
+      "--json",
+      "strategy",
+      "investigate",
+      "liquidity",
+      "--pair",
+      "XLM/USD:GISSUER",
+      "--network",
+      "testnet",
+      "--limit",
+      "5"
+    ]);
+  });
+
   it("builds CLI arguments for HTTP payment flows", () => {
     expect(
       buildCliArgs("stellar_pay_x402", {
@@ -401,3 +498,7 @@ describe("mcp server", () => {
     expect(new Set(MCP_TOOLS.map((tool) => tool.name)).size).toBe(MCP_TOOLS.length);
   });
 });
+
+function poolIdFixture(): string {
+  return "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+}

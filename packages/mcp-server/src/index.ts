@@ -366,6 +366,102 @@ export const MCP_TOOLS: McpTool[] = [
     "--account",
     string(input, "account") ?? "merchant"
   ], { balanceId: { type: "string" }, account: { type: "string" } }),
+  tool("stellar_market_pools_list", "List core Stellar liquidity pools, optionally filtered by reserve assets or account.", {}, (input) => [
+    "market",
+    "pools",
+    "list",
+    ...option(input, "assetA", "--asset-a"),
+    ...option(input, "assetB", "--asset-b"),
+    ...option(input, "account", "--account"),
+    ...option(input, "network", "--network"),
+    ...numberOption(input, "limit", "--limit")
+  ], marketListProperties()),
+  tool("stellar_market_pool_inspect", "Inspect one core Stellar liquidity pool.", { pool: true }, (input) => [
+    "market",
+    "pool",
+    "inspect",
+    "--pool",
+    requiredString(input, "pool"),
+    ...option(input, "network", "--network")
+  ], marketPoolProperties({ pool: true })),
+  tool("stellar_market_pool_trades", "Fetch recent Horizon trades for a core Stellar liquidity pool.", { pool: true }, (input) => [
+    "market",
+    "pool",
+    "trades",
+    "--pool",
+    requiredString(input, "pool"),
+    ...option(input, "network", "--network"),
+    ...numberOption(input, "limit", "--limit")
+  ], { ...marketPoolProperties({ pool: true }), limit: { type: "number" } }),
+  tool("stellar_market_pool_position", "Inspect pool-share positions for a wallet or public key.", {}, (input) => [
+    "market",
+    "pool",
+    "position",
+    "--account",
+    string(input, "account") ?? "agent",
+    ...option(input, "pool", "--pool"),
+    ...option(input, "network", "--network")
+  ], { ...marketPoolProperties({ pool: false }), account: { type: "string" } }),
+  tool("stellar_market_lp_preflight", "Preflight a core Stellar liquidity-pool deposit or withdrawal with policy context.", { pool: true }, (input) => [
+    "market",
+    "lp",
+    "preflight",
+    "--pool",
+    requiredString(input, "pool"),
+    "--account",
+    string(input, "account") ?? "agent",
+    ...option(input, "action", "--action"),
+    ...option(input, "maxA", "--max-a"),
+    ...option(input, "maxB", "--max-b"),
+    ...option(input, "minPrice", "--min-price"),
+    ...option(input, "maxPrice", "--max-price"),
+    ...option(input, "shares", "--shares"),
+    ...option(input, "minA", "--min-a"),
+    ...option(input, "minB", "--min-b"),
+    ...option(input, "network", "--network")
+  ], marketLpPreflightProperties()),
+  tool("stellar_market_listen_price", "Evaluate finite core-pool price alert checks.", { pool: true }, (input) => [
+    "market",
+    "listen",
+    "price",
+    "--pool",
+    requiredString(input, "pool"),
+    ...option(input, "above", "--above"),
+    ...option(input, "below", "--below"),
+    ...option(input, "network", "--network"),
+    ...numberOption(input, "polls", "--polls"),
+    ...numberOption(input, "intervalMs", "--interval-ms")
+  ], marketPriceListenerProperties()),
+  tool("stellar_market_listen_position", "Evaluate a finite pool-share position alert check.", { pool: true }, (input) => [
+    "market",
+    "listen",
+    "position",
+    "--pool",
+    requiredString(input, "pool"),
+    "--account",
+    string(input, "account") ?? "agent",
+    ...option(input, "sharesBelow", "--shares-below"),
+    ...option(input, "network", "--network")
+  ], {
+    pool: { type: "string" },
+    account: { type: "string" },
+    sharesBelow: { type: "string" },
+    network: { type: "string", enum: ["testnet", "mainnet"] }
+  }),
+  tool("stellar_strategy_investigate_liquidity", "Investigate liquidity-pool context for an asset pair or explicit pool without execution.", {}, (input) => [
+    "strategy",
+    "investigate",
+    "liquidity",
+    ...option(input, "pair", "--pair"),
+    ...option(input, "pool", "--pool"),
+    ...option(input, "network", "--network"),
+    ...numberOption(input, "limit", "--limit")
+  ], {
+    pair: { type: "string" },
+    pool: { type: "string" },
+    network: { type: "string", enum: ["testnet", "mainnet"] },
+    limit: { type: "number" }
+  }),
   tool("stellar_contract_doctor", "Check whether the Stellar CLI is available.", {}, (input) => [
     "contract",
     "doctor",
@@ -603,6 +699,50 @@ function paymentProperties(): Record<string, unknown> {
   };
 }
 
+function marketListProperties(): Record<string, unknown> {
+  return {
+    assetA: { type: "string" },
+    assetB: { type: "string" },
+    account: { type: "string" },
+    network: { type: "string", enum: ["testnet", "mainnet"] },
+    limit: { type: "number" }
+  };
+}
+
+function marketPoolProperties(flags: { pool: boolean }): Record<string, unknown> {
+  return {
+    ...(flags.pool ? { pool: { type: "string" } } : { pool: { type: "string" } }),
+    network: { type: "string", enum: ["testnet", "mainnet"] }
+  };
+}
+
+function marketLpPreflightProperties(): Record<string, unknown> {
+  return {
+    pool: { type: "string" },
+    account: { type: "string" },
+    action: { type: "string", enum: ["deposit", "withdraw"] },
+    maxA: { type: "string" },
+    maxB: { type: "string" },
+    minPrice: { type: "string" },
+    maxPrice: { type: "string" },
+    shares: { type: "string" },
+    minA: { type: "string" },
+    minB: { type: "string" },
+    network: { type: "string", enum: ["testnet", "mainnet"] }
+  };
+}
+
+function marketPriceListenerProperties(): Record<string, unknown> {
+  return {
+    pool: { type: "string" },
+    above: { type: "string" },
+    below: { type: "string" },
+    network: { type: "string", enum: ["testnet", "mainnet"] },
+    polls: { type: "number" },
+    intervalMs: { type: "number" }
+  };
+}
+
 function httpPaymentProperties(): Record<string, unknown> {
   return {
     url: { type: "string" },
@@ -654,6 +794,11 @@ function contractProperties(flags: Record<string, boolean>): Record<string, unkn
 function option(input: Record<string, unknown>, key: string, flag: string): string[] {
   const value = string(input, key);
   return value === undefined ? [] : [flag, value];
+}
+
+function numberOption(input: Record<string, unknown>, key: string, flag: string): string[] {
+  const value = number(input, key);
+  return value === undefined ? [] : [flag, String(value)];
 }
 
 function realFundsFlags(input: Record<string, unknown>): string[] {
