@@ -12,8 +12,8 @@ describe("verifyPublishedNpmVersions", () => {
       manifestPath,
       JSON.stringify({
         npmPackages: [
-          { name: "@stellar-agent/core", version: "0.4.2" },
-          { name: "@stellar-agent/cli", version: "0.4.2" }
+          { name: "@stellar-agent/core", version: "0.4.3" },
+          { name: "@stellar-agent/cli", version: "0.4.3" }
         ]
       })
     );
@@ -35,9 +35,9 @@ describe("verifyPublishedNpmVersions", () => {
     });
 
     expect(calls).toEqual([
-      "@stellar-agent/core@0.4.2",
-      "@stellar-agent/cli@0.4.2",
-      "@stellar-agent/cli@0.4.2"
+      "@stellar-agent/core@0.4.3",
+      "@stellar-agent/cli@0.4.3",
+      "@stellar-agent/cli@0.4.3"
     ]);
 
     await rm(tempDir, { recursive: true, force: true });
@@ -49,7 +49,7 @@ describe("verifyPublishedNpmVersions", () => {
     await writeFile(
       manifestPath,
       JSON.stringify({
-        npmPackages: [{ name: "@stellar-agent/cli", version: "0.4.2" }]
+        npmPackages: [{ name: "@stellar-agent/cli", version: "0.4.3" }]
       })
     );
 
@@ -64,7 +64,7 @@ describe("verifyPublishedNpmVersions", () => {
           throw new Error("E404");
         }
       })
-    ).rejects.toThrow("@stellar-agent/cli@0.4.2: E404");
+    ).rejects.toThrow("@stellar-agent/cli@0.4.3: E404");
 
     await rm(tempDir, { recursive: true, force: true });
   });

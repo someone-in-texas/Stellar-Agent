@@ -1,6 +1,6 @@
 {
   "name": "@stellar-agent/ledger-logger",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Receipt and JSONL event logging for Stellar Agent Bridge operations.",
   "type": "module",
   "license": "MIT",
@@ -12,7 +12,7 @@
   "bugs": {
     "url": "https://github.com/someone-in-texas/Stellar-Agent/issues"
   },
-  "homepage": "https://github.com/someone-in-texas/Stellar-Agent#readme",
+  "homepage": "https://github.com/someone-in-texas/Stellar-Agent/tree/main/packages/ledger-logger#readme",
   "engines": {
     "node": ">=22"
   },

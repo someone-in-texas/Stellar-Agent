@@ -28,6 +28,10 @@ for (const packageDir of publishablePackageDirs) {
   if (!packageJson.repository?.url?.includes("someone-in-texas/Stellar-Agent")) {
     errors.push(`${packageDir} repository URL must point at someone-in-texas/Stellar-Agent`);
   }
+  const expectedHomepage = `https://github.com/someone-in-texas/Stellar-Agent/tree/main/${packageDir}#readme`;
+  if (packageJson.homepage !== expectedHomepage) {
+    errors.push(`${packageDir} homepage must point at its package README: ${expectedHomepage}`);
+  }
   try {
     const packageReadme = await readFile(packageReadmePath, "utf8");
     if (!packageReadme.includes(`# ${packageJson.name}`)) {
@@ -84,6 +88,7 @@ async function checkUserFacingDocsForStaleReleaseLines(version) {
     "RELEASE.md",
     "docs/codex-plugin.md",
     "docs/distribution.md",
+    "docs/npm-packages.md",
     "docs/quickstart.md",
     "docs/quickstart-testnet.md",
     ...(await packageReadmes()),

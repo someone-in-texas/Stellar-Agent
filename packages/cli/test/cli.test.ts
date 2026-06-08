@@ -12,6 +12,7 @@ import { buildProgram, isCliEntrypoint } from "../src/index.js";
 const transactionHash = "a".repeat(64);
 const contractId = "CB7Y2XA3ULT62HEH6DPAUGVGUTSVL7JO5T5VOYUW6UVZI6SG72UOKSYR";
 const require = createRequire(import.meta.url);
+const { version: cliVersion } = require("../package.json");
 const { Account, Asset, BASE_FEE, Keypair, Networks, Operation, TransactionBuilder } = require("../../stellar/node_modules/@stellar/stellar-sdk");
 
 describe("CLI package entrypoint", () => {
@@ -22,6 +23,25 @@ describe("CLI package entrypoint", () => {
     await symlink(sourcePath, symlinkPath);
 
     expect(isCliEntrypoint(symlinkPath, pathToFileURL(sourcePath).href)).toBe(true);
+  });
+
+  it("prints plain and JSON version output", async () => {
+    await expect(runCliText(["--version"])).resolves.toBe(`${cliVersion}\n`);
+    await expect(runCli(["--json", "--version"])).resolves.toEqual({ ok: true, data: { version: cliVersion } });
+  });
+
+  it("keeps Blend pool version options separate from the root version flag", () => {
+    const program = buildProgram();
+    const rootVersionOption = program.options.find((option) => option.long === "--version");
+    const inspectCommand = program.commands
+      .find((command) => command.name() === "defi")
+      ?.commands.find((command) => command.name() === "blend")
+      ?.commands.find((command) => command.name() === "pool")
+      ?.commands.find((command) => command.name() === "inspect");
+    const blendVersionOption = inspectCommand?.options.find((option) => option.long === "--version");
+
+    expect(rootVersionOption?.required).toBe(false);
+    expect(blendVersionOption?.required).toBe(true);
   });
 });
 
@@ -792,6 +812,10 @@ async function createCliFixture(args: { stdout: string; stderr: string }, option
 }
 
 async function runCli(args: string[]) {
+  return JSON.parse(await runCliText(args));
+}
+
+async function runCliText(args: string[]) {
   let stdout = "";
   const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
     stdout += chunk.toString();
@@ -805,7 +829,7 @@ async function runCli(args: string[]) {
     stdoutSpy.mockRestore();
     stderrSpy.mockRestore();
   }
-  return JSON.parse(stdout);
+  return stdout;
 }
 
 function escapeSingleQuotedShell(value: string): string {

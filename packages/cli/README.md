@@ -1,5 +1,7 @@
 # @stellar-agent/cli
 
+[![npm](https://img.shields.io/npm/v/@stellar-agent/cli.svg)](https://www.npmjs.com/package/@stellar-agent/cli)
+
 Testnet-first command line interface for safe agentic payments, policies, receipts, approvals, Stellar contract workflows, DeFi preflight, and market-liquidity investigation.
 
 ## Install
@@ -37,6 +39,21 @@ stellar-agent defi blend preflight --pool TestnetV2 --account agent --request su
 stellar-agent defi aquarius swap preflight --from XLM --to AQUA --amount 0.01 --slippage-bps 100 --json
 ```
 
+## Command Map
+
+| Command Group | Use For |
+| --- | --- |
+| `testnet` | Initialize, diagnose, fund, smoke-test, and run Testnet scenarios. |
+| `wallet` | Create Testnet wallets, import watch-only wallets, inspect balances, and manage trustlines. |
+| `pay` | Quote, send, batch, x402-demo, and MPP-demo payments. |
+| `approval` | Create, list, decide, serve, and inspect local approval requests. |
+| `tx` | Build, request signatures for, and submit signed XDR. |
+| `defi` | Inspect and preflight Blend and Aquarius workflows. |
+| `market` | Inspect core Stellar liquidity pools, preflight LP actions, and run finite listeners. |
+| `contract` | Run Stellar CLI-backed Soroban contract workflows. |
+| `ledger` and `receipts` | Inspect ledgers, effects, payments, reports, and local receipts. |
+| `policy` | Write, check, print, and explain policy decisions. |
+
 ## Safety
 
 - Testnet is the default.
@@ -48,5 +65,7 @@ stellar-agent defi aquarius swap preflight --from XLM --to AQUA --amount 0.01 --
 ## Links
 
 - GitHub: https://github.com/someone-in-texas/Stellar-Agent
+- npm: https://www.npmjs.com/package/@stellar-agent/cli
+- GitHub releases: https://github.com/someone-in-texas/Stellar-Agent/releases
 - Mainnet safety: https://github.com/someone-in-texas/Stellar-Agent/blob/main/docs/mainnet-safety.md
 - Troubleshooting: https://github.com/someone-in-texas/Stellar-Agent/blob/main/docs/troubleshooting.md

@@ -1,6 +1,6 @@
 {
   "name": "@stellar-agent/policy",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Deterministic policy parsing and payment, DeFi, and market decision logic for Stellar Agent Bridge.",
   "type": "module",
   "license": "MIT",
@@ -12,7 +12,7 @@
   "bugs": {
     "url": "https://github.com/someone-in-texas/Stellar-Agent/issues"
   },
-  "homepage": "https://github.com/someone-in-texas/Stellar-Agent#readme",
+  "homepage": "https://github.com/someone-in-texas/Stellar-Agent/tree/main/packages/policy#readme",
   "engines": {
     "node": ">=22"
   },

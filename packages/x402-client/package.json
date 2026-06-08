@@ -1,6 +1,6 @@
 {
   "name": "@stellar-agent/x402-client",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Local Testnet x402-style payment demo client and server helpers for Stellar Agent Bridge.",
   "type": "module",
   "license": "MIT",
@@ -12,7 +12,7 @@
   "bugs": {
     "url": "https://github.com/someone-in-texas/Stellar-Agent/issues"
   },
-  "homepage": "https://github.com/someone-in-texas/Stellar-Agent#readme",
+  "homepage": "https://github.com/someone-in-texas/Stellar-Agent/tree/main/packages/x402-client#readme",
   "engines": {
     "node": ">=22"
   },

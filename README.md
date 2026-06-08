@@ -3,10 +3,11 @@ Build payment-capable agents on Stellar without giving them a blank check.
 `stellar-agent` gives agents a Testnet-first wallet, policy engine, receipt trail, and guarded contract/DeFi/market toolkit. Use it to prototype paid APIs, MPP sessions, issued-asset payments, Blend and Aquarius preflights, core liquidity-pool monitoring, and approval-gated transactions while Mainnet stays locked behind explicit human signing.
 
 [![CI](https://github.com/someone-in-texas/Stellar-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/someone-in-texas/Stellar-Agent/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@stellar-agent/cli.svg)](https://www.npmjs.com/package/@stellar-agent/cli)
 
 ## Status
 
-This repository is a `0.4.2` Testnet-first release. Core primitives, policy evaluation, local receipt logging, Testnet wallet creation, Friendbot funding, fee-aware Testnet payment submission, bundled Testnet payments, issued-asset trustlines, claimable balances, local approval bridge requests, local x402-style and MPP Testnet demos, Blend DeFi inspection and guarded Testnet mutation, Aquarius AMM inspection and policy-gated preflight, core Stellar liquidity-pool inspection/preflight/Testnet mutation, market listeners, strategy investigation, MCP tools, Codex plugin packaging, cache controls, and the CLI command surface are present. Mainnet local auto-signing remains blocked; guarded Mainnet submission is limited to externally signed XDR and explicitly acknowledged real-funds contract operations.
+This repository is a `0.4.3` Testnet-first release. Core primitives, policy evaluation, local receipt logging, Testnet wallet creation, Friendbot funding, fee-aware Testnet payment submission, bundled Testnet payments, issued-asset trustlines, claimable balances, local approval bridge requests, local x402-style and MPP Testnet demos, Blend DeFi inspection and guarded Testnet mutation, Aquarius AMM inspection and policy-gated preflight, core Stellar liquidity-pool inspection/preflight/Testnet mutation, market listeners, strategy investigation, MCP tools, Codex plugin packaging, cache controls, and the CLI command surface are present. Mainnet local auto-signing remains blocked; guarded Mainnet submission is limited to externally signed XDR and explicitly acknowledged real-funds contract operations.
 
 ## Safety First
 
@@ -18,6 +19,14 @@ This repository is a `0.4.2` Testnet-first release. Core primitives, policy eval
 - Staged features exit with code `8` instead of attempting hidden payment work.
 
 ## 10-Minute Quickstart
+
+Most users should install or run the CLI package:
+
+```bash
+npm install -g @stellar-agent/cli
+stellar-agent testnet doctor --json
+npx @stellar-agent/cli testnet doctor --json
+```
 
 GitHub releases include verified npm package tarballs and a matching Codex plugin artifact. npm publication is handled by the protected trusted-publishing workflow, and the local checkout workflow remains the most direct way to try unreleased changes:
 
@@ -109,15 +118,17 @@ Agents should call the CLI with `--json`, parse the standard envelope, and stop 
 
 ## Release Artifacts
 
-`v0.4.2` GitHub releases contain:
+`v0.4.3` GitHub releases contain:
 
 - npm tarballs for the scoped `@stellar-agent/*` packages.
-- `stellar-agent-codex-plugin-v0.4.2.tgz` for the bundled Codex plugin.
+- `stellar-agent-codex-plugin-v0.4.3.tgz` for the bundled Codex plugin.
 - `release-manifest.json` with artifact SHA-256 checksums and source commit metadata.
 
 The generated tarballs are verified by `pnpm release:preflight` through a fresh temporary install before release.
 
 ## npm Packages
+
+Most users should install [`@stellar-agent/cli`](https://www.npmjs.com/package/@stellar-agent/cli). The other scoped packages are public for applications that want to embed a specific library or tool surface. See [docs/npm-packages.md](docs/npm-packages.md) for install guidance and README preview checks.
 
 The public npm packages are:
 

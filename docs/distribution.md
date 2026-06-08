@@ -18,7 +18,7 @@ The release preflight builds, lints, tests, smoke-tests, checks release metadata
 Generated artifacts:
 
 - `.release/artifacts/npm/*.tgz` for scoped npm packages.
-- `.release/artifacts/codex/stellar-agent-codex-plugin-v0.4.2.tgz` for Codex plugin installation.
+- `.release/artifacts/codex/stellar-agent-codex-plugin-v0.4.3.tgz` for Codex plugin installation.
 - `.release/artifacts/release-manifest.json` for checksums and source commit evidence.
 
 The public package set is:
@@ -41,6 +41,14 @@ The public package set is:
 The unscoped root package remains private and is not the CLI package. Users should install or run `@stellar-agent/cli` once npm publication is enabled.
 
 Every publishable package must include a package-local `README.md`. npm renders that file on the package page, so README changes require a new package version before they appear on npmjs.com.
+
+Preview npm README content before publishing:
+
+```bash
+pnpm release:pack
+tar -xOf .release/artifacts/npm/stellar-agent-cli-0.4.3.tgz package/README.md
+pnpm release:verify-readmes
+```
 
 ## npm Publication
 

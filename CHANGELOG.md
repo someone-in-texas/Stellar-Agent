@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.3
+
+- Added npm-facing README files for every public `@stellar-agent/*` package and package-specific npm homepage links.
+- Added root and package README guidance for installing `@stellar-agent/cli`, choosing scoped packages, and previewing npm README content before release.
+- Added release checks that require package READMEs in source and verify `package/README.md` is present in every packed npm tarball.
+- Added `stellar-agent --version --json` for scripts that need machine-readable CLI version output.
+- Updated release notes and npm package descriptions for README/package-page changes.
+
 ## 0.4.2
 
 - Added Aquarius AMM deployment discovery, pool inspection, account-position reads, LP deposit/withdraw preflight, swap quote/preflight, and rewards inspection.

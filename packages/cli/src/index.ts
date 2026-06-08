@@ -73,6 +73,7 @@ interface CliOptions {
   verbose?: boolean;
   quiet?: boolean;
   noCache?: boolean;
+  version?: boolean;
 }
 
 interface CliContext {
@@ -86,11 +87,11 @@ export function buildProgram(): Command {
   program
     .name("stellar-agent")
     .description("Stellar Agent Bridge\n\nSafe agentic payments on Stellar from your terminal.")
-    .version(VERSION)
     .option("--profile <name>", "Network profile to use: testnet, mainnet, local")
     .option("--config <path>", "Path to config file")
     .option("--policy <path>", "Path to policy file")
     .option("--json", "Print machine-readable JSON")
+    .option("--version", "Print version")
     .option("--no-color", "Disable colored output")
     .option("--verbose", "Print additional diagnostics")
     .option("--quiet", "Suppress nonessential output")
@@ -137,6 +138,15 @@ Common commands:
   addReceiptCommands(program);
   addCacheCommands(program);
   addMainnetCommands(program);
+
+  program.action(() => {
+    const options = program.opts() as CliOptions;
+    if (options.version) {
+      printVersion(options);
+      return;
+    }
+    program.outputHelp();
+  });
 
   return program;
 }
@@ -4123,6 +4133,15 @@ function printSuccess(options: CliOptions, data: unknown, humanMessage: string):
     process.stdout.write(`${humanMessage}\n`);
     if (data !== undefined) process.stdout.write(`${JSON.stringify(redactSensitive(data), null, 2)}\n`);
   }
+}
+
+function printVersion(options: CliOptions): void {
+  process.exitCode = EXIT_CODES.success;
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(ok({ version: VERSION }))}\n`);
+    return;
+  }
+  process.stdout.write(`${VERSION}\n`);
 }
 
 function printError(options: CliOptions, error: unknown): void {
