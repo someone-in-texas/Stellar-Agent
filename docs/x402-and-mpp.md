@@ -53,10 +53,20 @@ Flow:
 
 The local demo binds proofs to the advertised resource and nonce, requires payer metadata, and rejects replay of a previously accepted transaction hash. Resource binding includes the URL origin, path, and query string, so a payment requirement for `?item=cheap` does not satisfy a request for `?item=expensive`.
 
+The reusable verifier in `@stellar-agent/x402-client` can validate a proof against Horizon transaction evidence. It checks the transaction hash, one-use replay state, requirement freshness, payment success, payer, recipient, amount, asset, resource, and nonce. CI-safe examples can still use mocked settlement, but Horizon verification is the real Testnet path for merchant server examples.
+
 The demo paid API is available under `examples/paid-api-demo`:
 
 ```bash
 STELLAR_AGENT_DEMO_RECIPIENT=G... pnpm --filter @stellar-agent/paid-api-demo start
+```
+
+The generated scaffold from `stellar-agent x402 init-server` also includes a dependency-free Horizon verifier:
+
+```bash
+stellar-agent x402 init-server --out ./paid-api-server --json
+X402_DESTINATION=G... X402_HORIZON_URL=https://horizon-testnet.stellar.org npm --prefix ./paid-api-server start
+stellar-agent pay x402 http://127.0.0.1:8787/paid-report --allow-localhost-demo --json
 ```
 
 ## Local MPP Demo

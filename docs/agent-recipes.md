@@ -37,7 +37,7 @@ stellar-agent x402 init-server --out ./paid-api-server --json
 X402_DESTINATION=G... npm --prefix ./paid-api-server start
 ```
 
-Replace the scaffold verifier before using it outside a local Testnet experiment.
+The scaffold verifies `X-Payment` proofs through Testnet Horizon before serving paid content. Treat it as a local Testnet example, not a production facilitator.
 
 ## Mainnet External-Signer Agent Wallet
 

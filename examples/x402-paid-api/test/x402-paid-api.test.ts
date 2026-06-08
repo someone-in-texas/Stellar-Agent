@@ -186,6 +186,73 @@ describe("examples/x402-paid-api", () => {
     }
   });
 
+  it("supports Horizon-style verification with injected Stellar payment evidence", async () => {
+    const server = await startX402PaidApi({
+      recipient,
+      verificationMode: "horizon",
+      loadPayment: async (proof) => ({
+        transactionHash: proof.transactionHash,
+        successful: true,
+        ledger: 456,
+        operations: [
+          {
+            source: proof.payer,
+            destination: proof.recipient,
+            asset: proof.asset,
+            amount: proof.amount
+          }
+        ]
+      })
+    });
+    try {
+      const challenge = await fetch(server.paidUrl);
+      const requirement = await parseX402Requirement(challenge);
+      const proof = proofForRequirement(requirement, "e".repeat(64));
+      const response = await fetch(server.paidUrl, { headers: { "X-Payment": JSON.stringify(proof) } });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        settlement: {
+          mode: "horizon",
+          transactionHash: proof.transactionHash,
+          ledger: 456
+        }
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("rejects Horizon-style verification when settlement evidence pays another destination", async () => {
+    const server = await startX402PaidApi({
+      recipient,
+      verificationMode: "horizon",
+      loadPayment: async (proof) => ({
+        transactionHash: proof.transactionHash,
+        successful: true,
+        operations: [
+          {
+            source: proof.payer,
+            destination: "GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCWHF",
+            asset: proof.asset,
+            amount: proof.amount
+          }
+        ]
+      })
+    });
+    try {
+      const challenge = await fetch(server.paidUrl);
+      const requirement = await parseX402Requirement(challenge);
+      const response = await fetch(server.paidUrl, {
+        headers: { "X-Payment": JSON.stringify(proofForRequirement(requirement, "f".repeat(64))) }
+      });
+      expect(response.status).toBe(402);
+      await expect(response.json()).resolves.toEqual({ ok: false, error: "payment_operation_mismatch" });
+    } finally {
+      await server.close();
+    }
+  });
+
   it("loads copied .env values before server startup reads settings", async () => {
     const root = await mkdtemp(join(tmpdir(), "stellar-agent-x402-env-"));
     const envPath = join(root, ".env");

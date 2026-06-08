@@ -1,5 +1,6 @@
 import {
   NetworkProfile,
+  TESTNET_PROFILE,
   PaymentRequest,
   StellarAgentError,
   TestnetWallet,
@@ -20,6 +21,8 @@ export interface X402PaymentRequirement {
   recipient: string;
   resource: string;
   nonce: string;
+  issuedAt?: string;
+  expiresAt?: string;
   memo?: string;
 }
 
@@ -34,7 +37,48 @@ export interface X402PaymentProof {
   amount: string;
   resource: string;
   nonce: string;
+  submittedAt?: string;
 }
+
+export interface X402VerifiedPaymentOperation {
+  source: string;
+  destination: string;
+  asset: string;
+  amount: string;
+}
+
+export interface X402VerifiedPayment {
+  transactionHash: string;
+  successful: boolean;
+  ledger?: number;
+  createdAt?: string;
+  memo?: string;
+  operations: X402VerifiedPaymentOperation[];
+}
+
+export type X402PaymentLoader = (proof: X402PaymentProof) => Promise<X402VerifiedPayment | null>;
+
+export type X402PaymentVerification =
+  | {
+      ok: true;
+      settlement: {
+        mode: "horizon" | "mock";
+        transactionHash: string;
+        ledger?: number;
+        createdAt?: string;
+        operation: X402VerifiedPaymentOperation;
+      };
+    }
+  | {
+      ok: false;
+      error:
+        | "invalid_payment_proof"
+        | "payment_nonce_expired"
+        | "payment_proof_replayed"
+        | "payment_settlement_unavailable"
+        | "payment_not_successful"
+        | "payment_operation_mismatch";
+    };
 
 export interface X402PaymentResult {
   firstStatus: number;
@@ -142,6 +186,7 @@ export async function runX402Payment(args: {
     amount: parseAmount(requirement.amount).value,
     resource: requirement.resource,
     nonce: requirement.nonce,
+    submittedAt: new Date().toISOString(),
     ...(transaction.ledger === undefined ? {} : { ledger: transaction.ledger })
   };
   const paid = await fetchResource(fetchImpl, args.url, {
@@ -242,7 +287,149 @@ export function validateRequirement(value: unknown): X402PaymentRequirement {
     asset: candidate.asset,
     resource: candidate.resource,
     nonce: candidate.nonce,
+    ...(candidate.issuedAt === undefined ? {} : { issuedAt: candidate.issuedAt }),
+    ...(candidate.expiresAt === undefined ? {} : { expiresAt: candidate.expiresAt }),
     ...(candidate.memo === undefined ? {} : { memo: candidate.memo })
+  };
+}
+
+export async function verifyX402PaymentProof(args: {
+  proof: X402PaymentProof;
+  requirement: X402PaymentRequirement;
+  acceptedTransactions?: Set<string>;
+  mode?: "horizon" | "mock";
+  now?: Date;
+  maxChallengeAgeMs?: number;
+  horizonUrl?: string | null;
+  fetchImpl?: typeof fetch;
+  loadPayment?: X402PaymentLoader;
+}): Promise<X402PaymentVerification> {
+  const expectedAmount = parseAmount(args.requirement.amount, args.requirement.asset).value;
+  if (
+    args.proof.protocol !== args.requirement.protocol ||
+    args.proof.version !== args.requirement.version ||
+    !/^[a-f0-9]{64}$/i.test(args.proof.transactionHash) ||
+    !args.proof.payer ||
+    args.requirement.network !== "testnet" ||
+    args.proof.recipient !== args.requirement.recipient ||
+    args.proof.asset !== args.requirement.asset ||
+    parseAmount(args.proof.amount, args.proof.asset).value !== expectedAmount ||
+    args.proof.resource !== args.requirement.resource ||
+    args.proof.nonce !== args.requirement.nonce
+  ) {
+    return { ok: false, error: "invalid_payment_proof" };
+  }
+  if (isExpiredRequirement(args.requirement, args.now ?? new Date(), args.maxChallengeAgeMs ?? 5 * 60 * 1000)) {
+    return { ok: false, error: "payment_nonce_expired" };
+  }
+  if (args.acceptedTransactions?.has(args.proof.transactionHash)) {
+    return { ok: false, error: "payment_proof_replayed" };
+  }
+
+  const mode = args.mode ?? "horizon";
+  const payment = args.loadPayment
+    ? await args.loadPayment(args.proof)
+    : mode === "mock"
+      ? mockVerifiedPayment(args.proof)
+      : await loadX402PaymentFromHorizon({
+          transactionHash: args.proof.transactionHash,
+          horizonUrl: args.horizonUrl ?? TESTNET_PROFILE.horizonUrl,
+          ...(args.fetchImpl === undefined ? {} : { fetchImpl: args.fetchImpl })
+        });
+  if (!payment) return { ok: false, error: "payment_settlement_unavailable" };
+  if (!payment.successful) return { ok: false, error: "payment_not_successful" };
+
+  const operation = payment.operations.find(
+    (candidate) =>
+      candidate.source === args.proof.payer &&
+      candidate.destination === args.requirement.recipient &&
+      candidate.asset === args.requirement.asset &&
+      parseAmount(candidate.amount, candidate.asset).value === expectedAmount
+  );
+  if (!operation) return { ok: false, error: "payment_operation_mismatch" };
+
+  args.acceptedTransactions?.add(args.proof.transactionHash);
+  return {
+    ok: true,
+    settlement: {
+      mode,
+      transactionHash: payment.transactionHash,
+      ...(payment.ledger === undefined ? {} : { ledger: payment.ledger }),
+      ...(payment.createdAt === undefined ? {} : { createdAt: payment.createdAt }),
+      operation
+    }
+  };
+}
+
+export async function loadX402PaymentFromHorizon(args: {
+  transactionHash: string;
+  horizonUrl?: string | null;
+  fetchImpl?: typeof fetch;
+}): Promise<X402VerifiedPayment | null> {
+  if (!args.horizonUrl) return null;
+  const fetchImpl = args.fetchImpl ?? fetch;
+  const baseUrl = args.horizonUrl.replace(/\/$/, "");
+  const transaction = await fetchJson(fetchImpl, `${baseUrl}/transactions/${args.transactionHash}`);
+  if (!transaction) return null;
+  const operationsUrl = `${baseUrl}/transactions/${args.transactionHash}/operations?limit=200`;
+  const operations = await fetchJson(fetchImpl, operationsUrl);
+  const records = Array.isArray(operations?._embedded?.records) ? operations._embedded.records : [];
+  return {
+    transactionHash: String(transaction.hash ?? args.transactionHash),
+    successful: transaction.successful === true,
+    ...(typeof transaction.ledger === "number" ? { ledger: transaction.ledger } : {}),
+    ...(typeof transaction.created_at === "string" ? { createdAt: transaction.created_at } : {}),
+    ...(typeof transaction.memo === "string" ? { memo: transaction.memo } : {}),
+    operations: records.flatMap((record: any) => {
+      if (record?.type !== "payment") return [];
+      const asset = record.asset_type === "native" ? "XLM" : `${record.asset_code}:${record.asset_issuer}`;
+      if (!record.from || !record.to || !record.amount) return [];
+      return [
+        {
+          source: String(record.from),
+          destination: String(record.to),
+          asset,
+          amount: String(record.amount)
+        }
+      ];
+    })
+  };
+}
+
+async function fetchJson(fetchImpl: typeof fetch, url: string): Promise<any | null> {
+  try {
+    const response = await fetchImpl(url);
+    if (!response.ok) return null;
+    return response.json();
+  } catch {
+    return null;
+  }
+}
+
+function isExpiredRequirement(requirement: X402PaymentRequirement, now: Date, maxChallengeAgeMs: number): boolean {
+  if (requirement.expiresAt && Number.isFinite(Date.parse(requirement.expiresAt)) && Date.parse(requirement.expiresAt) < now.getTime()) {
+    return true;
+  }
+  if (!requirement.issuedAt) return false;
+  const issuedAt = Date.parse(requirement.issuedAt);
+  if (!Number.isFinite(issuedAt)) return true;
+  return now.getTime() - issuedAt > maxChallengeAgeMs;
+}
+
+function mockVerifiedPayment(proof: X402PaymentProof): X402VerifiedPayment {
+  return {
+    transactionHash: proof.transactionHash,
+    successful: true,
+    ...(proof.ledger === undefined ? {} : { ledger: proof.ledger }),
+    ...(proof.submittedAt === undefined ? {} : { createdAt: proof.submittedAt }),
+    operations: [
+      {
+        source: proof.payer,
+        destination: proof.recipient,
+        asset: proof.asset,
+        amount: proof.amount
+      }
+    ]
   };
 }
 
@@ -252,6 +439,9 @@ export async function startPaidApiDemo(args: {
   asset?: string;
   port?: number;
   host?: string;
+  verificationMode?: "mock" | "horizon";
+  horizonUrl?: string | null;
+  loadPayment?: X402PaymentLoader;
 }): Promise<{
   url: string;
   close(): Promise<void>;
@@ -260,9 +450,10 @@ export async function startPaidApiDemo(args: {
   const amount = args.amount ?? "0.0000001";
   const asset = args.asset ?? "XLM";
   parseAmount(amount, asset);
+  const maxChallengeAgeMs = 5 * 60 * 1000;
   const issuedRequirements = new Map<string, X402PaymentRequirement>();
   const acceptedTransactions = new Set<string>();
-  const server = createServer((request: IncomingMessage, response: ServerResponse) => {
+  const server = createServer(async (request: IncomingMessage, response: ServerResponse) => {
     if (request.url?.startsWith("/health")) {
       writeJson(response, 200, { ok: true });
       return;
@@ -274,6 +465,7 @@ export async function startPaidApiDemo(args: {
     const proofHeader = request.headers["x-payment"];
     if (!proofHeader) {
       const resource = paidResource(host, server);
+      const issuedAt = new Date();
       const requirement: X402PaymentRequirement = {
         protocol: "stellar-agent-local-x402",
         version: 1,
@@ -283,6 +475,8 @@ export async function startPaidApiDemo(args: {
         recipient: args.recipient,
         resource,
         nonce: makeId("x402_req"),
+        issuedAt: issuedAt.toISOString(),
+        expiresAt: new Date(issuedAt.getTime() + maxChallengeAgeMs).toISOString(),
         memo: "x402-demo"
       };
       issuedRequirements.set(requirement.nonce, requirement);
@@ -294,13 +488,7 @@ export async function startPaidApiDemo(args: {
     }
     const proof = parseProofHeader(proofHeader);
     const resource = paidResource(host, server);
-    if (
-      !proof ||
-      proof.protocol !== "stellar-agent-local-x402" ||
-      proof.version !== 1 ||
-      !proof.transactionHash ||
-      !proof.payer
-    ) {
+    if (!proof) {
       writeJson(response, 402, { ok: false, error: "invalid_payment_proof" });
       return;
     }
@@ -313,19 +501,20 @@ export async function startPaidApiDemo(args: {
       writeJson(response, 402, { ok: false, error: "payment_nonce_not_issued" });
       return;
     }
-    if (
-      proof.recipient !== issuedRequirement.recipient ||
-      proof.asset !== issuedRequirement.asset ||
-      proof.amount !== parseAmount(issuedRequirement.amount, issuedRequirement.asset).value ||
-      proof.resource !== resource ||
-      proof.resource !== issuedRequirement.resource ||
-      proof.nonce !== issuedRequirement.nonce
-    ) {
-      writeJson(response, 402, { ok: false, error: "invalid_payment_proof" });
+    const verification = await verifyX402PaymentProof({
+      proof,
+      requirement: issuedRequirement,
+      acceptedTransactions,
+      mode: args.verificationMode ?? "mock",
+      maxChallengeAgeMs,
+      ...(args.horizonUrl === undefined ? {} : { horizonUrl: args.horizonUrl }),
+      ...(args.loadPayment === undefined ? {} : { loadPayment: args.loadPayment })
+    });
+    if (!verification.ok) {
+      writeJson(response, 402, { ok: false, error: verification.error });
       return;
     }
     issuedRequirements.delete(issuedRequirement.nonce);
-    acceptedTransactions.add(proof.transactionHash);
     writeJson(response, 200, {
       ok: true,
       id: makeId("paid_report"),
@@ -333,7 +522,8 @@ export async function startPaidApiDemo(args: {
       paid: {
         transactionHash: proof.transactionHash,
         amount: proof.amount,
-        asset: proof.asset
+        asset: proof.asset,
+        verifier: verification.settlement.mode
       }
     });
   });

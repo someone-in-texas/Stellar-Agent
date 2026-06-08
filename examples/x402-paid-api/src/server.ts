@@ -1,5 +1,10 @@
 import { makeId, parseAmount } from "@stellar-agent/core";
-import { X402PaymentProof, X402PaymentRequirement } from "@stellar-agent/x402-client";
+import {
+  X402PaymentLoader,
+  X402PaymentProof,
+  X402PaymentRequirement,
+  verifyX402PaymentProof
+} from "@stellar-agent/x402-client";
 import express, { type Express, type Request, type Response } from "express";
 import { createServer, type Server } from "node:http";
 import { loadExampleEnv } from "./env.js";
@@ -8,8 +13,10 @@ export interface X402PaidApiOptions {
   recipient: string;
   amount?: string;
   asset?: string;
-  verificationMode?: "mock" | "facilitator";
+  verificationMode?: "mock" | "horizon" | "facilitator";
   facilitatorUrl?: string;
+  horizonUrl?: string;
+  loadPayment?: X402PaymentLoader;
 }
 
 export interface StartedX402PaidApi {
@@ -53,6 +60,10 @@ export function createX402PaidApi(options: X402PaidApiOptions): Express {
       response.status(402).json({ ok: false, error: "invalid_payment_proof" });
       return;
     }
+    if (acceptedTransactions.has(proof.transactionHash)) {
+      response.status(402).json({ ok: false, error: "payment_proof_replayed" });
+      return;
+    }
 
     const issuedRequirement = proof.nonce ? issuedRequirements.get(proof.nonce) : undefined;
     if (!issuedRequirement) {
@@ -65,7 +76,9 @@ export function createX402PaidApi(options: X402PaidApiOptions): Express {
       requirement: issuedRequirement,
       acceptedTransactions,
       verificationMode,
-      facilitatorUrl: options.facilitatorUrl
+      facilitatorUrl: options.facilitatorUrl,
+      ...(options.horizonUrl === undefined ? {} : { horizonUrl: options.horizonUrl }),
+      ...(options.loadPayment === undefined ? {} : { loadPayment: options.loadPayment })
     });
     if (!verification.ok) {
       response.status(402).json({ ok: false, error: verification.error });
@@ -130,6 +143,7 @@ export function paymentRequirement(args: {
   resource: string;
   nonce?: string;
 }): X402PaymentRequirement {
+  const issuedAt = new Date();
   return {
     protocol: "stellar-agent-local-x402",
     version: 1,
@@ -139,6 +153,8 @@ export function paymentRequirement(args: {
     recipient: args.recipient,
     resource: args.resource,
     nonce: args.nonce ?? makeId("x402_req"),
+    issuedAt: issuedAt.toISOString(),
+    expiresAt: new Date(issuedAt.getTime() + 5 * 60 * 1000).toISOString(),
     memo: "x402-example"
   };
 }
@@ -147,37 +163,37 @@ async function verifyPaymentProof(args: {
   proof: X402PaymentProof;
   requirement: X402PaymentRequirement;
   acceptedTransactions: Set<string>;
-  verificationMode: "mock" | "facilitator";
+  verificationMode: "mock" | "horizon" | "facilitator";
   facilitatorUrl?: string;
+  horizonUrl?: string;
+  loadPayment?: X402PaymentLoader;
 }): Promise<{ ok: true; settlement: Record<string, unknown> } | { ok: false; error: string }> {
-  if (
-    args.proof.protocol !== args.requirement.protocol ||
-    args.proof.version !== args.requirement.version ||
-    !args.proof.transactionHash ||
-    args.proof.recipient !== args.requirement.recipient ||
-    args.proof.asset !== args.requirement.asset ||
-    args.proof.amount !== parseAmount(args.requirement.amount, args.requirement.asset).value ||
-    args.proof.resource !== args.requirement.resource ||
-    args.proof.nonce !== args.requirement.nonce
-  ) {
-    return { ok: false, error: "invalid_payment_proof" };
-  }
-  if (args.acceptedTransactions.has(args.proof.transactionHash)) {
-    return { ok: false, error: "payment_proof_replayed" };
-  }
   if (args.verificationMode === "facilitator") {
+    const local = await verifyX402PaymentProof({
+      proof: args.proof,
+      requirement: args.requirement,
+      mode: "mock"
+    });
+    if (!local.ok) return local;
+    if (args.acceptedTransactions.has(args.proof.transactionHash)) {
+      return { ok: false, error: "payment_proof_replayed" };
+    }
     const facilitator = await verifyWithFacilitator(args.facilitatorUrl, args.proof);
     if (facilitator.ok) args.acceptedTransactions.add(args.proof.transactionHash);
     return facilitator;
   }
-  args.acceptedTransactions.add(args.proof.transactionHash);
+  const verification = await verifyX402PaymentProof({
+    proof: args.proof,
+    requirement: args.requirement,
+    acceptedTransactions: args.acceptedTransactions,
+    mode: args.verificationMode,
+    ...(args.horizonUrl === undefined ? {} : { horizonUrl: args.horizonUrl }),
+    ...(args.loadPayment === undefined ? {} : { loadPayment: args.loadPayment })
+  });
+  if (!verification.ok) return verification;
   return {
     ok: true,
-    settlement: {
-      mode: "mock",
-      transactionHash: args.proof.transactionHash,
-      note: "Local verification checked the payment proof shape. A facilitator should verify settlement on Testnet."
-    }
+    settlement: verification.settlement
   };
 }
 
@@ -230,8 +246,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     amount: process.env.X402_PRICE ?? "0.0000001",
     asset: process.env.X402_ASSET ?? "XLM",
     port: process.env.PORT ? Number.parseInt(process.env.PORT, 10) : 8787,
-    verificationMode: process.env.X402_VERIFICATION_MODE === "facilitator" ? "facilitator" : "mock",
-    facilitatorUrl: process.env.X402_FACILITATOR_URL
+    verificationMode:
+      process.env.X402_VERIFICATION_MODE === "facilitator"
+        ? "facilitator"
+        : process.env.X402_VERIFICATION_MODE === "horizon"
+          ? "horizon"
+          : "mock",
+    facilitatorUrl: process.env.X402_FACILITATOR_URL,
+    horizonUrl: process.env.X402_HORIZON_URL
   });
   console.log(`x402 paid API example listening at ${server.baseUrl}`);
   console.log(`free: ${server.baseUrl}/free`);

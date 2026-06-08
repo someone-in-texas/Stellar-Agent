@@ -865,7 +865,11 @@ describe("CLI contract receipts", () => {
         realFunds: false
       }
     });
-    await expect(readFile(join(out, "server.mjs"), "utf8")).resolves.toContain("payment_required");
+    const server = await readFile(join(out, "server.mjs"), "utf8");
+    expect(server).toContain("payment-required");
+    expect(server).toContain("verifyPaymentProof");
+    expect(server).toContain("payment_proof_replayed");
+    expect(server).not.toContain("Replace this demo verifier before production.");
 
     const again = await runCli(["--config", configPath, "--json", "x402", "init-server", "--out", out]);
     expect(again).toMatchObject({

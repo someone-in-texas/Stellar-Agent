@@ -5969,41 +5969,177 @@ function x402ServerScaffoldFiles(): Record<string, string> {
       null,
       2
     )}\n`,
-    "server.mjs": `import { createServer } from "node:http";
+    "server.mjs": `import { randomUUID } from "node:crypto";
+import { createServer } from "node:http";
 
 const port = Number(process.env.PORT ?? 8787);
-const price = process.env.X402_PRICE ?? "0.0000001 XLM";
+const amount = normalizeAmount(process.env.X402_AMOUNT ?? process.env.X402_PRICE ?? "0.0000001");
+const asset = process.env.X402_ASSET ?? "XLM";
 const destination = process.env.X402_DESTINATION ?? "set-testnet-merchant-public-key";
+const horizonUrl = (process.env.X402_HORIZON_URL ?? "https://horizon-testnet.stellar.org").replace(/\\/$/, "");
+const maxAgeMs = Number(process.env.X402_MAX_AGE_MS ?? 300000);
+const issuedRequirements = new Map();
+const acceptedTransactions = new Set();
 
-const server = createServer((request, response) => {
+const server = createServer(async (request, response) => {
   if (request.url === "/health") {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ ok: true }));
     return;
   }
-
-  const payment = request.headers["x-payment"];
-  if (!payment) {
-    response.writeHead(402, {
-      "content-type": "application/json",
-      "x-accepts-payment": JSON.stringify({
-        network: "testnet",
-        asset: "XLM",
-        amount: price,
-        destination
-      })
-    });
-    response.end(JSON.stringify({ error: "payment_required", network: "testnet", price, destination }));
+  if (!request.url?.startsWith("/paid-report")) {
+    writeJson(response, 404, { ok: false, error: "not_found" });
     return;
   }
 
+  const payment = request.headers["x-payment"];
+  if (!payment) {
+    const requirement = paymentRequirement(request);
+    issuedRequirements.set(requirement.nonce, requirement);
+    const encoded = JSON.stringify(requirement);
+    response.writeHead(402, {
+      "content-type": "application/json",
+      "payment-required": encoded,
+      "x-payment-required": encoded
+    });
+    response.end(encoded);
+    return;
+  }
+
+  const proof = parsePaymentProof(payment);
+  if (!proof) {
+    writeJson(response, 402, { ok: false, error: "invalid_payment_proof" });
+    return;
+  }
+  if (acceptedTransactions.has(proof.transactionHash)) {
+    writeJson(response, 402, { ok: false, error: "payment_proof_replayed" });
+    return;
+  }
+  const requirement = issuedRequirements.get(proof.nonce);
+  if (!requirement) {
+    writeJson(response, 402, { ok: false, error: "payment_nonce_not_issued" });
+    return;
+  }
+  const verification = await verifyPaymentProof(proof, requirement);
+  if (!verification.ok) {
+    writeJson(response, 402, { ok: false, error: verification.error });
+    return;
+  }
+  issuedRequirements.delete(requirement.nonce);
+  acceptedTransactions.add(proof.transactionHash);
   response.writeHead(200, { "content-type": "application/json" });
-  response.end(JSON.stringify({ ok: true, paid: true, message: "Replace this demo verifier before production." }));
+  response.end(
+    JSON.stringify({
+      ok: true,
+      paid: true,
+      message: "Verified Testnet x402 payment.",
+      settlement: verification.settlement
+    })
+  );
 });
 
 server.listen(port, () => {
   console.log(\`x402 demo server listening on http://127.0.0.1:\${port}\`);
+  console.log(\`paid: http://127.0.0.1:\${port}/paid-report\`);
 });
+
+function paymentRequirement(request) {
+  const issuedAt = new Date();
+  const resource = new URL(request.url, \`http://\${request.headers.host}\`);
+  return {
+    protocol: "stellar-agent-local-x402",
+    version: 1,
+    network: "testnet",
+    asset,
+    amount,
+    recipient: destination,
+    resource: resource.toString(),
+    nonce: \`x402_req_\${randomUUID()}\`,
+    issuedAt: issuedAt.toISOString(),
+    expiresAt: new Date(issuedAt.getTime() + maxAgeMs).toISOString(),
+    memo: "x402-scaffold"
+  };
+}
+
+async function verifyPaymentProof(proof, requirement) {
+  if (
+    proof.protocol !== requirement.protocol ||
+    proof.version !== requirement.version ||
+    !/^[a-f0-9]{64}$/i.test(proof.transactionHash ?? "") ||
+    !proof.payer ||
+    proof.recipient !== requirement.recipient ||
+    proof.asset !== requirement.asset ||
+    normalizeAmount(proof.amount) !== normalizeAmount(requirement.amount) ||
+    proof.resource !== requirement.resource ||
+    proof.nonce !== requirement.nonce
+  ) {
+    return { ok: false, error: "invalid_payment_proof" };
+  }
+  if (Date.parse(requirement.expiresAt) < Date.now()) {
+    return { ok: false, error: "payment_nonce_expired" };
+  }
+  if (acceptedTransactions.has(proof.transactionHash)) {
+    return { ok: false, error: "payment_proof_replayed" };
+  }
+
+  const transaction = await loadHorizonJson(\`\${horizonUrl}/transactions/\${proof.transactionHash}\`);
+  if (!transaction) return { ok: false, error: "payment_settlement_unavailable" };
+  if (transaction.successful !== true) return { ok: false, error: "payment_not_successful" };
+  const operations = await loadHorizonJson(\`\${horizonUrl}/transactions/\${proof.transactionHash}/operations?limit=200\`);
+  const paymentOp = operations?._embedded?.records?.find((record) => {
+    const recordAsset = record.asset_type === "native" ? "XLM" : \`\${record.asset_code}:\${record.asset_issuer}\`;
+    return (
+      record.type === "payment" &&
+      record.from === proof.payer &&
+      record.to === requirement.recipient &&
+      recordAsset === requirement.asset &&
+      normalizeAmount(record.amount) === normalizeAmount(requirement.amount)
+    );
+  });
+  if (!paymentOp) return { ok: false, error: "payment_operation_mismatch" };
+  return {
+    ok: true,
+    settlement: {
+      transactionHash: proof.transactionHash,
+      ledger: transaction.ledger,
+      createdAt: transaction.created_at,
+      source: paymentOp.from,
+      destination: paymentOp.to,
+      amount: paymentOp.amount,
+      asset: paymentOp.asset_type === "native" ? "XLM" : \`\${paymentOp.asset_code}:\${paymentOp.asset_issuer}\`
+    }
+  };
+}
+
+async function loadHorizonJson(url) {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    return response.json();
+  } catch {
+    return null;
+  }
+}
+
+function parsePaymentProof(header) {
+  try {
+    return JSON.parse(Array.isArray(header) ? header[0] : header);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeAmount(value) {
+  const [numeric] = String(value).trim().split(/\\s+/);
+  if (!/^\\d+(\\.\\d+)?$/.test(numeric)) throw new Error(\`Invalid amount: \${value}\`);
+  const [whole, fraction = ""] = numeric.split(".");
+  return \`\${BigInt(whole)}.\${fraction.padEnd(7, "0").slice(0, 7)}\`;
+}
+
+function writeJson(response, status, body) {
+  response.writeHead(status, { "content-type": "application/json" });
+  response.end(JSON.stringify(body));
+}
 `,
     "README.md": `# Stellar Agent x402 Testnet Server
 
@@ -6021,7 +6157,23 @@ Configure the destination with a Testnet merchant public key:
 X402_DESTINATION=G... npm start
 \`\`\`
 
-This scaffold does not verify payments. Replace the demo verifier before using it outside a local Testnet experiment.
+The server issues nonce-bound \`stellar-agent-local-x402\` requirements and verifies each \`X-Payment\` proof against Horizon before serving \`/paid-report\`. The verifier checks:
+
+- transaction hash format and one-use replay protection
+- requirement freshness
+- Testnet payment success
+- payment source, destination, amount, and asset
+- exact paid resource and nonce binding
+
+Optional settings:
+
+\`\`\`sh
+X402_AMOUNT=0.0000001 X402_ASSET=XLM X402_HORIZON_URL=https://horizon-testnet.stellar.org npm start
+\`\`\`
+
+\`X402_PRICE\` is also accepted as a backward-compatible alias for \`X402_AMOUNT\`.
+
+This is still a local Testnet example, not a production facilitator. Keep policy evaluation and receipt persistence on the buyer side with \`stellar-agent pay x402 ... --json\`.
 `
   };
 }

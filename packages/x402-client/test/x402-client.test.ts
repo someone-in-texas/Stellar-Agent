@@ -2,7 +2,13 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseX402Requirement, runX402Payment, startPaidApiDemo } from "../src/index.js";
+import {
+  loadX402PaymentFromHorizon,
+  parseX402Requirement,
+  runX402Payment,
+  startPaidApiDemo,
+  verifyX402PaymentProof
+} from "../src/index.js";
 import { DEFAULT_TESTNET_POLICY } from "@stellar-agent/policy";
 
 const recipient = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
@@ -104,6 +110,182 @@ describe("x402 client", () => {
     } finally {
       await server.close();
     }
+  });
+
+  it("verifies x402 proofs against loaded Stellar payment evidence", async () => {
+    const requirement = {
+      protocol: "stellar-agent-local-x402" as const,
+      version: 1 as const,
+      network: "testnet" as const,
+      asset: "XLM",
+      amount: "0.0000001",
+      recipient,
+      resource: "http://127.0.0.1/paid-report",
+      nonce: "x402_req_1",
+      issuedAt: new Date("2026-06-08T12:00:00.000Z").toISOString()
+    };
+    const proof = proofForRequirement(requirement, "a".repeat(64));
+    const acceptedTransactions = new Set<string>();
+
+    const verification = await verifyX402PaymentProof({
+      proof,
+      requirement,
+      acceptedTransactions,
+      now: new Date("2026-06-08T12:01:00.000Z"),
+      loadPayment: async () => ({
+        transactionHash: proof.transactionHash,
+        successful: true,
+        ledger: 123,
+        createdAt: "2026-06-08T12:00:20.000Z",
+        operations: [
+          {
+            source: proof.payer,
+            destination: requirement.recipient,
+            asset: requirement.asset,
+            amount: requirement.amount
+          }
+        ]
+      })
+    });
+
+    expect(verification).toMatchObject({
+      ok: true,
+      settlement: {
+        mode: "horizon",
+        transactionHash: proof.transactionHash,
+        operation: {
+          source: proof.payer,
+          destination: requirement.recipient,
+          amount: requirement.amount,
+          asset: requirement.asset
+        }
+      }
+    });
+    expect(acceptedTransactions.has(proof.transactionHash)).toBe(true);
+
+    await expect(
+      verifyX402PaymentProof({
+        proof,
+        requirement,
+        acceptedTransactions,
+        now: new Date("2026-06-08T12:01:00.000Z"),
+        loadPayment: async () => null
+      })
+    ).resolves.toEqual({ ok: false, error: "payment_proof_replayed" });
+  });
+
+  it("rejects x402 proofs when Stellar payment evidence does not match", async () => {
+    const requirement = {
+      protocol: "stellar-agent-local-x402" as const,
+      version: 1 as const,
+      network: "testnet" as const,
+      asset: "XLM",
+      amount: "0.0000001",
+      recipient,
+      resource: "http://127.0.0.1/paid-report",
+      nonce: "x402_req_1",
+      issuedAt: new Date("2026-06-08T12:00:00.000Z").toISOString()
+    };
+    const proof = proofForRequirement(requirement, "b".repeat(64));
+
+    await expect(
+      verifyX402PaymentProof({
+        proof,
+        requirement,
+        now: new Date("2026-06-08T12:01:00.000Z"),
+        loadPayment: async () => ({
+          transactionHash: proof.transactionHash,
+          successful: true,
+          operations: [
+            {
+              source: proof.payer,
+              destination: "GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCWHF",
+              asset: requirement.asset,
+              amount: requirement.amount
+            }
+          ]
+        })
+      })
+    ).resolves.toEqual({ ok: false, error: "payment_operation_mismatch" });
+  });
+
+  it("rejects expired x402 payment requirements", async () => {
+    const requirement = {
+      protocol: "stellar-agent-local-x402" as const,
+      version: 1 as const,
+      network: "testnet" as const,
+      asset: "XLM",
+      amount: "0.0000001",
+      recipient,
+      resource: "http://127.0.0.1/paid-report",
+      nonce: "x402_req_1",
+      issuedAt: new Date("2026-06-08T12:00:00.000Z").toISOString(),
+      expiresAt: new Date("2026-06-08T12:02:00.000Z").toISOString()
+    };
+
+    await expect(
+      verifyX402PaymentProof({
+        proof: proofForRequirement(requirement, "c".repeat(64)),
+        requirement,
+        now: new Date("2026-06-08T12:03:00.000Z"),
+        loadPayment: async () => null
+      })
+    ).resolves.toEqual({ ok: false, error: "payment_nonce_expired" });
+  });
+
+  it("loads matching payment operations from Horizon transaction records", async () => {
+    const transactionHash = "d".repeat(64);
+    const fetchImpl = async (url: string | URL | Request) => {
+      const href = String(url);
+      if (href.endsWith(`/transactions/${transactionHash}`)) {
+        return new Response(
+          JSON.stringify({ hash: transactionHash, successful: true, ledger: 321, created_at: "2026-06-08T12:00:00Z" })
+        );
+      }
+      if (href.endsWith(`/transactions/${transactionHash}/operations?limit=200`)) {
+        return new Response(
+          JSON.stringify({
+            _embedded: {
+              records: [
+                {
+                  type: "payment",
+                  from: source.publicKey,
+                  to: recipient,
+                  asset_type: "native",
+                  amount: "0.0000001"
+                }
+              ]
+            }
+          })
+        );
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    await expect(
+      loadX402PaymentFromHorizon({
+        transactionHash,
+        horizonUrl: "https://horizon-testnet.example",
+        fetchImpl: fetchImpl as typeof fetch
+      })
+    ).resolves.toMatchObject({
+      transactionHash,
+      successful: true,
+      ledger: 321,
+      operations: [{ source: source.publicKey, destination: recipient, asset: "XLM", amount: "0.0000001" }]
+    });
+  });
+
+  it("treats unavailable Horizon settlement evidence as verification failure", async () => {
+    await expect(
+      loadX402PaymentFromHorizon({
+        transactionHash: "e".repeat(64),
+        horizonUrl: "https://horizon-testnet.example",
+        fetchImpl: (async () => {
+          throw new Error("network unavailable");
+        }) as typeof fetch
+      })
+    ).resolves.toBeNull();
   });
 
   it("issues one x402 nonce per paid challenge", async () => {
