@@ -102,7 +102,7 @@ export async function armAgentWallet(state: PlaygroundState): Promise<MainnetAge
       message: "Mainnet agent wallet requires at least one destination allowlist entry."
     });
   }
-  assertCoreMainnetAgentWalletBalanceWithinBudget(wallet, simulatedBalances(state));
+  assertCoreMainnetAgentWalletBalanceWithinBudget(wallet, simulatedBalances(state, wallet));
   await mkdir(state.receiptsDir, { recursive: true });
   const armedBase: MainnetAgentWalletConfig = {
     ...wallet,
@@ -169,7 +169,7 @@ export async function preflightSpend(
     policyPath: state.policyPath,
     policyFingerprint: policyFingerprint(state.policy),
     spendHistory: history,
-    balances: simulatedBalances(state)
+    balances: simulatedBalances(state, wallet)
   });
   const policyDecision = evaluatePaymentRequest(state.policy, request, history);
   if (policyDecision.status === "denied") {
@@ -281,8 +281,9 @@ function requireWallet(state: PlaygroundState): MainnetAgentWalletConfig {
   return state.config.mainnetAgentWallet;
 }
 
-function simulatedBalances(state: PlaygroundState): Array<{ asset: string; balance: string }> {
-  return [{ asset: "XLM", balance: state.simulatedWalletBalance }];
+function simulatedBalances(state: PlaygroundState, wallet = requireWallet(state)): Array<{ asset: string; balance: string }> {
+  const assets = wallet.riskBudget.allowedAssets.length > 0 ? wallet.riskBudget.allowedAssets : ["XLM"];
+  return assets.map((asset) => ({ asset, balance: state.simulatedWalletBalance }));
 }
 
 function normalizeAmount(value: string, asset = "XLM"): string {

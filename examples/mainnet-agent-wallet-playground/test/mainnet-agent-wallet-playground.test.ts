@@ -138,6 +138,17 @@ describe("examples/mainnet-agent-wallet-playground", () => {
     });
   });
 
+  it("refuses simulated non-XLM wallet balances above the configured max balance", async () => {
+    const state = fixtureState();
+    configureDefaultWallet(state, { asset: issuedAsset, maxBalance: "0.1" });
+    setSimulatedWalletBalance(state, "0.2");
+    await expect(armAgentWallet(state)).rejects.toMatchObject({
+      code: "POLICY_DENIED",
+      message: "Mainnet agent-wallet balance exceeds the configured risk budget.",
+      details: { asset: issuedAsset, balance: "0.2000000", maxBalance: "0.1000000" }
+    });
+  });
+
   it("writes visible real-funds warnings into simulated receipts", async () => {
     const state = fixtureState();
     configureDefaultWallet(state);
