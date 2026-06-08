@@ -33,8 +33,12 @@ Risk-budgeted Mainnet agent wallet:
 
 - Use this only when the user explicitly asks for Mainnet.
 - First run `stellar-agent mainnet enable --i-understand-real-funds --json`.
-- Create the dedicated watch-only wallet with strict caps and an explicit destination allowlist:
+- For a new agent wallet, tell the user to create or choose a dedicated Mainnet wallet outside `stellar-agent` and provide only the public `G...` address. Do not ask for, paste, print, or store its secret key.
+- Have the user fund that wallet from a human-controlled wallet, Freighter, hardware wallet, exchange, or other external custody flow. `stellar-agent` does not Friendbot-fund Mainnet and must not simulate Mainnet funding.
+- Fund only enough for the intended risk budget, fees, and account minimums. Keep the funded balance below the configured `--max-balance`.
+- Create the dedicated watch-only agent-wallet record with strict caps and an explicit destination allowlist:
   `stellar-agent mainnet agent-wallet create --address <G...> --max-balance <amount> --daily-limit <amount> --per-tx-limit <amount> --asset XLM --allow-destination <G...> --json`.
+- After external funding, inspect `stellar-agent mainnet agent-wallet status --json`. Stop if the wallet is unfunded, unreadable, over the max balance, or reports non-ok integrity.
 - Arm only with explicit acknowledgement:
   `stellar-agent mainnet agent-wallet arm --i-understand-real-funds --json`.
 - Before requesting a Mainnet payment signature, inspect status with `stellar-agent mainnet agent-wallet status --json` and stop if integrity is not ok.

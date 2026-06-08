@@ -22,7 +22,15 @@ Risk-budgeted Mainnet agent-wallet mode is for a deliberately small, dedicated M
 
 The wallet is stored as a Mainnet public key plus risk-budget metadata. `stellar-agent` does not store a Mainnet secret key. By default, the agent-wallet guard runs before Mainnet payment-signature workflows hand unsigned XDR to a browser wallet or other external signer. Users can additionally enable autosigning for this agent wallet only; that path reads the secret key from a named environment variable at runtime and never writes it to config, logs, or receipts.
 
-Create and arm a dedicated wallet:
+Provision and fund the wallet outside `stellar-agent`:
+
+1. Create or choose a dedicated Mainnet wallet in Freighter, a hardware wallet, Stellar CLI, an exchange account withdrawal flow, or another custody tool.
+2. Keep the secret key out of chats, config files, logs, receipts, and docs. Give `stellar-agent` only the public `G...` address.
+3. Fund the wallet from a human-controlled Mainnet source. `stellar-agent` cannot Friendbot-fund Mainnet and should not be used as a Mainnet faucet or custody tool.
+4. Fund only enough for the intended risk budget, fees, and account minimums, and keep the balance below the configured `--max-balance`.
+5. Confirm the destination allowlist and caps before arming. If the use case changes, update limits deliberately and re-arm.
+
+Create and arm the dedicated watch-only wallet:
 
 ```bash
 stellar-agent mainnet enable --i-understand-real-funds --json
@@ -73,6 +81,7 @@ stellar-agent --profile mainnet tx submit-approval appr_... \
 Controls:
 
 - The wallet must be a dedicated Mainnet watch-only wallet, not an arbitrary active Testnet wallet.
+- Mainnet funding happens outside `stellar-agent`; only the public key and risk-budget metadata are stored.
 - Mainnet must already be enabled.
 - Arming requires `--i-understand-real-funds`.
 - Destination allowlists are deny-by-default; at least one allowed destination is required before arming.

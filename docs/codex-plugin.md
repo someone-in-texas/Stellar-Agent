@@ -17,7 +17,7 @@ node packages/codex-plugin/dist/cli.js manifest plugins/codex plugins/codex/plug
 Skills:
 
 - `stellar-agent-testnet` teaches Testnet initialization, doctor checks, smoke tests, issued-asset scenarios, trustlines, claimable balances, ledger receipts, and Stellar CLI contract workflows.
-- `stellar-agent-payments` teaches quote-first payment workflows, approval stops, issued-asset caveats, signed-XDR approval requests, local x402 demos, and local MPP demos.
+- `stellar-agent-payments` teaches quote-first payment workflows, approval stops, issued-asset caveats, signed-XDR approval requests, risk-budgeted Mainnet agent-wallet setup and funding guidance, local x402 demos, and local MPP demos.
 - `stellar-agent-defi` teaches Blend and Aquarius deployment inspection, pool/account/reward reads, policy-gated preflight, Aquarius read-only/preflight boundaries, and Mainnet DeFi signing limits.
 - `stellar-agent-market-liquidity` teaches core liquidity-pool inspection, LP preflight, guarded Testnet mutation, market listeners, strategy investigation, and the adapter-required Soroban AMM boundary.
 
