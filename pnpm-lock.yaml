@@ -48,6 +48,25 @@ importers:
         specifier: workspace:*
         version: link:../../packages/x402-client
 
+  examples/mainnet-agent-wallet-playground:
+    dependencies:
+      '@stellar-agent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@stellar-agent/ledger-logger':
+        specifier: workspace:*
+        version: link:../../packages/ledger-logger
+      '@stellar-agent/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
+    devDependencies:
+      tsx:
+        specifier: ^4.19.4
+        version: 4.22.3
+      vitest:
+        specifier: ^3.1.4
+        version: 3.2.4(@types/node@22.19.19)(tsx@4.22.3)(yaml@2.9.0)
+
   examples/x402-paid-api:
     dependencies:
       '@stellar-agent/core':

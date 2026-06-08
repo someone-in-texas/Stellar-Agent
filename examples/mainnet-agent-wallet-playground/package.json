@@ -1,0 +1,19 @@
+{
+  "name": "stellar-agent-example-mainnet-agent-wallet-playground",
+  "version": "0.5.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "demo": "tsx src/playground.ts",
+    "test": "vitest run examples/mainnet-agent-wallet-playground/test/mainnet-agent-wallet-playground.test.ts"
+  },
+  "dependencies": {
+    "@stellar-agent/core": "workspace:*",
+    "@stellar-agent/ledger-logger": "workspace:*",
+    "@stellar-agent/policy": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.4",
+    "vitest": "^3.1.4"
+  }
+}
