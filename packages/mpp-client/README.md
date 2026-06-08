@@ -25,7 +25,7 @@ stellar-agent pay mpp http://127.0.0.1:PORT/mpp-report --allow-localhost-demo --
 ## Safety
 
 - This package is for local Testnet demos.
-- Production facilitator-backed MPP support is intentionally out of scope for `0.4.x`.
+- Production facilitator-backed MPP support is intentionally out of scope for this release.
 - Payment policy and receipts are handled by the CLI flow before and after Testnet payment submission.
 
 ## Links

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0
+
+- Added a guarded Mainnet agent-wallet workflow for dedicated, risk-budgeted wallets, including external-funding guidance, arming fingerprints, receipt-backed spend caps, balance checks, and an explicit autosign exception that still requires policy status `allowed`.
+- Added example apps for a local x402 paid API, an agent service market, and a Mainnet agent-wallet playground.
+- Hardened example payment proofs with issued nonce, charge, session, and transaction-hash replay checks, plus package-local and repo-level example contract tests.
+- Moved shared Mainnet agent-wallet preflight, fingerprint, balance, and risk-budget helpers into `@stellar-agent/core` so CLI and examples use the same guard semantics.
+- Updated Codex payment guidance for Mainnet agent-wallet setup, funding, arming, autosign boundaries, local x402, and MPP workflows.
+- Kept production facilitator-backed x402/MPP support, generic Mainnet auto-signing, and non-agent-wallet Mainnet autosign out of scope.
+
 ## 0.4.4
 
 - Hardened payment policy evaluation so Mainnet requests remain marked as real-funds and fail closed when evaluated with a mismatched policy network.

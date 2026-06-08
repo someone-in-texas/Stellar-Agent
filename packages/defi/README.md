@@ -2,7 +2,7 @@
 
 Protocol-specific DeFi adapters for Stellar Agent inspection, preflight, and guarded Testnet workflows.
 
-This package includes Blend lending helpers and Aquarius AMM helpers. Blend supports deployment discovery, pool and position inspection, preflight, and guarded Testnet mutation helpers. Aquarius supports deployment discovery, pool inspection, account-position reads, LP preflight, swap quote/preflight, and rewards inspection; Aquarius commands in `0.4.x` are read-only or preflight-only.
+This package includes Blend lending helpers and Aquarius AMM helpers. Blend supports deployment discovery, pool and position inspection, preflight, and guarded Testnet mutation helpers. Aquarius supports deployment discovery, pool inspection, account-position reads, LP preflight, swap quote/preflight, and rewards inspection; Aquarius commands in this release are read-only or preflight-only.
 
 ## Install
 

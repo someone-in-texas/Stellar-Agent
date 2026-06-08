@@ -62,7 +62,7 @@ stellar-agent defi aquarius swap preflight --from XLM --to AQUA --amount 0.01 --
 - Mainnet requires explicit enablement and real-funds flags.
 - Secret keys are redacted from CLI output, logs, and receipts.
 - Policy checks run before submitted payment and protocol workflows.
-- Aquarius commands in `0.4.x` are read-only or preflight-only.
+- Aquarius commands in this release are read-only or preflight-only.
 
 ## Links
 
