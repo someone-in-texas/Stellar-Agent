@@ -93,17 +93,7 @@ describe("x402 client", () => {
     try {
       const challenge = await fetch(server.url);
       const requirement = await parseX402Requirement(challenge);
-      const proof = {
-        protocol: "stellar-agent-local-x402",
-        version: 1,
-        transactionHash: "a".repeat(64),
-        payer: source.publicKey,
-        recipient,
-        asset: requirement.asset,
-        amount: requirement.amount,
-        resource: requirement.resource,
-        nonce: requirement.nonce
-      };
+      const proof = proofForRequirement(requirement, "a".repeat(64));
 
       const first = await fetch(server.url, { headers: { "X-Payment": JSON.stringify(proof) } });
       expect(first.status).toBe(200);
@@ -111,6 +101,39 @@ describe("x402 client", () => {
       const replay = await fetch(server.url, { headers: { "X-Payment": JSON.stringify(proof) } });
       expect(replay.status).toBe(402);
       await expect(replay.json()).resolves.toEqual({ ok: false, error: "payment_proof_replayed" });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("issues one x402 nonce per paid challenge", async () => {
+    const server = await startPaidApiDemo({ recipient });
+    try {
+      const firstChallenge = await fetch(server.url);
+      const firstRequirement = await parseX402Requirement(firstChallenge);
+      const invented = proofForRequirement(firstRequirement, "b".repeat(64), "invented_x402_nonce");
+
+      const inventedResponse = await fetch(server.url, { headers: { "X-Payment": JSON.stringify(invented) } });
+      expect(inventedResponse.status).toBe(402);
+      await expect(inventedResponse.json()).resolves.toEqual({ ok: false, error: "payment_nonce_not_issued" });
+
+      const first = await fetch(server.url, {
+        headers: { "X-Payment": JSON.stringify(proofForRequirement(firstRequirement, "c".repeat(64))) }
+      });
+      expect(first.status).toBe(200);
+
+      const stale = await fetch(server.url, {
+        headers: { "X-Payment": JSON.stringify(proofForRequirement(firstRequirement, "d".repeat(64))) }
+      });
+      expect(stale.status).toBe(402);
+      await expect(stale.json()).resolves.toEqual({ ok: false, error: "payment_nonce_not_issued" });
+
+      const secondRequirement = await parseX402Requirement(await fetch(server.url));
+      expect(secondRequirement.nonce).not.toBe(firstRequirement.nonce);
+      const second = await fetch(server.url, {
+        headers: { "X-Payment": JSON.stringify(proofForRequirement(secondRequirement, "e".repeat(64))) }
+      });
+      expect(second.status).toBe(200);
     } finally {
       await server.close();
     }
@@ -275,3 +298,21 @@ describe("x402 client", () => {
     ).rejects.toMatchObject({ code: "X402_RESOURCE_UNAVAILABLE" });
   });
 });
+
+function proofForRequirement(
+  requirement: Awaited<ReturnType<typeof parseX402Requirement>>,
+  transactionHash: string,
+  nonce = requirement.nonce
+) {
+  return {
+    protocol: "stellar-agent-local-x402",
+    version: 1,
+    transactionHash,
+    payer: source.publicKey,
+    recipient,
+    asset: requirement.asset,
+    amount: requirement.amount,
+    resource: requirement.resource,
+    nonce
+  };
+}

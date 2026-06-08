@@ -1,26 +1,27 @@
 import {
   MAINNET_PROFILE,
+  MAINNET_AGENT_WALLET_WARNING,
   MainnetAgentWalletConfig,
   PaymentRequest,
   StellarAgentConfig,
   StellarAgentError,
-  amountIsGreaterThan,
+  assertMainnetAgentWalletBalanceWithinBudget as assertCoreMainnetAgentWalletBalanceWithinBudget,
+  assertMainnetAgentWalletPaymentPreflight,
   createDefaultConfig,
-  formatStroops,
+  mainnetAgentWalletConfigFingerprint,
+  mainnetAgentWalletIntegrityFailures,
   makeId,
   nowIso,
   parseAmount
 } from "@stellar-agent/core";
 import { spendHistoryFromReceipts, writeReceipt } from "@stellar-agent/ledger-logger";
-import { DEFAULT_MAINNET_POLICY, Policy, evaluatePaymentRequest, policyToYaml } from "@stellar-agent/policy";
+import { Policy, defaultPolicyForNetwork, evaluatePaymentRequest, policyToYaml } from "@stellar-agent/policy";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
+import { loadPlaygroundEnv } from "./env.js";
 
-export const MAINNET_AGENT_WALLET_WARNING =
-  "Mainnet agent-wallet spend is bounded, not safe. This playground never submits live Mainnet transactions by default.";
+export { MAINNET_AGENT_WALLET_WARNING };
 
 export interface PlaygroundState {
   config: StellarAgentConfig;
@@ -59,7 +60,7 @@ export function createPlaygroundState(rootDir = ".stellar-agent-mainnet-wallet-p
   return {
     config,
     configPath: join(root, "config.yaml"),
-    policy: cloneDefaultMainnetPolicy(),
+    policy: defaultPolicyForNetwork("mainnet"),
     policyPath: join(root, "policies", "default-mainnet.yaml"),
     receiptsDir: join(root, "receipts"),
     eventLog: join(root, "logs", "events.jsonl"),
@@ -101,7 +102,7 @@ export async function armAgentWallet(state: PlaygroundState): Promise<MainnetAge
       message: "Mainnet agent wallet requires at least one destination allowlist entry."
     });
   }
-  assertBalanceWithinBudget(state, wallet);
+  assertCoreMainnetAgentWalletBalanceWithinBudget(wallet, simulatedBalances(state));
   await mkdir(state.receiptsDir, { recursive: true });
   const armedBase: MainnetAgentWalletConfig = {
     ...wallet,
@@ -116,7 +117,7 @@ export async function armAgentWallet(state: PlaygroundState): Promise<MainnetAge
     arming: {
       armedAt: nowIso(),
       configPath: state.configPath,
-      configFingerprint: configFingerprint(configAtArming),
+      configFingerprint: mainnetAgentWalletConfigFingerprint(configAtArming),
       policyPath: state.policyPath,
       policyFingerprint: policyFingerprint(state.policy)
     }
@@ -159,16 +160,17 @@ export async function preflightSpend(
     asset,
     network: "mainnet"
   };
-  assertRiskBudgetAllows(wallet, request);
   const history = await spendHistoryFromReceipts(state.receiptsDir, { profile: "mainnet", asset });
-  if (history.unreadable) {
-    throw new StellarAgentError({
-      code: "POLICY_DENIED",
-      message: "Mainnet agent-wallet receipt history is unreadable, so spend preflight fails closed."
-    });
-  }
-  assertSpendTotalsAllow(wallet, request, history);
-  assertBalanceWithinBudget(state, wallet);
+  assertMainnetAgentWalletPaymentPreflight({
+    wallet,
+    request,
+    config: state.config,
+    configPath: state.configPath,
+    policyPath: state.policyPath,
+    policyFingerprint: policyFingerprint(state.policy),
+    spendHistory: history,
+    balances: simulatedBalances(state)
+  });
   const policyDecision = evaluatePaymentRequest(state.policy, request, history);
   if (policyDecision.status === "denied") {
     throw new StellarAgentError({
@@ -236,13 +238,13 @@ export function setSimulatedWalletBalance(state: PlaygroundState, balance: strin
 }
 
 export function armingFailures(state: PlaygroundState, wallet = requireWallet(state)): string[] {
-  if (!wallet.arming) return ["arming_metadata_missing"];
-  const failures: string[] = [];
-  if (wallet.arming.configPath !== state.configPath) failures.push("config_path_changed");
-  if (wallet.arming.configFingerprint !== configFingerprint(state.config)) failures.push("config_changed_after_arming");
-  if (wallet.arming.policyPath !== state.policyPath) failures.push("policy_path_changed");
-  if (wallet.arming.policyFingerprint !== policyFingerprint(state.policy)) failures.push("policy_changed_after_arming");
-  return failures;
+  return mainnetAgentWalletIntegrityFailures({
+    wallet,
+    config: state.config,
+    configPath: state.configPath,
+    policyPath: state.policyPath,
+    policyFingerprint: policyFingerprint(state.policy)
+  });
 }
 
 export function walletStatus(state: PlaygroundState) {
@@ -272,44 +274,6 @@ async function spendCounters(state: PlaygroundState, wallet: MainnetAgentWalletC
   return { updatedAt: nowIso(), source: "receipts", assets: Object.fromEntries(assets) };
 }
 
-function assertRiskBudgetAllows(wallet: MainnetAgentWalletConfig, request: PaymentRequest): void {
-  if (!wallet.riskBudget.allowedOperations.includes("payment")) {
-    throw new StellarAgentError({ code: "POLICY_DENIED", message: "Mainnet agent-wallet does not allow payment operations." });
-  }
-  if (!wallet.riskBudget.allowedAssets.map((asset) => asset.toUpperCase()).includes(request.asset.toUpperCase())) {
-    throw new StellarAgentError({ code: "POLICY_DENIED", message: "Mainnet agent-wallet payment asset is not allowed." });
-  }
-  if (!wallet.riskBudget.allowedDestinations.includes(request.destination)) {
-    throw new StellarAgentError({ code: "POLICY_DENIED", message: "Mainnet agent-wallet destination is not allowlisted." });
-  }
-  if (amountIsGreaterThan(request.amount, wallet.riskBudget.perTxLimit)) {
-    throw new StellarAgentError({ code: "POLICY_DENIED", message: "Mainnet agent-wallet payment exceeds the per-transaction risk budget." });
-  }
-}
-
-function assertSpendTotalsAllow(
-  wallet: MainnetAgentWalletConfig,
-  request: PaymentRequest,
-  history: Awaited<ReturnType<typeof spendHistoryFromReceipts>>
-): void {
-  if (amountIsGreaterThan(addAmounts(history.dailyTotal ?? "0", request.amount), wallet.riskBudget.dailyLimit)) {
-    throw new StellarAgentError({ code: "POLICY_DENIED", message: "Mainnet agent-wallet payment would exceed the daily risk budget." });
-  }
-  if (wallet.riskBudget.monthlyLimit && amountIsGreaterThan(addAmounts(history.monthlyTotal ?? "0", request.amount), wallet.riskBudget.monthlyLimit)) {
-    throw new StellarAgentError({ code: "POLICY_DENIED", message: "Mainnet agent-wallet payment would exceed the monthly risk budget." });
-  }
-}
-
-function assertBalanceWithinBudget(state: PlaygroundState, wallet: MainnetAgentWalletConfig): void {
-  if (amountIsGreaterThan(state.simulatedWalletBalance, wallet.riskBudget.maxBalance)) {
-    throw new StellarAgentError({
-      code: "POLICY_DENIED",
-      message: "Mainnet agent-wallet balance exceeds the configured risk budget.",
-      details: { balance: state.simulatedWalletBalance, maxBalance: wallet.riskBudget.maxBalance }
-    });
-  }
-}
-
 function requireWallet(state: PlaygroundState): MainnetAgentWalletConfig {
   if (!state.config.mainnetAgentWallet) {
     throw new StellarAgentError({ code: "WALLET_NOT_FOUND", message: "Configure the dedicated Mainnet agent wallet first." });
@@ -317,26 +281,12 @@ function requireWallet(state: PlaygroundState): MainnetAgentWalletConfig {
   return state.config.mainnetAgentWallet;
 }
 
+function simulatedBalances(state: PlaygroundState): Array<{ asset: string; balance: string }> {
+  return [{ asset: "XLM", balance: state.simulatedWalletBalance }];
+}
+
 function normalizeAmount(value: string, asset = "XLM"): string {
   return parseAmount(value, asset).value;
-}
-
-function addAmounts(left: string, right: string): string {
-  return formatStroops(parseAmountAllowZero(left) + parseAmount(right).stroops);
-}
-
-function parseAmountAllowZero(value: string): bigint {
-  if (value === "0" || value === "0.0" || value === "0.0000000") return 0n;
-  return parseAmount(value).stroops;
-}
-
-function configFingerprint(config: StellarAgentConfig): string {
-  const clone = JSON.parse(JSON.stringify(config)) as StellarAgentConfig;
-  if (clone.mainnetAgentWallet) {
-    clone.mainnetAgentWallet.arming = undefined;
-    clone.mainnetAgentWallet.spendCounters = undefined;
-  }
-  return sha256(JSON.stringify(sortJson(clone)));
 }
 
 function policyFingerprint(policy: Policy): string {
@@ -347,41 +297,7 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function cloneDefaultMainnetPolicy(): Policy {
-  return JSON.parse(JSON.stringify(DEFAULT_MAINNET_POLICY)) as Policy;
-}
-
-function sortJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortJson);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, sortJson(child)]));
-}
-
-export function loadPlaygroundEnv(filePath = resolve(dirname(fileURLToPath(import.meta.url)), "..", ".env")): void {
-  let source: string;
-  try {
-    source = readFileSync(filePath, "utf8");
-  } catch (error: any) {
-    if (error?.code === "ENOENT") return;
-    throw error;
-  }
-  for (const rawLine of source.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
-    if (!match) continue;
-    const [, key, rawValue] = match;
-    if (process.env[key] !== undefined) continue;
-    process.env[key] = unquoteEnvValue(rawValue.trim());
-  }
-}
-
-function unquoteEnvValue(value: string): string {
-  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-    return value.slice(1, -1);
-  }
-  return value;
-}
+export { loadPlaygroundEnv };
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   loadPlaygroundEnv();

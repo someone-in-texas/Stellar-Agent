@@ -1,10 +1,8 @@
 import { makeId, parseAmount } from "@stellar-agent/core";
 import { X402PaymentProof, X402PaymentRequirement } from "@stellar-agent/x402-client";
 import express, { type Express, type Request, type Response } from "express";
-import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { loadMarketEnv } from "./env.js";
 
 export interface SellerServiceOptions {
   recipient: string;
@@ -51,7 +49,7 @@ export function createSellerService(options: SellerServiceOptions): Express {
 
   const app = express();
   app.use(express.json());
-  const nonce = makeId("market_x402");
+  const issuedRequirements = new Map<string, X402PaymentRequirement>();
   const acceptedTransactions = new Set<string>();
 
   app.get("/.well-known/agent-service.json", (request, response) => {
@@ -70,23 +68,35 @@ export function createSellerService(options: SellerServiceOptions): Express {
     const resource = `${originForRequest(request)}/${serviceId}`;
     const proofHeader = request.header("x-payment");
     if (!proofHeader) {
-      writeRequirement(response, requirement({ recipient: options.recipient, price, asset, resource, nonce }));
+      const issued = requirement({ recipient: options.recipient, price, asset, resource });
+      issuedRequirements.set(issued.nonce, issued);
+      writeRequirement(response, issued);
       return;
     }
     const proof = parseProof(proofHeader);
-    if (!proof || options.forceVerificationFailure) {
+    if (!proof) {
       response.status(402).json({ ok: false, error: "seller_verification_failed" });
-      return;
-    }
-    const validation = validateProof(proof, requirement({ recipient: options.recipient, price, asset, resource, nonce }));
-    if (!validation.ok) {
-      response.status(402).json({ ok: false, error: validation.error });
       return;
     }
     if (acceptedTransactions.has(proof.transactionHash)) {
       response.status(402).json({ ok: false, error: "payment_proof_replayed" });
       return;
     }
+    const issuedRequirement = proof.nonce ? issuedRequirements.get(proof.nonce) : undefined;
+    if (!issuedRequirement) {
+      response.status(402).json({ ok: false, error: "payment_nonce_not_issued" });
+      return;
+    }
+    if (options.forceVerificationFailure) {
+      response.status(402).json({ ok: false, error: "seller_verification_failed" });
+      return;
+    }
+    const validation = validateProof(proof, issuedRequirement);
+    if (!validation.ok) {
+      response.status(402).json({ ok: false, error: validation.error });
+      return;
+    }
+    issuedRequirements.delete(issuedRequirement.nonce);
     acceptedTransactions.add(proof.transactionHash);
     response.json({
       ok: true,
@@ -173,7 +183,7 @@ function requirement(args: {
   price: string;
   asset: string;
   resource: string;
-  nonce: string;
+  nonce?: string;
 }): X402PaymentRequirement {
   return {
     protocol: "stellar-agent-local-x402",
@@ -183,7 +193,7 @@ function requirement(args: {
     amount: args.price,
     asset: args.asset,
     resource: args.resource,
-    nonce: args.nonce,
+    nonce: args.nonce ?? makeId("market_x402"),
     memo: "agent-market"
   };
 }
@@ -227,31 +237,7 @@ function originForRequest(request: Request): string {
   return `${request.protocol}://${request.get("host")}`;
 }
 
-export function loadMarketEnv(filePath = resolve(dirname(fileURLToPath(import.meta.url)), "..", ".env")): void {
-  let source: string;
-  try {
-    source = readFileSync(filePath, "utf8");
-  } catch (error: any) {
-    if (error?.code === "ENOENT") return;
-    throw error;
-  }
-  for (const rawLine of source.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
-    if (!match) continue;
-    const [, key, rawValue] = match;
-    if (process.env[key] !== undefined) continue;
-    process.env[key] = unquoteEnvValue(rawValue.trim());
-  }
-}
-
-function unquoteEnvValue(value: string): string {
-  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-    return value.slice(1, -1);
-  }
-  return value;
-}
+export { loadMarketEnv };
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   loadMarketEnv();

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { z } from "zod";
@@ -90,6 +91,19 @@ export interface MainnetAgentWalletConfig {
     policyFingerprint: string;
   } | undefined;
 }
+
+export type MainnetAgentWalletSpendHistory = NonNullable<MainnetAgentWalletConfig["spendCounters"]>["assets"][string];
+
+export interface MainnetAgentWalletBalanceLine {
+  asset: string;
+  balance: string;
+}
+
+export const MAINNET_AGENT_WALLET_WARNING =
+  "Mainnet agent-wallet spend is bounded, not safe. Local Mainnet auto-signing remains blocked except explicitly enabled agent-wallet autosigning.";
+
+export const MAINNET_AGENT_WALLET_AUTOSIGN_WARNING =
+  "Mainnet agent-wallet autosigning can spend real funds within configured limits; any process with the configured secret-key env var can spend from this wallet.";
 
 export type CommandResult<T> = SuccessEnvelope<T> | ErrorEnvelope;
 
@@ -434,6 +448,215 @@ export function createDefaultConfig(rootDir = process.env.STELLAR_AGENT_HOME ?? 
       redactSensitiveData: true
     }
   };
+}
+
+export function mainnetAgentWalletConfigFingerprint(config: StellarAgentConfig): string {
+  const clone = JSON.parse(JSON.stringify(config)) as StellarAgentConfig;
+  if (clone.mainnetAgentWallet) {
+    clone.mainnetAgentWallet.arming = undefined;
+    clone.mainnetAgentWallet.spendCounters = undefined;
+  }
+  return sha256(JSON.stringify(sortJson(clone)));
+}
+
+export function mainnetAgentWalletIntegrityFailures(args: {
+  wallet: MainnetAgentWalletConfig;
+  config: StellarAgentConfig;
+  configPath: string;
+  policyPath: string;
+  policyFingerprint: string;
+}): string[] {
+  const failures: string[] = [];
+  if (!args.wallet.arming) {
+    failures.push("arming_metadata_missing");
+    return failures;
+  }
+  if (args.wallet.arming.configPath !== args.configPath) failures.push("config_path_changed");
+  if (args.wallet.arming.policyPath !== args.policyPath) failures.push("policy_path_changed");
+  if (args.wallet.arming.policyFingerprint !== args.policyFingerprint) failures.push("policy_changed_after_arming");
+  if (args.wallet.arming.configFingerprint !== mainnetAgentWalletConfigFingerprint(args.config)) {
+    failures.push("config_changed_after_arming");
+  }
+  return failures;
+}
+
+export function assertMainnetAgentWalletPaymentPreflight(args: {
+  wallet: MainnetAgentWalletConfig;
+  request: PaymentRequest;
+  config: StellarAgentConfig;
+  configPath: string;
+  policyPath: string;
+  policyFingerprint: string;
+  spendHistory: MainnetAgentWalletSpendHistory;
+  balances?: MainnetAgentWalletBalanceLine[] | undefined;
+}): void {
+  const { wallet, request } = args;
+  if (wallet.status !== "armed") {
+    throw new StellarAgentError({
+      code: "MAINNET_NOT_ENABLED",
+      message: "Mainnet agent-wallet payment workflows require the wallet to be armed.",
+      hint: "Run stellar-agent mainnet agent-wallet arm --i-understand-real-funds after setting strict limits.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+    });
+  }
+  const failures = mainnetAgentWalletIntegrityFailures(args);
+  if (failures.length > 0) {
+    throw new StellarAgentError({
+      code: "POLICY_DENIED",
+      message: "Mainnet agent-wallet arming is stale and must be refreshed.",
+      hint: "Review the config and policy changes, then disarm and arm the wallet again.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet",
+      details: { failures }
+    });
+  }
+  assertMainnetAgentWalletRiskBudgetAllows(wallet, request);
+  if (args.spendHistory.unreadable) {
+    throw new StellarAgentError({
+      code: "POLICY_DENIED",
+      message: "Mainnet agent-wallet spend history could not be read, so payment fails closed.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+    });
+  }
+  const amount = parseAmount(request.amount, request.asset).value;
+  if (amountGreaterThanForAsset(addAmountValues(args.spendHistory.dailyTotal ?? "0", amount, request.asset), wallet.riskBudget.dailyLimit, request.asset)) {
+    throw new StellarAgentError({
+      code: "POLICY_DENIED",
+      message: "Mainnet agent-wallet payment would exceed the daily risk budget.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+    });
+  }
+  if (
+    wallet.riskBudget.monthlyLimit &&
+    amountGreaterThanForAsset(addAmountValues(args.spendHistory.monthlyTotal ?? "0", amount, request.asset), wallet.riskBudget.monthlyLimit, request.asset)
+  ) {
+    throw new StellarAgentError({
+      code: "POLICY_DENIED",
+      message: "Mainnet agent-wallet payment would exceed the monthly risk budget.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+    });
+  }
+  if (args.balances) {
+    assertMainnetAgentWalletBalanceWithinBudget(wallet, args.balances);
+  }
+}
+
+export function assertMainnetAgentWalletRiskBudgetAllows(wallet: MainnetAgentWalletConfig, request: PaymentRequest): void {
+  if (!wallet.riskBudget.allowedOperations.includes("payment")) {
+    throw new StellarAgentError({
+      code: "POLICY_DENIED",
+      message: "Mainnet agent-wallet policy does not allow payment operations.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+    });
+  }
+  const requestedAsset = request.asset.toUpperCase();
+  if (!mainnetAgentWalletAssetAllowed(requestedAsset, wallet.riskBudget.allowedAssets)) {
+    throw new StellarAgentError({
+      code: "POLICY_DENIED",
+      message: "Mainnet agent-wallet payment asset is not allowed.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet",
+      details: { requestedAsset, allowedAssets: wallet.riskBudget.allowedAssets }
+    });
+  }
+  if (!wallet.riskBudget.allowedDestinations.includes(request.destination)) {
+    throw new StellarAgentError({
+      code: "POLICY_DENIED",
+      message: "Mainnet agent-wallet destination is not allowlisted.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+    });
+  }
+  const amount = parseAmount(request.amount, request.asset).value;
+  if (amountGreaterThanForAsset(amount, wallet.riskBudget.perTxLimit, request.asset)) {
+    throw new StellarAgentError({
+      code: "POLICY_DENIED",
+      message: "Mainnet agent-wallet payment exceeds the per-transaction risk budget.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+    });
+  }
+}
+
+export function assertMainnetAgentWalletBalanceWithinBudget(
+  wallet: MainnetAgentWalletConfig,
+  balances: MainnetAgentWalletBalanceLine[]
+): void {
+  if (!wallet.publicKey) {
+    throw new StellarAgentError({ code: "WALLET_NOT_FOUND", message: "Mainnet agent wallet public key is missing." });
+  }
+  for (const asset of wallet.riskBudget.allowedAssets) {
+    const matchingBalances = balances.filter((line) => mainnetAgentWalletAssetAllowed(line.asset, [asset]));
+    for (const line of matchingBalances.length > 0 ? matchingBalances : [{ asset, balance: "0" }]) {
+      if (!amountGreaterThanForAsset(line.balance, wallet.riskBudget.maxBalance, line.asset)) continue;
+      throw new StellarAgentError({
+        code: "POLICY_DENIED",
+        message: "Mainnet agent-wallet balance exceeds the configured risk budget.",
+        docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet",
+        details: { asset: line.asset, balance: line.balance, maxBalance: wallet.riskBudget.maxBalance }
+      });
+    }
+  }
+}
+
+export function mainnetAgentWalletRiskBudgetState(
+  wallet: MainnetAgentWalletConfig | undefined,
+  before: MainnetAgentWalletSpendHistory,
+  payment: PaymentRequest
+): { limits: MainnetAgentWalletRiskBudget; before: MainnetAgentWalletSpendHistory; after: MainnetAgentWalletSpendHistory } | undefined {
+  if (!wallet) return undefined;
+  return {
+    limits: wallet.riskBudget,
+    before,
+    after: incrementMainnetAgentWalletSpendHistory(before, payment)
+  };
+}
+
+export function mainnetAgentWalletAssetAllowed(asset: string, allowedAssets: string[]): boolean {
+  const normalized = asset.toUpperCase();
+  return allowedAssets.some((allowed) => {
+    const normalizedAllowed = allowed.toUpperCase();
+    return normalized === normalizedAllowed || normalized.startsWith(`${normalizedAllowed}:`);
+  });
+}
+
+function incrementMainnetAgentWalletSpendHistory(
+  before: MainnetAgentWalletSpendHistory,
+  payment: PaymentRequest
+): MainnetAgentWalletSpendHistory {
+  const amount = parseAmount(payment.amount, payment.asset).value;
+  return {
+    ...before,
+    dailyTotal: addAmountValues(before.dailyTotal ?? "0", amount, payment.asset),
+    monthlyTotal: addAmountValues(before.monthlyTotal ?? "0", amount, payment.asset),
+    knownRecipients: Array.from(new Set([...(before.knownRecipients ?? []), payment.destination])),
+    knownDomains: payment.domain
+      ? Array.from(new Set([...(before.knownDomains ?? []), payment.domain]))
+      : before.knownDomains
+  };
+}
+
+function amountGreaterThanForAsset(left: string, right: string, asset: string): boolean {
+  return parseNonnegativeStroops(left, asset) > parseNonnegativeStroops(right, asset);
+}
+
+function addAmountValues(left: string, right: string, asset: string): string {
+  return formatStroops(parseNonnegativeStroops(left, asset) + parseNonnegativeStroops(right, asset));
+}
+
+function parseNonnegativeStroops(value: string, asset: string): bigint {
+  if (value === "0" || value === "0.0" || value === "0.0000000") return 0n;
+  return parseAmount(stripAssetSuffix(value), asset).stroops;
+}
+
+function stripAssetSuffix(value: string): string {
+  return value.trim().split(/\s+/)[0] ?? value;
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJson);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, sortJson(child)]));
 }
 
 export const networkProfileSchema = z.object({

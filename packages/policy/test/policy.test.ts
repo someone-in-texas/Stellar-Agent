@@ -120,6 +120,29 @@ describe("policy evaluation", () => {
     expect(decision.matchedRules).not.toContain("policy_network_mismatch");
   });
 
+  it("returns isolated default policy instances", () => {
+    const mainnet = defaultPolicyForNetwork("mainnet");
+    mainnet.assets.allow.push("EUR:GISSUER");
+    mainnet.approval.allowMainnetAgentWalletAutosign = true;
+    mainnet.defi.blend.allowedPools.push("CCHANGEDPOOL");
+
+    const freshMainnet = defaultPolicyForNetwork("mainnet");
+    expect(freshMainnet.assets.allow).toEqual(DEFAULT_MAINNET_POLICY.assets.allow);
+    expect(freshMainnet.approval.allowMainnetAgentWalletAutosign).toBe(false);
+    expect(freshMainnet.defi.blend.allowedPools).toEqual([]);
+  });
+
+  it("does not share local default nested policy state with Testnet", () => {
+    const local = defaultPolicyForNetwork("local");
+    local.x402.allowDomains.push("api.local.test");
+    local.market.liquidity.allowedPools.push("local-pool");
+
+    const testnet = defaultPolicyForNetwork("testnet");
+    expect(testnet.x402.allowDomains).toEqual([]);
+    expect(testnet.market.liquidity.allowedPools).toEqual(["*"]);
+    expect(DEFAULT_TESTNET_POLICY.x402.allowDomains).toEqual([]);
+  });
+
   it("fails closed when spend history is unreadable", () => {
     const decision = evaluatePaymentRequest(
       DEFAULT_TESTNET_POLICY,

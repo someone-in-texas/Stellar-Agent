@@ -6,7 +6,7 @@
   "scripts": {
     "start": "tsx src/server.ts",
     "client": "tsx src/client.ts",
-    "test": "vitest run examples/x402-paid-api/test/x402-paid-api.test.ts"
+    "test": "vitest run test/x402-paid-api.test.ts"
   },
   "dependencies": {
     "@stellar-agent/core": "workspace:*",

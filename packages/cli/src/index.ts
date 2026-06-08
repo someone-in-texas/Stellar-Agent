@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import {
   EXIT_CODES,
+  MAINNET_AGENT_WALLET_AUTOSIGN_WARNING,
+  MAINNET_AGENT_WALLET_WARNING,
   MainnetAgentWalletConfig,
   NetworkName,
   NetworkProfile,
@@ -8,9 +10,14 @@ import {
   StellarAgentConfig,
   StellarAgentError,
   configSchema,
+  assertMainnetAgentWalletBalanceWithinBudget as assertCoreMainnetAgentWalletBalanceWithinBudget,
+  assertMainnetAgentWalletPaymentPreflight,
   createDefaultConfig,
   fail,
   formatStroops,
+  mainnetAgentWalletConfigFingerprint as coreMainnetAgentWalletConfigFingerprint,
+  mainnetAgentWalletIntegrityFailures as coreMainnetAgentWalletIntegrityFailures,
+  mainnetAgentWalletRiskBudgetState as coreMainnetAgentWalletRiskBudgetState,
   ok,
   parseAmount,
   paymentRequestSchema,
@@ -4535,7 +4542,7 @@ async function armMainnetAgentWallet(
   armedWallet.arming = {
     armedAt: now,
     configPath: configFingerprintPath(context),
-    configFingerprint: mainnetAgentWalletConfigFingerprint({ ...context.config, mainnetAgentWallet: armedWallet }),
+    configFingerprint: coreMainnetAgentWalletConfigFingerprint({ ...context.config, mainnetAgentWallet: armedWallet }),
     policyPath: policyFingerprint.path,
     policyFingerprint: policyFingerprint.fingerprint
   };
@@ -4578,11 +4585,11 @@ function mainnetAgentWalletView(wallet: MainnetAgentWalletConfig) {
 }
 
 function mainnetAgentWalletWarning(): string {
-  return "Mainnet agent-wallet spend is bounded, not safe. Local Mainnet auto-signing remains blocked except explicitly enabled agent-wallet autosigning.";
+  return MAINNET_AGENT_WALLET_WARNING;
 }
 
 function mainnetAgentWalletAutosignWarning(): string {
-  return "Mainnet agent-wallet autosigning can spend real funds within configured limits; any process with the configured secret-key env var can spend from this wallet.";
+  return MAINNET_AGENT_WALLET_AUTOSIGN_WARNING;
 }
 
 function mainnetAgentWalletAutosignView(wallet: MainnetAgentWalletConfig) {
@@ -4604,19 +4611,17 @@ async function mainnetAgentWalletIntegrityFailures(
   context: CliContext,
   wallet: MainnetAgentWalletConfig
 ): Promise<string[]> {
-  const failures: string[] = [];
   if (!wallet.arming) {
-    failures.push("arming_metadata_missing");
-    return failures;
+    return ["arming_metadata_missing"];
   }
-  if (wallet.arming.configPath !== configFingerprintPath(context)) failures.push("config_path_changed");
   const currentPolicy = await mainnetAgentWalletPolicyFingerprint(context);
-  if (wallet.arming.policyPath !== currentPolicy.path) failures.push("policy_path_changed");
-  if (wallet.arming.policyFingerprint !== currentPolicy.fingerprint) failures.push("policy_changed_after_arming");
-  if (wallet.arming.configFingerprint !== mainnetAgentWalletConfigFingerprint(context.config)) {
-    failures.push("config_changed_after_arming");
-  }
-  return failures;
+  return coreMainnetAgentWalletIntegrityFailures({
+    wallet,
+    config: context.config,
+    configPath: configFingerprintPath(context),
+    policyPath: currentPolicy.path,
+    policyFingerprint: currentPolicy.fingerprint
+  });
 }
 
 async function assertMainnetAgentWalletPaymentAllowed(
@@ -4625,81 +4630,18 @@ async function assertMainnetAgentWalletPaymentAllowed(
 ): Promise<{ warning: string; spendHistory: Awaited<ReturnType<typeof loadSpendHistory>> } | undefined> {
   const wallet = context.config.mainnetAgentWallet;
   if (!wallet || wallet.publicKey !== request.source || request.network !== "mainnet") return undefined;
-  if (wallet.status !== "armed") {
-    throw new StellarAgentError({
-      code: "MAINNET_NOT_ENABLED",
-      message: "Mainnet agent-wallet payment workflows require the wallet to be armed.",
-      hint: "Run stellar-agent mainnet agent-wallet arm --i-understand-real-funds after setting strict limits.",
-      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
-    });
-  }
-  const failures = await mainnetAgentWalletIntegrityFailures(context, wallet);
-  if (failures.length > 0) {
-    throw new StellarAgentError({
-      code: "POLICY_DENIED",
-      message: "Mainnet agent-wallet arming is stale and must be refreshed.",
-      hint: "Review the config and policy changes, then disarm and arm the wallet again.",
-      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet",
-      details: { failures }
-    });
-  }
-  if (!wallet.riskBudget.allowedOperations.includes("payment")) {
-    throw new StellarAgentError({
-      code: "POLICY_DENIED",
-      message: "Mainnet agent-wallet policy does not allow payment operations.",
-      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
-    });
-  }
-  const requestedAsset = request.asset.toUpperCase();
-  if (!assetAllowedByMainnetAgentWallet(requestedAsset, wallet.riskBudget.allowedAssets)) {
-    throw new StellarAgentError({
-      code: "POLICY_DENIED",
-      message: "Mainnet agent-wallet payment asset is not allowed.",
-      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet",
-      details: { requestedAsset, allowedAssets: wallet.riskBudget.allowedAssets }
-    });
-  }
-  if (!wallet.riskBudget.allowedDestinations.includes(request.destination)) {
-    throw new StellarAgentError({
-      code: "POLICY_DENIED",
-      message: "Mainnet agent-wallet destination is not allowlisted.",
-      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
-    });
-  }
-  const amount = parseAmount(request.amount, request.asset).value;
-  if (amountGreaterThan(amount, wallet.riskBudget.perTxLimit, request.asset)) {
-    throw new StellarAgentError({
-      code: "POLICY_DENIED",
-      message: "Mainnet agent-wallet payment exceeds the per-transaction risk budget.",
-      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
-    });
-  }
   const spendHistory = await loadSpendHistory(context, request);
-  if (spendHistory.unreadable) {
-    throw new StellarAgentError({
-      code: "POLICY_DENIED",
-      message: "Mainnet agent-wallet spend history could not be read, so payment fails closed.",
-      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
-    });
-  }
-  if (amountGreaterThan(addAmountValues(spendHistory.dailyTotal ?? "0", amount, request.asset), wallet.riskBudget.dailyLimit, request.asset)) {
-    throw new StellarAgentError({
-      code: "POLICY_DENIED",
-      message: "Mainnet agent-wallet payment would exceed the daily risk budget.",
-      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
-    });
-  }
-  if (
-    wallet.riskBudget.monthlyLimit &&
-    amountGreaterThan(addAmountValues(spendHistory.monthlyTotal ?? "0", amount, request.asset), wallet.riskBudget.monthlyLimit, request.asset)
-  ) {
-    throw new StellarAgentError({
-      code: "POLICY_DENIED",
-      message: "Mainnet agent-wallet payment would exceed the monthly risk budget.",
-      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
-    });
-  }
-  await assertMainnetAgentWalletBalanceWithinBudget(context, wallet);
+  const policyFingerprint = await mainnetAgentWalletPolicyFingerprint(context);
+  assertMainnetAgentWalletPaymentPreflight({
+    wallet,
+    request,
+    config: context.config,
+    configPath: configFingerprintPath(context),
+    policyPath: policyFingerprint.path,
+    policyFingerprint: policyFingerprint.fingerprint,
+    spendHistory
+  });
+  assertCoreMainnetAgentWalletBalanceWithinBudget(wallet, await readMainnetAgentWalletBalances(context, wallet));
   return { warning: mainnetAgentWalletWarning(), spendHistory };
 }
 
@@ -4884,7 +4826,7 @@ async function sendMainnetAgentWalletPayment(
           walletName: configured.walletName,
           publicKey: configured.publicKey,
           secretKeyEnvVar: configured.autosign?.secretKeyEnvVar,
-          riskBudgetState: mainnetAgentWalletRiskBudgetState(configured, autosign.spendHistory, request),
+          riskBudgetState: coreMainnetAgentWalletRiskBudgetState(configured, autosign.spendHistory, request),
           warning: autosign.warning
         },
         realFundsAcknowledged: true
@@ -4929,13 +4871,19 @@ async function assertMainnetAgentWalletBalanceWithinBudget(
   context: CliContext,
   wallet: MainnetAgentWalletConfig
 ): Promise<void> {
+  assertCoreMainnetAgentWalletBalanceWithinBudget(wallet, await readMainnetAgentWalletBalances(context, wallet));
+}
+
+async function readMainnetAgentWalletBalances(
+  context: CliContext,
+  wallet: MainnetAgentWalletConfig
+): Promise<Array<{ asset: string; balance: string }>> {
   if (!wallet.publicKey) {
     throw new StellarAgentError({ code: "WALLET_NOT_FOUND", message: "Mainnet agent wallet public key is missing." });
   }
-  let balances: Array<{ asset: string; balance: string }>;
   try {
     const profile = resolveNetworkProfile("mainnet", context.config.profiles);
-    balances = await fetchMainnetAgentWalletBalances(wallet.publicKey, profile);
+    return await fetchMainnetAgentWalletBalances(wallet.publicKey, profile);
   } catch (error) {
     throw new StellarAgentError({
       code: "HORIZON_UNAVAILABLE",
@@ -4943,18 +4891,6 @@ async function assertMainnetAgentWalletBalanceWithinBudget(
       docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet",
       details: error instanceof Error ? error.message : String(error)
     });
-  }
-  for (const asset of wallet.riskBudget.allowedAssets) {
-    const matchingBalances = balances.filter((line) => assetAllowedByMainnetAgentWallet(line.asset, [asset]));
-    for (const line of matchingBalances.length > 0 ? matchingBalances : [{ asset, balance: "0" }]) {
-      if (!amountGreaterThan(line.balance, wallet.riskBudget.maxBalance, line.asset)) continue;
-      throw new StellarAgentError({
-        code: "POLICY_DENIED",
-        message: "Mainnet agent-wallet balance exceeds the configured risk budget.",
-        docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet",
-        details: { asset: line.asset, balance: line.balance, maxBalance: wallet.riskBudget.maxBalance }
-      });
-    }
   }
 }
 
@@ -4999,15 +4935,6 @@ async function mainnetAgentWalletPolicyFingerprint(context: CliContext): Promise
   return { path: resolvedPath, fingerprint: sha256(source) };
 }
 
-function mainnetAgentWalletConfigFingerprint(config: StellarAgentConfig): string {
-  const clone = JSON.parse(JSON.stringify(config)) as StellarAgentConfig;
-  if (clone.mainnetAgentWallet) {
-    clone.mainnetAgentWallet.arming = undefined;
-    clone.mainnetAgentWallet.spendCounters = undefined;
-  }
-  return sha256(JSON.stringify(sortJson(clone)));
-}
-
 async function mainnetAgentWalletSpendCounters(
   context: CliContext,
   wallet: MainnetAgentWalletConfig
@@ -5028,19 +4955,6 @@ async function mainnetAgentWalletSpendCounters(
   };
 }
 
-function mainnetAgentWalletRiskBudgetState(
-  wallet: MainnetAgentWalletConfig | undefined,
-  before: Awaited<ReturnType<typeof loadSpendHistory>>,
-  payment: PaymentRequest
-) {
-  if (!wallet) return undefined;
-  return {
-    limits: wallet.riskBudget,
-    before,
-    after: incrementBatchSpendHistory(before, payment)
-  };
-}
-
 function configFingerprintPath(context: CliContext): string {
   return resolvePath(
     context.options.config ?? process.env.STELLAR_AGENT_CONFIG ?? join(context.config.storage.rootDir, "config.yaml")
@@ -5049,16 +4963,6 @@ function configFingerprintPath(context: CliContext): string {
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
-}
-
-function sortJson(value: any): any {
-  if (Array.isArray(value)) return value.map(sortJson);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, sortJson(child)]));
-}
-
-function amountGreaterThan(left: string, right: string, asset: string): boolean {
-  return parseNonnegativeStroops(left, asset) > parseNonnegativeStroops(right, asset);
 }
 
 function addAmountValues(left: string, right: string, asset: string): string {
@@ -5074,14 +4978,6 @@ function parseAssetForPolicy(asset: string): void {
       docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
     });
   }
-}
-
-function assetAllowedByMainnetAgentWallet(asset: string, allowedAssets: string[]): boolean {
-  const normalized = asset.toUpperCase();
-  return allowedAssets.some((allowed) => {
-    const normalizedAllowed = allowed.toUpperCase();
-    return normalized === normalizedAllowed || normalized.startsWith(`${normalizedAllowed}:`);
-  });
 }
 
 function safeJsonParse(value: string): unknown {
@@ -5665,7 +5561,7 @@ async function writeSubmittedPaymentApprovalReceipt(
                 armed: true,
                 walletName: context.config.mainnetAgentWallet?.walletName,
                 publicKey: context.config.mainnetAgentWallet?.publicKey,
-                riskBudgetState: mainnetAgentWalletRiskBudgetState(
+                riskBudgetState: coreMainnetAgentWalletRiskBudgetState(
                   context.config.mainnetAgentWallet,
                   args.mainnetAgentWallet.spendHistory,
                   args.payment

@@ -6,7 +6,8 @@ import { runX402Payment } from "@stellar-agent/x402-client";
 import { randomBytes } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { loadMarketEnv, ServiceDirectory, ServiceListing } from "./seller.js";
+import { loadMarketEnv } from "./env.js";
+import { ServiceDirectory, ServiceListing } from "./seller.js";
 
 export const buyerWallet: TestnetWallet = {
   schemaVersion: "stellar-agent.wallet.v1",

@@ -11,7 +11,7 @@ cp examples/x402-paid-api/.env.example examples/x402-paid-api/.env
 pnpm exec tsx examples/x402-paid-api/src/server.ts
 ```
 
-The server script loads `examples/x402-paid-api/.env` automatically before reading `PORT`, `X402_PRICE`, `X402_ASSET`, `X402_RECIPIENT`, `X402_VERIFICATION_MODE`, or `X402_FACILITATOR_URL`.
+The server and client scripts load `examples/x402-paid-api/.env` automatically before reading `PORT`, `X402_PRICE`, `X402_ASSET`, `X402_RECIPIENT`, `X402_VERIFICATION_MODE`, `X402_FACILITATOR_URL`, or `STELLAR_AGENT_EXAMPLE_ROOT`.
 
 In another terminal:
 
@@ -57,6 +57,7 @@ Receipts are written under `.stellar-agent-x402-example/receipts` by default:
 ```bash
 ls .stellar-agent-x402-example/receipts
 cat .stellar-agent-x402-example/receipts/*.json
+STELLAR_AGENT_HOME=.stellar-agent-x402-example stellar-agent receipts latest --json
 ```
 
 ## Copy This Into Your Own API

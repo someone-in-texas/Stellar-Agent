@@ -104,7 +104,7 @@ describe("examples/mainnet-agent-wallet-playground", () => {
 
     await expect(preflightSpend(state, { destination, amount: "0.01" })).rejects.toMatchObject({
       code: "POLICY_DENIED",
-      message: "Mainnet agent-wallet receipt history is unreadable, so spend preflight fails closed."
+      message: "Mainnet agent-wallet spend history could not be read, so payment fails closed."
     });
   });
 

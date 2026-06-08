@@ -112,6 +112,32 @@ describe("examples/agent-service-market", () => {
     }
   });
 
+  it("rejects service proofs with invented or stale nonces", async () => {
+    const seller = await startSellerService({ recipient });
+    try {
+      const challenge = await fetch(seller.serviceUrl);
+      const requirement = await parseX402Requirement(challenge);
+      const invented = proofForRequirement(requirement, "1".repeat(64), "invented_market_nonce");
+
+      const inventedResponse = await fetch(seller.serviceUrl, { headers: { "X-Payment": JSON.stringify(invented) } });
+      expect(inventedResponse.status).toBe(402);
+      await expect(inventedResponse.json()).resolves.toEqual({ ok: false, error: "payment_nonce_not_issued" });
+
+      const valid = await fetch(seller.serviceUrl, {
+        headers: { "X-Payment": JSON.stringify(proofForRequirement(requirement, "2".repeat(64))) }
+      });
+      expect(valid.status).toBe(200);
+
+      const stale = await fetch(seller.serviceUrl, {
+        headers: { "X-Payment": JSON.stringify(proofForRequirement(requirement, "3".repeat(64))) }
+      });
+      expect(stale.status).toBe(402);
+      await expect(stale.json()).resolves.toEqual({ ok: false, error: "payment_nonce_not_issued" });
+    } finally {
+      await seller.close();
+    }
+  });
+
   it("refuses spend cap exhaustion before paying", async () => {
     const seller = await startSellerService({ recipient, price: "0.0000002" });
     const root = await mkdtemp(join(tmpdir(), "stellar-agent-market-cap-"));
@@ -186,6 +212,24 @@ describe("examples/agent-service-market", () => {
     }
   });
 });
+
+function proofForRequirement(
+  requirement: Awaited<ReturnType<typeof parseX402Requirement>>,
+  transactionHash: string,
+  nonce = requirement.nonce
+) {
+  return {
+    protocol: "stellar-agent-local-x402",
+    version: 1,
+    transactionHash,
+    payer: "GBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    recipient: requirement.recipient,
+    asset: requirement.asset,
+    amount: requirement.amount,
+    resource: requirement.resource,
+    nonce
+  };
+}
 
 function restoreEnv(previous: Record<string, string | undefined>): void {
   for (const [key, value] of Object.entries(previous)) {

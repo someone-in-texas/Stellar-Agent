@@ -364,7 +364,7 @@ export const DEFAULT_MAINNET_POLICY: Policy = {
 };
 
 export const DEFAULT_LOCAL_POLICY: Policy = {
-  ...DEFAULT_TESTNET_POLICY,
+  ...clonePolicy(DEFAULT_TESTNET_POLICY),
   name: "default-local-policy",
   network: "local"
 };
@@ -387,10 +387,14 @@ export function policyToYaml(policy: Policy): string {
   return stringifyYaml(policy);
 }
 
+export function clonePolicy(policy: Policy): Policy {
+  return policySchema.parse(JSON.parse(JSON.stringify(policy)));
+}
+
 export function defaultPolicyForNetwork(network: "testnet" | "mainnet" | "local"): Policy {
-  if (network === "mainnet") return DEFAULT_MAINNET_POLICY;
-  if (network === "local") return DEFAULT_LOCAL_POLICY;
-  return DEFAULT_TESTNET_POLICY;
+  if (network === "mainnet") return clonePolicy(DEFAULT_MAINNET_POLICY);
+  if (network === "local") return clonePolicy(DEFAULT_LOCAL_POLICY);
+  return clonePolicy(DEFAULT_TESTNET_POLICY);
 }
 
 export function evaluatePaymentRequest(

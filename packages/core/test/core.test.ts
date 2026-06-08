@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertMainnetAgentWalletPaymentPreflight,
   compareAmount,
   createDefaultConfig,
+  mainnetAgentWalletConfigFingerprint,
+  mainnetAgentWalletIntegrityFailures,
+  mainnetAgentWalletRiskBudgetState,
+  MainnetAgentWalletConfig,
   parseAmount,
   parseAsset,
   redactSensitive,
@@ -95,4 +100,156 @@ describe("error serialization", () => {
       docs: "docs/troubleshooting.md"
     });
   });
+});
+
+describe("Mainnet agent-wallet guards", () => {
+  const destination = "GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCWHF";
+  const publicKey = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+
+  it("fingerprints config without arming metadata or receipt counters", () => {
+    const { config, wallet } = armedMainnetAgentWallet();
+    const first = mainnetAgentWalletConfigFingerprint(config);
+    const changedMetadata: MainnetAgentWalletConfig = {
+      ...wallet,
+      arming: { ...wallet.arming!, armedAt: "2026-06-02T00:00:00.000Z" },
+      spendCounters: {
+        updatedAt: "2026-06-02T00:00:00.000Z",
+        source: "receipts",
+        assets: { XLM: { dailyTotal: "0.0010000" } }
+      }
+    };
+
+    expect(mainnetAgentWalletConfigFingerprint({ ...config, mainnetAgentWallet: changedMetadata })).toBe(first);
+  });
+
+  it("reports stale arming metadata when config or policy inputs change", () => {
+    const { config, wallet, configPath, policyPath, policyFingerprint } = armedMainnetAgentWallet();
+
+    expect(
+      mainnetAgentWalletIntegrityFailures({ wallet, config, configPath, policyPath, policyFingerprint })
+    ).toEqual([]);
+    expect(
+      mainnetAgentWalletIntegrityFailures({
+        wallet,
+        config: { ...config, activeProfile: "mainnet" },
+        configPath,
+        policyPath,
+        policyFingerprint: "changed-policy"
+      })
+    ).toEqual(["policy_changed_after_arming", "config_changed_after_arming"]);
+  });
+
+  it("allows preflight only inside the armed risk budget", () => {
+    const { config, wallet, configPath, policyPath, policyFingerprint } = armedMainnetAgentWallet();
+    const request = {
+      source: publicKey,
+      destination,
+      amount: "0.01",
+      asset: "XLM",
+      network: "mainnet" as const
+    };
+
+    expect(() =>
+      assertMainnetAgentWalletPaymentPreflight({
+        wallet,
+        request,
+        config,
+        configPath,
+        policyPath,
+        policyFingerprint,
+        spendHistory: { dailyTotal: "0.0100000", monthlyTotal: "0.0100000" },
+        balances: [{ asset: "XLM", balance: "0.1000000" }]
+      })
+    ).not.toThrow();
+  });
+
+  it("fails closed for unreadable history, spend caps, and overfunded balances", () => {
+    const { config, wallet, configPath, policyPath, policyFingerprint } = armedMainnetAgentWallet();
+    const request = {
+      source: publicKey,
+      destination,
+      amount: "0.01",
+      asset: "XLM",
+      network: "mainnet" as const
+    };
+    const base = { wallet, request, config, configPath, policyPath, policyFingerprint };
+
+    expect(() =>
+      assertMainnetAgentWalletPaymentPreflight({
+        ...base,
+        spendHistory: { unreadable: true },
+        balances: [{ asset: "XLM", balance: "0.1000000" }]
+      })
+    ).toThrow("spend history could not be read");
+    expect(() =>
+      assertMainnetAgentWalletPaymentPreflight({
+        ...base,
+        spendHistory: { dailyTotal: "0.0500000" },
+        balances: [{ asset: "XLM", balance: "0.1000000" }]
+      })
+    ).toThrow("daily risk budget");
+    expect(() =>
+      assertMainnetAgentWalletPaymentPreflight({
+        ...base,
+        spendHistory: { dailyTotal: "0.0100000" },
+        balances: [{ asset: "XLM", balance: "0.6000000" }]
+      })
+    ).toThrow("balance exceeds");
+  });
+
+  it("reports risk budget state before and after a payment", () => {
+    const { wallet } = armedMainnetAgentWallet();
+    const state = mainnetAgentWalletRiskBudgetState(
+      wallet,
+      { dailyTotal: "0.0100000", monthlyTotal: "0.0200000", knownRecipients: [] },
+      { destination, amount: "0.01", asset: "XLM", network: "mainnet" }
+    );
+
+    expect(state).toMatchObject({
+      before: { dailyTotal: "0.0100000" },
+      after: {
+        dailyTotal: "0.0200000",
+        monthlyTotal: "0.0300000",
+        knownRecipients: [destination]
+      }
+    });
+  });
+
+  function armedMainnetAgentWallet() {
+    const configPath = "/tmp/stellar-agent/config.yaml";
+    const policyPath = "/tmp/stellar-agent/policies/default-mainnet.yaml";
+    const policyFingerprint = "policy-fingerprint";
+    const createdAt = "2026-06-01T00:00:00.000Z";
+    const baseWallet: MainnetAgentWalletConfig = {
+      schemaVersion: "stellar-agent.mainnetAgentWallet.v1",
+      walletName: "mainnet-agent",
+      publicKey,
+      status: "armed",
+      createdAt,
+      updatedAt: createdAt,
+      riskBudget: {
+        maxBalance: "0.5",
+        perTxLimit: "0.02",
+        dailyLimit: "0.05",
+        monthlyLimit: "0.10",
+        allowedAssets: ["XLM"],
+        allowedDestinations: [destination],
+        allowedOperations: ["payment"]
+      }
+    };
+    const config = createDefaultConfig("/tmp/stellar-agent");
+    config.mainnetAgentWallet = baseWallet;
+    const wallet: MainnetAgentWalletConfig = {
+      ...baseWallet,
+      arming: {
+        armedAt: createdAt,
+        configPath,
+        configFingerprint: mainnetAgentWalletConfigFingerprint(config),
+        policyPath,
+        policyFingerprint
+      }
+    };
+    config.mainnetAgentWallet = wallet;
+    return { config, wallet, configPath, policyPath, policyFingerprint };
+  }
 });

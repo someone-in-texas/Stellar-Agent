@@ -515,7 +515,7 @@ export async function startMppDemo(args: {
   const amount = args.amount ?? "0.0000001";
   const asset = args.asset ?? "XLM";
   parseAmount(amount, asset);
-  const chargeId = makeId("mpp_charge");
+  const issuedCharges = new Map<string, MppCharge>();
   const acceptedTransactions = new Set<string>();
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
     if (request.url?.startsWith("/health")) {
@@ -532,7 +532,7 @@ export async function startMppDemo(args: {
       const charge: MppCharge = {
         protocol: "stellar-agent-local-mpp",
         version: 1,
-        chargeId,
+        chargeId: makeId("mpp_charge"),
         network: "testnet",
         asset,
         amount,
@@ -540,6 +540,7 @@ export async function startMppDemo(args: {
         resource,
         memo: "mpp-demo"
       };
+      issuedCharges.set(charge.chargeId, charge);
       const encoded = JSON.stringify(charge);
       response.setHeader("MPP-Charge", encoded);
       response.setHeader("X-MPP-Charge", encoded);
@@ -552,13 +553,8 @@ export async function startMppDemo(args: {
       !proof ||
       proof.protocol !== "stellar-agent-local-mpp" ||
       proof.version !== 1 ||
-      proof.chargeId !== chargeId ||
       !proof.transactionHash ||
-      !proof.payer ||
-      proof.recipient !== args.recipient ||
-      proof.asset !== asset ||
-      proof.amount !== parseAmount(amount, asset).value ||
-      proof.resource !== resource
+      !proof.payer
     ) {
       writeJson(response, 402, { ok: false, error: "invalid_mpp_payment_proof" });
       return;
@@ -567,13 +563,29 @@ export async function startMppDemo(args: {
       writeJson(response, 402, { ok: false, error: "mpp_payment_proof_replayed" });
       return;
     }
+    const issuedCharge = proof.chargeId ? issuedCharges.get(proof.chargeId) : undefined;
+    if (!issuedCharge) {
+      writeJson(response, 402, { ok: false, error: "mpp_charge_not_issued" });
+      return;
+    }
+    if (
+      proof.recipient !== issuedCharge.recipient ||
+      proof.asset !== issuedCharge.asset ||
+      proof.amount !== parseAmount(issuedCharge.amount, issuedCharge.asset).value ||
+      proof.resource !== resource ||
+      proof.resource !== issuedCharge.resource
+    ) {
+      writeJson(response, 402, { ok: false, error: "invalid_mpp_payment_proof" });
+      return;
+    }
+    issuedCharges.delete(issuedCharge.chargeId);
     acceptedTransactions.add(proof.transactionHash);
     writeJson(response, 200, {
       ok: true,
       id: makeId("mpp_report"),
       message: "Local MPP one-time charge content unlocked.",
       paid: {
-        chargeId,
+        chargeId: issuedCharge.chargeId,
         transactionHash: proof.transactionHash,
         amount: proof.amount,
         asset: proof.asset
@@ -618,8 +630,11 @@ export async function startMppSessionDemo(args: {
       docs: "docs/x402-and-mpp.md#local-mpp-session-demo"
     });
   }
-  const sessionId = makeId("mpp_session");
-  const sessions = new Map<string, { remaining: bigint; spent: bigint; requests: number }>();
+  const issuedSessions = new Map<string, MppSessionRequirement>();
+  const sessions = new Map<
+    string,
+    { session: MppSessionRequirement; remaining: bigint; spent: bigint; requests: number }
+  >();
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
     if (request.url?.startsWith("/health")) {
       writeJson(response, 200, { ok: true });
@@ -631,37 +646,58 @@ export async function startMppSessionDemo(args: {
     }
     const sessionHeader = request.headers["x-mpp-session"];
     if (!sessionHeader) {
-      writeSessionRequirement(response, {
+      const session = mppSessionRequirement({
         host,
         server,
-        sessionId,
+        sessionId: makeId("mpp_session"),
         asset,
         budget: budgetAmount.value,
         pricePerRequest: requestAmount.value,
         recipient: args.recipient
       });
+      issuedSessions.set(session.sessionId, session);
+      writeSessionRequirement(response, session);
       return;
     }
     const proof = parseProofHeader(sessionHeader) as Partial<MppSessionProof> | null;
     if (
       !proof ||
       proof.protocol !== "stellar-agent-local-mpp-session" ||
-      proof.sessionId !== sessionId ||
+      proof.version !== 1 ||
+      !proof.sessionId ||
       !proof.transactionHash ||
-      proof.recipient !== args.recipient ||
-      proof.asset !== asset ||
-      proof.budget !== budgetAmount.value ||
-      proof.pricePerRequest !== requestAmount.value ||
+      !proof.payer
+    ) {
+      writeJson(response, 402, { ok: false, error: "invalid_mpp_session_proof" });
+      return;
+    }
+    let state = sessions.get(proof.transactionHash);
+    const session = state?.session ?? issuedSessions.get(proof.sessionId);
+    if (!session) {
+      writeJson(response, 402, { ok: false, error: "mpp_session_not_issued" });
+      return;
+    }
+    if (
+      proof.sessionId !== session.sessionId ||
+      proof.recipient !== session.recipient ||
+      proof.asset !== session.asset ||
+      proof.budget !== session.budget ||
+      proof.pricePerRequest !== session.pricePerRequest ||
+      proof.resource !== session.resource ||
       proof.resource !== sessionResource(host, server)
     ) {
       writeJson(response, 402, { ok: false, error: "invalid_mpp_session_proof" });
       return;
     }
-    const state = sessions.get(proof.transactionHash) ?? {
-      remaining: budgetAmount.stroops,
-      spent: 0n,
-      requests: 0
-    };
+    if (!state) {
+      issuedSessions.delete(session.sessionId);
+      state = {
+        session,
+        remaining: budgetAmount.stroops,
+        spent: 0n,
+        requests: 0
+      };
+    }
     if (state.remaining < requestAmount.stroops) {
       writeJson(response, 402, {
         ok: false,
@@ -672,6 +708,7 @@ export async function startMppSessionDemo(args: {
       return;
     }
     const nextState = {
+      session,
       remaining: state.remaining - requestAmount.stroops,
       spent: state.spent + requestAmount.stroops,
       requests: state.requests + 1
@@ -682,7 +719,7 @@ export async function startMppSessionDemo(args: {
       id: makeId("mpp_session_report"),
       message: "Local MPP session content unlocked.",
       session: {
-        sessionId,
+        sessionId: session.sessionId,
         transactionHash: proof.transactionHash,
         requestNumber: nextState.requests,
         spent: formatStroops(nextState.spent),
@@ -746,8 +783,7 @@ function syntheticSession(url: string): MppSessionRequirement {
   };
 }
 
-function writeSessionRequirement(
-  response: ServerResponse,
+function mppSessionRequirement(
   args: {
     host: string;
     server: ReturnType<typeof createServer>;
@@ -757,8 +793,8 @@ function writeSessionRequirement(
     pricePerRequest: string;
     recipient: string;
   }
-): void {
-  const session: MppSessionRequirement = {
+): MppSessionRequirement {
+  return {
     protocol: "stellar-agent-local-mpp-session",
     version: 1,
     sessionId: args.sessionId,
@@ -770,6 +806,9 @@ function writeSessionRequirement(
     resource: sessionResource(args.host, args.server),
     memo: "mpp-session"
   };
+}
+
+function writeSessionRequirement(response: ServerResponse, session: MppSessionRequirement): void {
   const encoded = JSON.stringify(session);
   response.setHeader("MPP-Session", encoded);
   response.setHeader("X-MPP-Session", encoded);

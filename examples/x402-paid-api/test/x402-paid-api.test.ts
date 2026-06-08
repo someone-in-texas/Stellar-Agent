@@ -193,11 +193,13 @@ describe("examples/x402-paid-api", () => {
       X402_PRICE: process.env.X402_PRICE,
       X402_RECIPIENT: process.env.X402_RECIPIENT,
       X402_VERIFICATION_MODE: process.env.X402_VERIFICATION_MODE,
+      STELLAR_AGENT_EXAMPLE_ROOT: process.env.STELLAR_AGENT_EXAMPLE_ROOT,
       PORT: process.env.PORT
     };
     delete process.env.X402_PRICE;
     delete process.env.X402_RECIPIENT;
     delete process.env.X402_VERIFICATION_MODE;
+    delete process.env.STELLAR_AGENT_EXAMPLE_ROOT;
     delete process.env.PORT;
     await import("node:fs/promises").then(({ writeFile }) =>
       writeFile(
@@ -206,6 +208,7 @@ describe("examples/x402-paid-api", () => {
           "X402_PRICE=0.0000003",
           "X402_RECIPIENT=GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCWHF",
           "X402_VERIFICATION_MODE=facilitator",
+          "STELLAR_AGENT_EXAMPLE_ROOT=.tmp-x402-example",
           "PORT=8788"
         ].join("\n")
       )
@@ -215,6 +218,7 @@ describe("examples/x402-paid-api", () => {
       expect(process.env.X402_PRICE).toBe("0.0000003");
       expect(process.env.X402_RECIPIENT).toBe("GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCWHF");
       expect(process.env.X402_VERIFICATION_MODE).toBe("facilitator");
+      expect(process.env.STELLAR_AGENT_EXAMPLE_ROOT).toBe(".tmp-x402-example");
       expect(process.env.PORT).toBe("8788");
     } finally {
       restoreEnv(previous);

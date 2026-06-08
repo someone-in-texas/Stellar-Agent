@@ -260,7 +260,7 @@ export async function startPaidApiDemo(args: {
   const amount = args.amount ?? "0.0000001";
   const asset = args.asset ?? "XLM";
   parseAmount(amount, asset);
-  const nonce = makeId("x402_req");
+  const issuedRequirements = new Map<string, X402PaymentRequirement>();
   const acceptedTransactions = new Set<string>();
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
     if (request.url?.startsWith("/health")) {
@@ -282,9 +282,10 @@ export async function startPaidApiDemo(args: {
         amount,
         recipient: args.recipient,
         resource,
-        nonce,
+        nonce: makeId("x402_req"),
         memo: "x402-demo"
       };
+      issuedRequirements.set(requirement.nonce, requirement);
       const encoded = JSON.stringify(requirement);
       response.setHeader("Payment-Required", encoded);
       response.setHeader("X-Payment-Required", encoded);
@@ -298,12 +299,7 @@ export async function startPaidApiDemo(args: {
       proof.protocol !== "stellar-agent-local-x402" ||
       proof.version !== 1 ||
       !proof.transactionHash ||
-      !proof.payer ||
-      proof.recipient !== args.recipient ||
-      proof.asset !== asset ||
-      proof.amount !== parseAmount(amount, asset).value ||
-      proof.resource !== resource ||
-      proof.nonce !== nonce
+      !proof.payer
     ) {
       writeJson(response, 402, { ok: false, error: "invalid_payment_proof" });
       return;
@@ -312,6 +308,23 @@ export async function startPaidApiDemo(args: {
       writeJson(response, 402, { ok: false, error: "payment_proof_replayed" });
       return;
     }
+    const issuedRequirement = proof.nonce ? issuedRequirements.get(proof.nonce) : undefined;
+    if (!issuedRequirement) {
+      writeJson(response, 402, { ok: false, error: "payment_nonce_not_issued" });
+      return;
+    }
+    if (
+      proof.recipient !== issuedRequirement.recipient ||
+      proof.asset !== issuedRequirement.asset ||
+      proof.amount !== parseAmount(issuedRequirement.amount, issuedRequirement.asset).value ||
+      proof.resource !== resource ||
+      proof.resource !== issuedRequirement.resource ||
+      proof.nonce !== issuedRequirement.nonce
+    ) {
+      writeJson(response, 402, { ok: false, error: "invalid_payment_proof" });
+      return;
+    }
+    issuedRequirements.delete(issuedRequirement.nonce);
     acceptedTransactions.add(proof.transactionHash);
     writeJson(response, 200, {
       ok: true,

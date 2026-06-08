@@ -5,6 +5,7 @@ import { runX402Payment } from "@stellar-agent/x402-client";
 import { randomBytes } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { loadExampleEnv } from "./env.js";
 
 export const exampleWallet: TestnetWallet = {
   schemaVersion: "stellar-agent.wallet.v1",
@@ -71,6 +72,7 @@ export async function payForResource(args: {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
+  loadExampleEnv();
   const url = process.argv[2] ?? "http://127.0.0.1:8787/paid";
   try {
     console.log(
