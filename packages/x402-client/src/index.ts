@@ -358,7 +358,7 @@ function paidResource(host: string, server: ReturnType<typeof createServer>): st
 function assertSameResource(advertisedResource: string, requestedUrl: string): void {
   const advertised = new URL(advertisedResource);
   const requested = new URL(requestedUrl);
-  if (advertised.origin !== requested.origin || advertised.pathname !== requested.pathname) {
+  if (advertised.origin !== requested.origin || advertised.pathname !== requested.pathname || advertised.search !== requested.search) {
     throw new StellarAgentError({
       code: "INVALID_INPUT",
       message: "HTTP 402 payment requirement resource does not match the requested URL.",

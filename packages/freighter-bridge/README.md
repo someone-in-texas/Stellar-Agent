@@ -31,10 +31,11 @@ stellar-agent tx submit-approval appr_... --json
 - Request hash matching for payment approvals.
 - Localhost HTTP endpoints under `/api/requests`.
 - A small static approval UI at `/` with optional Freighter `signTransaction` support.
+- Loopback-only approval bridge hosting by default, with explicit opt-in required for remote binds.
 
 ## Safety
 
-The UI uses Freighter's browser API when available. It posts `signedTransactionXdr` and `signerPublicKey` back to the bridge without exposing secrets to the CLI. The bridge accepts signed transaction XDR only when it has at least one signature and its transaction body matches the original approval request. Signed transaction approvals can then be submitted to Testnet with `tx submit-approval`. Mainnet submission is available only with Mainnet enabled, an active Mainnet profile, and `--allow-real-funds --i-understand-real-funds`; the CLI still never imports or stores Mainnet secret keys.
+The UI uses Freighter's browser API when available. It reads the bridge token from the printed `uiUrl` fragment, not from unauthenticated HTML, and posts `signedTransactionXdr` and `signerPublicKey` back to the bridge without exposing secrets to the CLI. The bridge accepts signed transaction XDR only when it has at least one signature and its transaction body matches the original approval request. Signed transaction approvals can then be submitted to Testnet with `tx submit-approval`. Mainnet submission is available only with Mainnet enabled, an active Mainnet profile, and `--allow-real-funds --i-understand-real-funds`; the CLI still never imports or stores Mainnet secret keys.
 
 ## Links
 

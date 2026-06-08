@@ -1,5 +1,4 @@
 import {
-  MAINNET_PROFILE,
   PaymentRequest,
   StellarAgentError,
   amountIsGreaterThan,
@@ -393,8 +392,8 @@ export function evaluatePaymentRequest(
   const request = paymentRequestSchema.parse(requestInput);
   const decision: PolicyDecision = {
     status: "allowed",
-    network: policy.network,
-    realFunds: policy.network === "mainnet" || MAINNET_PROFILE.name === policy.network,
+    network: request.network,
+    realFunds: policy.network === "mainnet" || request.network === "mainnet",
     matchedRules: [],
     reasons: []
   };
@@ -418,6 +417,10 @@ export function evaluatePaymentRequest(
     decision.matchedRules.push(rule);
     decision.reasons.push(reason);
   };
+
+  if (policy.network !== request.network) {
+    deny("policy_network_mismatch", "Policy network does not match the requested payment network.");
+  }
 
   let normalizedAmount: string;
   try {
@@ -506,7 +509,7 @@ export function evaluatePaymentRequest(
     requireApproval("new_domain_requires_approval", "Domain has no prior approved receipt.");
   }
 
-  if (policy.network === "mainnet") {
+  if (request.network === "mainnet" || policy.network === "mainnet") {
     requireApproval("mainnet_requires_approval", "Mainnet payments require explicit approval.");
   }
 

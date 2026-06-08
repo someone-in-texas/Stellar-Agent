@@ -58,6 +58,20 @@ describe("policy evaluation", () => {
     expect(decision.matchedRules).toContain("mainnet_requires_approval");
   });
 
+  it("fails closed when a payment request network does not match the policy network", () => {
+    const decision = evaluatePaymentRequest(DEFAULT_TESTNET_POLICY, {
+      destination,
+      amount: "0.01",
+      asset: "XLM",
+      network: "mainnet"
+    });
+    expect(decision.network).toBe("mainnet");
+    expect(decision.realFunds).toBe(true);
+    expect(decision.status).toBe("denied");
+    expect(decision.matchedRules).toContain("policy_network_mismatch");
+    expect(decision.matchedRules).toContain("mainnet_requires_approval");
+  });
+
   it("fails closed when spend history is unreadable", () => {
     const decision = evaluatePaymentRequest(
       DEFAULT_TESTNET_POLICY,

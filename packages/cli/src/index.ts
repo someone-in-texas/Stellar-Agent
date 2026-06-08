@@ -842,7 +842,8 @@ function addApprovalCommands(program: Command): void {
     .description("Start the local approval bridge HTTP server.")
     .option("--host <host>", "Host", "127.0.0.1")
     .option("--port <port>", "Port", parsePortOption, 0)
-    .action(async (options: { host: string; port: number }, command: Command) => {
+    .option("--allow-remote-access", "Allow binding the approval bridge to a non-loopback host")
+    .action(async (options: { host: string; port: number; allowRemoteAccess?: boolean }, command: Command) => {
       const parent = command.optsWithGlobals() as CliOptions;
       const config = await loadConfig(parent);
       const profileName = (parent.profile ?? process.env.STELLAR_AGENT_PROFILE ?? config.activeProfile ?? "testnet") as NetworkName;
@@ -851,12 +852,16 @@ function addApprovalCommands(program: Command): void {
       const bridge = await startApprovalBridge({
         approvalsDir: context.config.storage.approvalsDir,
         host: options.host,
-        port: options.port
+        port: options.port,
+        allowRemoteAccess: Boolean(options.allowRemoteAccess)
       });
       if (parent.json) {
-        process.stdout.write(`${JSON.stringify(ok({ url: bridge.url, authToken: bridge.authToken, approvalsDir: context.config.storage.approvalsDir }))}\n`);
+        process.stdout.write(
+          `${JSON.stringify(ok({ url: bridge.url, uiUrl: bridge.uiUrl, authToken: bridge.authToken, approvalsDir: context.config.storage.approvalsDir }))}\n`
+        );
       } else {
         process.stdout.write(`Approval bridge listening at ${bridge.url}\n`);
+        process.stdout.write(`Open approval UI: ${bridge.uiUrl}\n`);
         process.stdout.write("Approval bridge API requires the printed session token for non-browser requests.\n");
         process.stdout.write(`Session token: ${bridge.authToken}\n`);
       }

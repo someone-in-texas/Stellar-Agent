@@ -173,6 +173,35 @@ describe("mpp client", () => {
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 
+  it("rejects charges when only the resource query string differs", async () => {
+    const root = await mkdtemp(join(tmpdir(), "stellar-agent-mpp-resource-query-"));
+    await expect(
+      runMppPayment({
+        url: "http://api.example.test/mpp-report?item=expensive",
+        source,
+        policy: DEFAULT_TESTNET_POLICY,
+        profile,
+        receiptsDir: join(root, "receipts"),
+        eventLog: join(root, "logs", "events.jsonl"),
+        command: "test",
+        fetchImpl: async () =>
+          new Response(
+            JSON.stringify({
+              protocol: "stellar-agent-local-mpp",
+              version: 1,
+              chargeId: "charge_1",
+              network: "testnet",
+              asset: "XLM",
+              amount: "0.0000001",
+              recipient,
+              resource: "http://api.example.test/mpp-report?item=cheap"
+            }),
+            { status: 402 }
+          )
+      })
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
   it("runs a dry-run policy evaluation against the session demo server", async () => {
     const server = await startMppSessionDemo({ recipient });
     try {
@@ -217,6 +246,36 @@ describe("mpp client", () => {
     } finally {
       await server.close();
     }
+  });
+
+  it("rejects session requirements when only the resource query string differs", async () => {
+    const root = await mkdtemp(join(tmpdir(), "stellar-agent-mpp-session-query-"));
+    await expect(
+      runMppSession({
+        url: "http://api.example.test/mpp-session?item=expensive",
+        source,
+        policy: DEFAULT_TESTNET_POLICY,
+        profile,
+        receiptsDir: join(root, "receipts"),
+        eventLog: join(root, "logs", "events.jsonl"),
+        command: "test",
+        fetchImpl: async () =>
+          new Response(
+            JSON.stringify({
+              protocol: "stellar-agent-local-mpp-session",
+              version: 1,
+              sessionId: "session_1",
+              network: "testnet",
+              asset: "XLM",
+              budget: "0.0000003",
+              pricePerRequest: "0.0000001",
+              recipient,
+              resource: "http://api.example.test/mpp-session?item=cheap"
+            }),
+            { status: 402 }
+          )
+      })
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 
   it("normalizes unreachable MPP resources", async () => {

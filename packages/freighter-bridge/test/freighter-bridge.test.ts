@@ -135,10 +135,20 @@ describe("freighter bridge approvals", () => {
       const html = await htmlResponse.text();
       expect(html).toContain("signTransaction");
       expect(html).toContain("Sign With Freighter");
-      expect(html).toContain(bridge.authToken);
+      expect(html).toContain("location.hash");
+      expect(html).not.toContain(bridge.authToken);
+      expect(html).not.toContain("cdnjs.cloudflare.com");
+      expect(bridge.uiUrl).toContain(encodeURIComponent(bridge.authToken));
     } finally {
       await bridge.close();
     }
+  });
+
+  it("blocks non-loopback approval bridge hosts unless explicitly allowed", async () => {
+    const approvalsDir = await mkdtemp(join(tmpdir(), "stellar-agent-approval-bridge-remote-"));
+    await expect(startApprovalBridge({ approvalsDir, host: "0.0.0.0" })).rejects.toMatchObject({
+      code: "INVALID_INPUT"
+    });
   });
 });
 

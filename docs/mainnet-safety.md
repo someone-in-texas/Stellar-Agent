@@ -35,7 +35,9 @@ stellar-agent approval decide appr_... --approve --json
 stellar-agent approval serve
 ```
 
-The server prints a per-session API token. Browser requests from the served UI include this token automatically. Non-browser API clients must send it as `Authorization: Bearer <token>`. The bridge also rejects cross-origin API writes and oversized request bodies.
+The server prints a per-session API token and an approval UI URL with the token in the URL fragment. The unauthenticated HTML served at `/` does not embed the token. Browser requests from the printed UI URL include this token automatically. Non-browser API clients must send it as `Authorization: Bearer <token>`. The bridge also rejects cross-origin API writes and oversized request bodies.
+
+By default, `approval serve` binds to `127.0.0.1`. Binding to a non-loopback host such as `0.0.0.0` requires the explicit `--allow-remote-access` acknowledgement and should be used only on trusted networks.
 
 For Testnet payments that policy marks `requires_approval`, rerun the payment with a matching approved request:
 

@@ -1,4 +1,5 @@
 import { createDefaultConfig } from "@stellar-agent/core";
+import { DEFAULT_TESTNET_POLICY, policyToYaml } from "@stellar-agent/policy";
 import { ensureWallet } from "@stellar-agent/testnet-suite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
@@ -367,6 +368,43 @@ describe("CLI contract receipts", () => {
         code: "INVALID_INPUT",
         hint: expect.stringContaining("--fee-strategy medium"),
         docs: "docs/troubleshooting.md#fee-too-low"
+      }
+    });
+  });
+
+  it("marks Mainnet payment quotes as real funds when a Testnet policy is supplied", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
+    const policyRoot = await mkdtemp(join(tmpdir(), "stellar-agent-cli-policy-"));
+    const policyPath = join(policyRoot, "default-testnet.yaml");
+    await writeFile(policyPath, policyToYaml(DEFAULT_TESTNET_POLICY));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ last_ledger_base_fee: "100" })));
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--policy",
+      policyPath,
+      "--profile",
+      "mainnet",
+      "--json",
+      "--no-cache",
+      "pay",
+      "quote",
+      "--to",
+      "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      "--amount",
+      "0.01"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        policyDecision: {
+          status: "denied",
+          network: "mainnet",
+          realFunds: true,
+          matchedRules: expect.arrayContaining(["policy_network_mismatch", "mainnet_requires_approval"])
+        }
       }
     });
   });

@@ -48,6 +48,7 @@ export interface ApprovalStore {
 
 export interface ApprovalBridge {
   url: string;
+  uiUrl: string;
   authToken: string;
   close(): Promise<void>;
 }
@@ -225,8 +226,17 @@ export async function startApprovalBridge(args: {
   port?: number;
   authToken?: string;
   maxBodyBytes?: number;
+  allowRemoteAccess?: boolean;
 }): Promise<ApprovalBridge> {
   const host = args.host ?? "127.0.0.1";
+  if (!isLoopbackHost(host) && !args.allowRemoteAccess) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Approval bridge host must be loopback unless remote access is explicitly allowed.",
+      hint: "Use the default 127.0.0.1 host for local approval, or pass an explicit remote-access acknowledgement.",
+      docs: "docs/mainnet-safety.md#local-approval-bridge"
+    });
+  }
   const authToken = args.authToken ?? randomBytes(32).toString("base64url");
   const maxBodyBytes = args.maxBodyBytes ?? 1024 * 1024;
   const server = createServer((request, response) => {
@@ -238,8 +248,10 @@ export async function startApprovalBridge(args: {
   });
   const address = server.address();
   const port = typeof address === "object" && address ? address.port : args.port;
+  const url = `http://${host}:${port}`;
   return {
-    url: `http://${host}:${port}`,
+    url,
+    uiUrl: `${url}/#token=${encodeURIComponent(authToken)}`,
     authToken,
     close: () => closeServer(server)
   };
@@ -262,7 +274,7 @@ async function handleRequest(
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   try {
     if (request.method === "GET" && url.pathname === "/health") return json(response, { ok: true });
-    if (request.method === "GET" && url.pathname === "/") return html(response, approvalHtml(options.authToken));
+    if (request.method === "GET" && url.pathname === "/") return html(response, approvalHtml());
     if (url.pathname.startsWith("/api/")) assertAuthorizedBridgeRequest(request, options.authToken);
     if (request.method === "GET" && url.pathname === "/api/requests") {
       return json(response, { requests: await listApprovalRequests(approvalsDir) });
@@ -430,14 +442,18 @@ function comparableEnvelope(rawXdr: string, label: string): { type: string; tran
   });
 }
 
-function approvalHtml(authToken: string): string {
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.toLowerCase();
+  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1" || normalized === "[::1]";
+}
+
+function approvalHtml(): string {
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Stellar Agent Approval</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/stellar-freighter-api/6.0.1/index.min.js"></script>
   <style>
     body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f6f7f9; color: #16181d; }
     main { max-width: 920px; margin: 0 auto; padding: 32px 20px; }
@@ -463,8 +479,12 @@ function approvalHtml(authToken: string): string {
     <div id="requests"></div>
   </main>
   <script>
-    const authToken = ${JSON.stringify(authToken)};
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    const authToken = params.get('token') || '';
     function apiFetch(url, options) {
+      if (!authToken) {
+        return Promise.reject(new Error('Missing approval bridge token. Open the URL printed by stellar-agent approval serve.'));
+      }
       const init = options || {};
       init.headers = Object.assign({}, init.headers || {}, { authorization: 'Bearer ' + authToken });
       return fetch(url, init);

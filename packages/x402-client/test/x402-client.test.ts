@@ -213,6 +213,44 @@ describe("x402 client", () => {
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 
+  it("rejects payment requirements when only the resource query string differs", async () => {
+    const root = await mkdtemp(join(tmpdir(), "stellar-agent-x402-resource-query-"));
+    await expect(
+      runX402Payment({
+        url: "http://api.example.test/paid-report?item=expensive",
+        source,
+        policy: DEFAULT_TESTNET_POLICY,
+        profile: {
+          name: "testnet",
+          network: "testnet",
+          networkPassphrase: "Test SDF Network ; September 2015",
+          horizonUrl: "https://horizon-testnet.stellar.org",
+          rpcUrl: "https://soroban-testnet.stellar.org",
+          friendbotUrl: "https://friendbot.stellar.org",
+          defaultAsset: "XLM",
+          realFunds: false
+        },
+        receiptsDir: join(root, "receipts"),
+        eventLog: join(root, "logs", "events.jsonl"),
+        command: "test",
+        fetchImpl: async () =>
+          new Response(
+            JSON.stringify({
+              protocol: "stellar-agent-local-x402",
+              version: 1,
+              network: "testnet",
+              asset: "XLM",
+              amount: "0.0000001",
+              recipient,
+              resource: "http://api.example.test/paid-report?item=cheap",
+              nonce: "x402_req_1"
+            }),
+            { status: 402 }
+          )
+      })
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
   it("normalizes unreachable x402 resources", async () => {
     const root = await mkdtemp(join(tmpdir(), "stellar-agent-x402-"));
     await expect(

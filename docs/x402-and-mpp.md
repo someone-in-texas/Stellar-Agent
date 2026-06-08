@@ -51,7 +51,7 @@ Flow:
 7. Retry request.
 8. Write receipt.
 
-The local demo binds proofs to the advertised resource and nonce, requires payer metadata, and rejects replay of a previously accepted transaction hash.
+The local demo binds proofs to the advertised resource and nonce, requires payer metadata, and rejects replay of a previously accepted transaction hash. Resource binding includes the URL origin, path, and query string, so a payment requirement for `?item=cheap` does not satisfy a request for `?item=expensive`.
 
 The demo paid API is available under `apps/paid-api-demo`:
 
@@ -69,7 +69,7 @@ One-time charge flow:
 4. Retry request.
 5. Write receipt.
 
-One-time MPP demo proofs are bound to the charge id and resource, require payer metadata, and are accepted only once per transaction hash.
+One-time MPP demo proofs are bound to the charge id and resource, require payer metadata, and are accepted only once per transaction hash. Resource binding includes the URL origin, path, and query string.
 
 The command result includes `paidResourceDelivered` with the same meaning as the x402 demo.
 
