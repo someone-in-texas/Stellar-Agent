@@ -188,7 +188,8 @@ export const policySchema = z.object({
     requireForAllPayments: z.boolean().default(false),
     requireForNewRecipient: z.boolean().default(false),
     requireForNewDomain: z.boolean().default(false),
-    requireAbove: z.string().min(1)
+    requireAbove: z.string().min(1),
+    allowMainnetAgentWalletAutosign: z.boolean().default(false)
   }),
   x402: z
     .object({
@@ -242,7 +243,8 @@ export const DEFAULT_TESTNET_POLICY: Policy = {
     requireForAllPayments: false,
     requireForNewRecipient: false,
     requireForNewDomain: false,
-    requireAbove: "5 XLM"
+    requireAbove: "5 XLM",
+    allowMainnetAgentWalletAutosign: false
   },
   x402: {
     enabled: false,
@@ -305,7 +307,8 @@ export const DEFAULT_MAINNET_POLICY: Policy = {
     requireForAllPayments: true,
     requireForNewRecipient: true,
     requireForNewDomain: true,
-    requireAbove: "0 XLM"
+    requireAbove: "0 XLM",
+    allowMainnetAgentWalletAutosign: false
   },
   x402: {
     enabled: false,
@@ -516,7 +519,12 @@ export function evaluatePaymentRequest(
     requireApproval("new_domain_requires_approval", "Domain has no prior approved receipt.");
   }
 
-  if (request.network === "mainnet" || policy.network === "mainnet") {
+  if ((request.network === "mainnet" || policy.network === "mainnet") && request.agentWalletAutosign && policy.approval.allowMainnetAgentWalletAutosign) {
+    note(
+      "mainnet_agent_wallet_autosign_policy_exception",
+      "Policy explicitly allows risk-budgeted Mainnet agent-wallet autosigning."
+    );
+  } else if (request.network === "mainnet" || policy.network === "mainnet") {
     requireApproval("mainnet_requires_approval", "Mainnet payments require explicit approval.");
   }
 

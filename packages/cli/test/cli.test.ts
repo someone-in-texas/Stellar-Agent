@@ -1,6 +1,7 @@
 import { createDefaultConfig } from "@stellar-agent/core";
 import { createTransactionXdrApprovalRequest, decideApprovalRequest } from "@stellar-agent/freighter-bridge";
-import { DEFAULT_TESTNET_POLICY, policyToYaml } from "@stellar-agent/policy";
+import { writeReceipt } from "@stellar-agent/ledger-logger";
+import { DEFAULT_MAINNET_POLICY, DEFAULT_TESTNET_POLICY, policyToYaml } from "@stellar-agent/policy";
 import { ensureWallet } from "@stellar-agent/testnet-suite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
@@ -556,6 +557,64 @@ describe("CLI contract receipts", () => {
     });
   });
 
+  it("summarizes local receipts by profile and asset", async () => {
+    const { configPath, config } = await createCliFixture({ stdout: "", stderr: "" });
+    await writeReceipt(config.storage.receiptsDir, {
+      command: "pay send",
+      profile: "testnet",
+      networkPassphrase: config.profiles.testnet.networkPassphrase,
+      realFunds: false,
+      payment: {
+        source: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        destination: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        asset: "XLM",
+        amount: "1.0000000"
+      },
+      policyDecision: { status: "allowed", matchedRules: ["test"] },
+      transaction: { hash: transactionHash, successful: true }
+    });
+
+    const output = await runCli(["--config", configPath, "--json", "receipts", "summary"]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        receiptCount: 1,
+        paymentCount: 1,
+        totals: {
+          "testnet:XLM": { amount: "1.0000000", count: 1 }
+        },
+        profiles: {
+          testnet: { count: 1, realFundsCount: 0 }
+        }
+      }
+    });
+  });
+
+  it("initializes a local x402 server scaffold", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
+    const out = await mkdtemp(join(tmpdir(), "stellar-agent-x402-scaffold-"));
+
+    const output = await runCli(["--config", configPath, "--json", "x402", "init-server", "--out", out]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        path: out,
+        files: expect.arrayContaining(["package.json", "server.mjs", "README.md"]),
+        network: "testnet",
+        realFunds: false
+      }
+    });
+    await expect(readFile(join(out, "server.mjs"), "utf8")).resolves.toContain("payment_required");
+
+    const again = await runCli(["--config", configPath, "--json", "x402", "init-server", "--out", out]);
+    expect(again).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_INPUT", message: expect.stringContaining("Refusing to overwrite") }
+    });
+  });
+
   it("manages a risk-budgeted Mainnet agent wallet without storing a secret key", async () => {
     const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
     const address = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
@@ -716,6 +775,499 @@ describe("CLI contract receipts", () => {
         message: "Mainnet agent-wallet balance exceeds the configured risk budget."
       }
     });
+  });
+
+  it("enables Mainnet agent-wallet autosigning without storing a secret key", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
+    const signer = Keypair.random();
+
+    const enabled = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "mainnet",
+      "agent-wallet",
+      "enable",
+      "--address",
+      signer.publicKey(),
+      "--max-balance",
+      "125",
+      "--daily-limit",
+      "5",
+      "--per-tx-limit",
+      "1",
+      "--allow-destination",
+      "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      "--enable-autosign",
+      "--secret-key-env",
+      "STELLAR_AGENT_TEST_SECRET",
+      "--i-understand-agent-wallet-autosign"
+    ]);
+
+    expect(enabled).toMatchObject({
+      ok: true,
+      data: {
+        autosign: {
+          enabled: true,
+          secretKeyEnvVar: "[REDACTED]",
+          warning: expect.stringContaining("can spend real funds")
+        }
+      }
+    });
+    const rawConfig = await readFile(configPath, "utf8");
+    expect(rawConfig).toContain("STELLAR_AGENT_TEST_SECRET");
+    expect(rawConfig).not.toContain(signer.secret());
+  });
+
+  it("keeps Mainnet pay send blocked outside the configured agent-wallet account", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--profile",
+      "mainnet",
+      "--json",
+      "pay",
+      "send",
+      "--from",
+      "agent",
+      "--to",
+      "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      "--amount",
+      "0.01",
+      "--allow-real-funds",
+      "--i-understand-real-funds",
+      "--i-understand-agent-wallet-autosign"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: false,
+      error: {
+        code: "WALLET_NOT_FOUND",
+        message: "Mainnet agent wallet is not configured."
+      }
+    });
+  });
+
+  it("refuses Mainnet agent-wallet autosign when policy still requires approval", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
+    const signer = Keypair.random();
+    const destination = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+    let transactionSubmitCalls = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input: string | URL | Request) => {
+      const url = input.toString();
+      if (url.includes("/transactions")) transactionSubmitCalls += 1;
+      if (url.includes("/accounts/")) return new Response(JSON.stringify(accountFixture(signer.publicKey())));
+      if (url.includes("/fee_stats")) return new Response(JSON.stringify({ last_ledger_base_fee: "100" }));
+      return new Response(JSON.stringify({ hash: transactionHash, ledger: 12345, successful: true, fee_charged: "100" }));
+    });
+    await enableArmedAutosignWallet(configPath, signer.publicKey(), destination);
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--profile",
+      "mainnet",
+      "--json",
+      "pay",
+      "send",
+      "--from",
+      "mainnet-agent",
+      "--to",
+      destination,
+      "--amount",
+      "0.01",
+      "--allow-real-funds",
+      "--i-understand-real-funds",
+      "--i-understand-agent-wallet-autosign"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: false,
+      error: {
+        code: "APPROVAL_REQUIRED",
+        message: "Mainnet agent-wallet autosigning requires policy status 'allowed'.",
+        details: {
+          policyDecision: {
+            status: "requires_approval",
+            matchedRules: expect.arrayContaining(["mainnet_requires_approval"])
+          }
+        }
+      }
+    });
+    expect(transactionSubmitCalls).toBe(0);
+  });
+
+  it("autosigns only the armed Mainnet agent-wallet payment path with explicit acknowledgements", async () => {
+    const { configPath, config } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
+    const signer = Keypair.random();
+    const destination = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+    const previousSecret = process.env.STELLAR_AGENT_TEST_SECRET;
+    process.env.STELLAR_AGENT_TEST_SECRET = signer.secret();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input: string | URL | Request) => {
+      const url = input.toString();
+      if (url.includes("/accounts/")) return new Response(JSON.stringify(accountFixture(signer.publicKey())));
+      if (url.includes("/fee_stats")) return new Response(JSON.stringify({ last_ledger_base_fee: "100" }));
+      if (url.includes("/transactions")) {
+        return new Response(JSON.stringify({ hash: transactionHash, ledger: 12345, successful: true, fee_charged: "100" }));
+      }
+      return new Response(JSON.stringify({}));
+    });
+
+    try {
+      await writeMainnetAgentWalletAutosignPolicy(config);
+      const enabled = await runCli([
+        "--config",
+        configPath,
+        "--json",
+        "mainnet",
+        "agent-wallet",
+        "enable",
+        "--address",
+        signer.publicKey(),
+        "--max-balance",
+        "125",
+        "--daily-limit",
+        "5",
+        "--per-tx-limit",
+        "1",
+        "--allow-destination",
+        destination,
+        "--enable-autosign",
+        "--secret-key-env",
+        "STELLAR_AGENT_TEST_SECRET",
+        "--i-understand-agent-wallet-autosign",
+        "--arm",
+        "--i-understand-real-funds"
+      ]);
+      expect(enabled).toMatchObject({ ok: true, data: { armed: true, status: "armed" } });
+
+      const output = await runCli([
+        "--config",
+        configPath,
+        "--profile",
+        "mainnet",
+        "--json",
+        "pay",
+        "send",
+        "--from",
+        "mainnet-agent",
+        "--to",
+        destination,
+        "--amount",
+        "0.01",
+        "--allow-real-funds",
+        "--i-understand-real-funds",
+        "--i-understand-agent-wallet-autosign"
+      ]);
+
+      expect(output).toMatchObject({
+        ok: true,
+        data: {
+          realFunds: true,
+          autosign: { enabled: true, warning: expect.stringContaining("can spend real funds") },
+          transaction: { hash: transactionHash, ledger: 12345, successful: true },
+          receiptPath: expect.any(String)
+        }
+      });
+      const receipt = JSON.parse(await readFile(output.data.receiptPath, "utf8"));
+      expect(receipt).toMatchObject({
+        command: "pay send",
+        profile: "mainnet",
+        network: { realFunds: true },
+        operation: {
+          type: "pay.send",
+          details: {
+            mainnetAgentWallet: {
+              autosign: true,
+              secretKeyEnvVar: "[REDACTED]",
+              riskBudgetState: {
+                before: { dailyTotal: "0.0000000" },
+                after: { dailyTotal: "0.0100000" }
+              }
+            }
+          }
+        },
+        policyDecision: {
+          matchedRules: expect.arrayContaining(["mainnet_agent_wallet_autosign_acknowledged"])
+        }
+      });
+      expect(JSON.stringify(receipt)).not.toContain(signer.secret());
+
+      const configText = await readFile(configPath, "utf8");
+      expect(configText).toContain("spendCounters");
+      expect(configText).not.toContain(signer.secret());
+    } finally {
+      if (previousSecret === undefined) delete process.env.STELLAR_AGENT_TEST_SECRET;
+      else process.env.STELLAR_AGENT_TEST_SECRET = previousSecret;
+    }
+  });
+
+  it("refuses Mainnet agent-wallet autosign payments over the per-transaction cap", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
+    const signer = Keypair.random();
+    const destination = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+    process.env.STELLAR_AGENT_TEST_SECRET = signer.secret();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(accountFixture(signer.publicKey()))));
+
+    try {
+      const enabled = await runCli([
+        "--config",
+        configPath,
+        "--json",
+        "mainnet",
+        "agent-wallet",
+        "enable",
+        "--address",
+        signer.publicKey(),
+        "--max-balance",
+        "125",
+        "--daily-limit",
+        "5",
+        "--per-tx-limit",
+        "0.01",
+        "--allow-destination",
+        destination,
+        "--enable-autosign",
+        "--secret-key-env",
+        "STELLAR_AGENT_TEST_SECRET",
+        "--i-understand-agent-wallet-autosign",
+        "--arm",
+        "--i-understand-real-funds"
+      ]);
+      expect(enabled).toMatchObject({ ok: true, data: { armed: true, status: "armed" } });
+
+      const output = await runCli([
+        "--config",
+        configPath,
+        "--profile",
+        "mainnet",
+        "--json",
+        "pay",
+        "send",
+        "--from",
+        "mainnet-agent",
+        "--to",
+        destination,
+        "--amount",
+        "0.02",
+        "--allow-real-funds",
+        "--i-understand-real-funds",
+        "--i-understand-agent-wallet-autosign"
+      ]);
+
+      expect(output).toMatchObject({
+        ok: false,
+        error: {
+          code: "POLICY_DENIED",
+          message: "Mainnet agent-wallet payment exceeds the per-transaction risk budget."
+        }
+      });
+    } finally {
+      delete process.env.STELLAR_AGENT_TEST_SECRET;
+    }
+  });
+
+  it("refuses Mainnet agent-wallet autosign payments over the daily receipt-derived cap", async () => {
+    const { configPath, config } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
+    const signer = Keypair.random();
+    const destination = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(accountFixture(signer.publicKey()))));
+    await enableArmedAutosignWallet(configPath, signer.publicKey(), destination, { dailyLimit: "0.01" });
+    await writeMainnetPaymentReceipt(config, signer.publicKey(), destination, "0.0090000");
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--profile",
+      "mainnet",
+      "--json",
+      "pay",
+      "send",
+      "--from",
+      "mainnet-agent",
+      "--to",
+      destination,
+      "--amount",
+      "0.002",
+      "--allow-real-funds",
+      "--i-understand-real-funds",
+      "--i-understand-agent-wallet-autosign"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: false,
+      error: {
+        code: "POLICY_DENIED",
+        message: "Mainnet agent-wallet payment would exceed the daily risk budget."
+      }
+    });
+  });
+
+  it("refuses Mainnet agent-wallet autosign payments over the monthly receipt-derived cap", async () => {
+    const { configPath, config } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
+    const signer = Keypair.random();
+    const destination = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(accountFixture(signer.publicKey()))));
+    await enableArmedAutosignWallet(configPath, signer.publicKey(), destination, { monthlyLimit: "0.01" });
+    await writeMainnetPaymentReceipt(config, signer.publicKey(), destination, "0.0090000");
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--profile",
+      "mainnet",
+      "--json",
+      "pay",
+      "send",
+      "--from",
+      "mainnet-agent",
+      "--to",
+      destination,
+      "--amount",
+      "0.002",
+      "--allow-real-funds",
+      "--i-understand-real-funds",
+      "--i-understand-agent-wallet-autosign"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: false,
+      error: {
+        code: "POLICY_DENIED",
+        message: "Mainnet agent-wallet payment would exceed the monthly risk budget."
+      }
+    });
+  });
+
+  it("fails closed when Mainnet agent-wallet receipt history cannot be read", async () => {
+    const { configPath, config } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
+    const signer = Keypair.random();
+    const destination = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(accountFixture(signer.publicKey()))));
+    await enableArmedAutosignWallet(configPath, signer.publicKey(), destination);
+    await mkdir(config.storage.receiptsDir, { recursive: true });
+    await writeFile(join(config.storage.receiptsDir, "bad-receipt.json"), "{not-json");
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--profile",
+      "mainnet",
+      "--json",
+      "pay",
+      "send",
+      "--from",
+      "mainnet-agent",
+      "--to",
+      destination,
+      "--amount",
+      "0.001",
+      "--allow-real-funds",
+      "--i-understand-real-funds",
+      "--i-understand-agent-wallet-autosign"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: false,
+      error: {
+        code: "POLICY_DENIED",
+        message: "Mainnet agent-wallet spend history could not be read, so payment fails closed."
+      }
+    });
+  });
+
+  it("fails closed when policy changes after Mainnet agent-wallet arming", async () => {
+    const { configPath, config } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
+    const signer = Keypair.random();
+    const destination = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(accountFixture(signer.publicKey()))));
+    await enableArmedAutosignWallet(configPath, signer.publicKey(), destination);
+    await mkdir(config.storage.policiesDir, { recursive: true });
+    await writeFile(join(config.storage.policiesDir, "default-mainnet.yaml"), `${policyToYaml(DEFAULT_MAINNET_POLICY)}\n# changed after arming\n`, {
+      mode: 0o600
+    });
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--profile",
+      "mainnet",
+      "--json",
+      "pay",
+      "send",
+      "--from",
+      "mainnet-agent",
+      "--to",
+      destination,
+      "--amount",
+      "0.001",
+      "--allow-real-funds",
+      "--i-understand-real-funds",
+      "--i-understand-agent-wallet-autosign"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: false,
+      error: {
+        code: "POLICY_DENIED",
+        message: "Mainnet agent-wallet arming is stale and must be refreshed.",
+        details: { failures: expect.arrayContaining(["policy_changed_after_arming"]) }
+      }
+    });
+  });
+
+  it("fails closed when the config path changes after Mainnet agent-wallet arming", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
+    const signer = Keypair.random();
+    const destination = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(accountFixture(signer.publicKey()))));
+    await enableArmedAutosignWallet(configPath, signer.publicKey(), destination);
+    const copiedConfigPath = join(tmpdir(), `stellar-agent-config-copy-${Date.now()}.yaml`);
+    await writeFile(copiedConfigPath, await readFile(configPath, "utf8"), { mode: 0o600 });
+
+    const output = await runCli([
+      "--config",
+      copiedConfigPath,
+      "--profile",
+      "mainnet",
+      "--json",
+      "pay",
+      "send",
+      "--from",
+      "mainnet-agent",
+      "--to",
+      destination,
+      "--amount",
+      "0.001",
+      "--allow-real-funds",
+      "--i-understand-real-funds",
+      "--i-understand-agent-wallet-autosign"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: false,
+      error: {
+        code: "POLICY_DENIED",
+        message: "Mainnet agent-wallet arming is stale and must be refreshed.",
+        details: { failures: expect.arrayContaining(["config_path_changed"]) }
+      }
+    });
+  });
+
+  it("prints human-readable Mainnet agent-wallet status with warnings", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
+    const signer = Keypair.random();
+    const destination = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(accountFixture(signer.publicKey()))));
+    await enableArmedAutosignWallet(configPath, signer.publicKey(), destination);
+
+    const output = await runCliText(["--config", configPath, "mainnet", "agent-wallet", "status"]);
+
+    expect(output).toContain("Mainnet agent wallet status loaded.");
+    expect(output).toContain("bounded, not safe");
+    expect(output).toContain("autosign");
   });
 });
 
@@ -1385,10 +1937,91 @@ function poolFixture() {
   };
 }
 
-function accountFixture() {
+async function enableArmedAutosignWallet(
+  configPath: string,
+  publicKey: string,
+  destination: string,
+  options: { perTxLimit?: string; dailyLimit?: string; monthlyLimit?: string } = {}
+) {
+  const args = [
+    "--config",
+    configPath,
+    "--json",
+    "mainnet",
+    "agent-wallet",
+    "enable",
+    "--address",
+    publicKey,
+    "--max-balance",
+    "125",
+    "--daily-limit",
+    options.dailyLimit ?? "5",
+    "--per-tx-limit",
+    options.perTxLimit ?? "1",
+    "--allow-destination",
+    destination,
+    "--enable-autosign",
+    "--secret-key-env",
+    "STELLAR_AGENT_TEST_SECRET",
+    "--i-understand-agent-wallet-autosign",
+    "--arm",
+    "--i-understand-real-funds"
+  ];
+  if (options.monthlyLimit) args.splice(args.indexOf("--allow-destination"), 0, "--monthly-limit", options.monthlyLimit);
+  const output = await runCli(args);
+  expect(output).toMatchObject({ ok: true, data: { armed: true, status: "armed" } });
+  return output;
+}
+
+async function writeMainnetPaymentReceipt(
+  config: ReturnType<typeof createDefaultConfig>,
+  source: string,
+  destination: string,
+  amount: string
+) {
+  await writeReceipt(config.storage.receiptsDir, {
+    command: "pay send",
+    profile: "mainnet",
+    networkPassphrase: config.profiles.mainnet.networkPassphrase,
+    realFunds: true,
+    payment: {
+      source,
+      destination,
+      asset: "XLM",
+      amount
+    },
+    policyDecision: { status: "requires_approval", matchedRules: ["test"] },
+    transaction: { hash: "b".repeat(64), successful: true }
+  });
+}
+
+async function writeMainnetAgentWalletAutosignPolicy(config: ReturnType<typeof createDefaultConfig>) {
+  await mkdir(config.storage.policiesDir, { recursive: true });
+  await writeFile(
+    join(config.storage.policiesDir, "default-mainnet.yaml"),
+    policyToYaml({
+      ...DEFAULT_MAINNET_POLICY,
+      limits: {
+        perTransaction: "1 XLM",
+        dailyTotal: "5 XLM",
+        monthlyTotal: "25 XLM"
+      },
+      approval: {
+        requireForAllPayments: false,
+        requireForNewRecipient: false,
+        requireForNewDomain: false,
+        requireAbove: "1 XLM",
+        allowMainnetAgentWalletAutosign: true
+      }
+    }),
+    { mode: 0o600 }
+  );
+}
+
+function accountFixture(address = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF") {
   return {
-    id: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
-    account_id: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    id: address,
+    account_id: address,
     sequence: "1",
     balances: [
       { asset_type: "native", balance: "100.0000000" },

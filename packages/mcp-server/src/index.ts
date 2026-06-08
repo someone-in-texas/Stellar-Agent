@@ -290,6 +290,49 @@ export const MCP_TOOLS: McpTool[] = [
     "agent-wallet",
     "disarm"
   ], {}),
+  tool("stellar_mainnet_agent_wallet_autosign_enable", "Enable env-var based autosigning for the dedicated Mainnet agent wallet only.", { iUnderstandAgentWalletAutosign: true }, (input) => [
+    "mainnet",
+    "agent-wallet",
+    "autosign",
+    "enable",
+    "--secret-key-env",
+    string(input, "secretKeyEnv") ?? "STELLAR_AGENT_MAINNET_AGENT_SECRET_KEY",
+    ...(bool(input, "iUnderstandAgentWalletAutosign") ? ["--i-understand-agent-wallet-autosign"] : [])
+  ], {
+    secretKeyEnv: { type: "string" },
+    iUnderstandAgentWalletAutosign: { type: "boolean" }
+  }),
+  tool("stellar_mainnet_agent_wallet_autosign_disable", "Disable Mainnet agent-wallet autosigning and disarm the wallet.", {}, () => [
+    "mainnet",
+    "agent-wallet",
+    "autosign",
+    "disable"
+  ], {}),
+  tool("stellar_mainnet_agent_wallet_autosign_status", "Show Mainnet agent-wallet autosign status without reading secret material.", {}, () => [
+    "mainnet",
+    "agent-wallet",
+    "autosign",
+    "status"
+  ], {}),
+  tool("stellar_receipts_summary", "Summarize local receipt spend, Mainnet exposure, and recent activity.", {}, (input) => [
+    "receipts",
+    "summary",
+    ...option(input, "receiptProfile", "--profile"),
+    ...option(input, "asset", "--asset")
+  ], {
+    receiptProfile: { type: "string", enum: ["testnet", "mainnet", "local"] },
+    asset: { type: "string" }
+  }),
+  tool("stellar_x402_init_server", "Create a local Testnet x402-style paid API server scaffold.", {}, (input) => [
+    "x402",
+    "init-server",
+    "--out",
+    string(input, "out") ?? "./stellar-agent-x402-server",
+    ...(bool(input, "force") ? ["--force"] : [])
+  ], {
+    out: { type: "string" },
+    force: { type: "boolean" }
+  }),
   tool("stellar_pay_quote", "Quote and policy-check a payment without submitting it.", { to: true, amount: true }, (input) => [
     "pay",
     "quote",
@@ -316,8 +359,10 @@ export const MCP_TOOLS: McpTool[] = [
     ...option(input, "approvalId", "--approval-id"),
     ...option(input, "memo", "--memo"),
     ...option(input, "feeStrategy", "--fee-strategy"),
+    ...realFundsFlags(input),
+    ...(bool(input, "iUnderstandAgentWalletAutosign") ? ["--i-understand-agent-wallet-autosign"] : []),
     ...(bool(input, "dryRun") ? ["--dry-run"] : [])
-  ], { ...paymentProperties(), from: { type: "string" }, approvalId: { type: "string" }, dryRun: { type: "boolean" } }),
+  ], { ...paymentProperties(), from: { type: "string" }, approvalId: { type: "string" }, dryRun: { type: "boolean" }, ...realFundsProperties(), iUnderstandAgentWalletAutosign: { type: "boolean" } }),
   tool("stellar_pay_batch", "Submit multiple guarded Testnet payments in one transaction.", { file: true }, (input) => [
     "pay",
     "batch",

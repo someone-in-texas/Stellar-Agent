@@ -31,7 +31,7 @@ stellar-agent defi aquarius pool inspect --pool XLM --network testnet --json
 
 Pool inspection reads Aquarius API metadata such as pool contract address, pool hash, public asset labels, asset contract ids, pool type, fee, transaction count, and reported volume.
 
-Aquarius symbol aliases such as `AQUA` are convenience metadata. If Aquarius changes a live asset contract before this package is updated, pass the exact `C...` contract id shown by `stellar-agent defi aquarius deployments --network <network> --pools --json`.
+Aquarius symbol aliases such as `AQUA` are convenience metadata on Testnet. Mainnet non-native aliases are intentionally not shipped as static constants; use live Aquarius API pool metadata from `stellar-agent defi aquarius deployments --network mainnet --pools --json` or pass an exact `C...` contract id.
 
 ## Account Position
 

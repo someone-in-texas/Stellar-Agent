@@ -30,6 +30,9 @@ describe("mcp server", () => {
         expect.objectContaining({ name: "stellar_mainnet_agent_wallet_status" }),
         expect.objectContaining({ name: "stellar_mainnet_agent_wallet_create" }),
         expect.objectContaining({ name: "stellar_mainnet_agent_wallet_arm" }),
+        expect.objectContaining({ name: "stellar_mainnet_agent_wallet_autosign_enable" }),
+        expect.objectContaining({ name: "stellar_receipts_summary" }),
+        expect.objectContaining({ name: "stellar_x402_init_server" }),
         expect.objectContaining({ name: "stellar_wallet_trustline_list" }),
         expect.objectContaining({ name: "stellar_claimable_claim" }),
         expect.objectContaining({ name: "stellar_market_pools_list" }),
@@ -146,6 +149,39 @@ describe("mcp server", () => {
         iUnderstandRealFunds: true
       })
     ).toEqual(["--json", "mainnet", "agent-wallet", "arm", "--i-understand-real-funds"]);
+
+    expect(
+      buildCliArgs("stellar_mainnet_agent_wallet_autosign_enable", {
+        secretKeyEnv: "STELLAR_AGENT_MAINNET_AGENT_SECRET_KEY",
+        iUnderstandAgentWalletAutosign: true
+      })
+    ).toEqual([
+      "--json",
+      "mainnet",
+      "agent-wallet",
+      "autosign",
+      "enable",
+      "--secret-key-env",
+      "STELLAR_AGENT_MAINNET_AGENT_SECRET_KEY",
+      "--i-understand-agent-wallet-autosign"
+    ]);
+  });
+
+  it("builds CLI arguments for receipt summaries and x402 server scaffolds", () => {
+    expect(
+      buildCliArgs("stellar_receipts_summary", {
+        configPath: "/tmp/config.yaml",
+        receiptProfile: "mainnet",
+        asset: "XLM"
+      })
+    ).toEqual(["--config", "/tmp/config.yaml", "--json", "receipts", "summary", "--profile", "mainnet", "--asset", "XLM"]);
+
+    expect(
+      buildCliArgs("stellar_x402_init_server", {
+        out: "/tmp/paid-api",
+        force: true
+      })
+    ).toEqual(["--json", "x402", "init-server", "--out", "/tmp/paid-api", "--force"]);
   });
 
   it("builds CLI arguments for funded Testnet wallet spin-up", () => {

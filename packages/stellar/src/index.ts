@@ -65,6 +65,11 @@ export interface SubmittedTransaction {
   feeCharged?: string;
 }
 
+export interface SigningWallet {
+  publicKey: string;
+  secretKey: string;
+}
+
 export type FeeStrategy = "base" | "low" | "medium" | "high" | "p95";
 
 export interface FeeStatsSummary {
@@ -253,6 +258,10 @@ export function publicWalletView(wallet: TestnetWallet): ReturnType<typeof redac
   return redactWallet(wallet);
 }
 
+export function publicKeyFromSecret(secretKey: string): string {
+  return Keypair.fromSecret(secretKey).publicKey();
+}
+
 export async function fundWithFriendbot(
   address: string,
   profile: NetworkProfile = TESTNET_PROFILE,
@@ -329,33 +338,36 @@ export async function getBalances(
 }
 
 export async function sendNativePayment(args: {
-  source: TestnetWallet;
+  source: TestnetWallet | SigningWallet;
   destination: string;
   amount: string;
   memo?: string;
   profile?: NetworkProfile;
+  allowRealFunds?: boolean;
 }): Promise<SubmittedPayment> {
   return sendPayment({ ...args, asset: "XLM" });
 }
 
 export async function sendPayment(args: {
-  source: TestnetWallet;
+  source: TestnetWallet | SigningWallet;
   destination: string;
   amount: string;
   asset?: string;
   memo?: string;
   profile?: NetworkProfile;
+  allowRealFunds?: boolean;
   feeStrategy?: FeeStrategy;
   noCache?: boolean;
 }): Promise<SubmittedPayment> {
   const profile = args.profile ?? TESTNET_PROFILE;
-  const amount = parseAmount(args.amount).value;
+  const amount = parseAmount(args.amount, args.asset ?? "XLM").value;
   const asset = stellarSdkAsset(args.asset ?? "XLM");
 
   try {
     return await submitOperation({
       source: args.source,
       profile,
+      ...(args.allowRealFunds === undefined ? {} : { allowRealFunds: args.allowRealFunds }),
       ...(args.memo === undefined ? {} : { memo: args.memo }),
       ...(args.feeStrategy === undefined ? {} : { feeStrategy: args.feeStrategy }),
       ...(args.noCache === undefined ? {} : { noCache: args.noCache }),
@@ -1580,16 +1592,17 @@ export async function checkStellarCli(binary = "stellar"): Promise<StellarCliSta
 }
 
 async function submitOperation(args: {
-  source: TestnetWallet;
+  source: TestnetWallet | SigningWallet;
   operation?: any;
   operations?: any[];
   memo?: string;
   profile: NetworkProfile;
+  allowRealFunds?: boolean;
   feeStrategy?: FeeStrategy;
   noCache?: boolean;
 }): Promise<SubmittedOperation> {
   const profile = args.profile;
-  if (profile.realFunds) {
+  if (profile.realFunds && !args.allowRealFunds) {
     throw new StellarAgentError({
       code: "MAINNET_NOT_ENABLED",
       message: "Mainnet auto-signing is blocked.",
@@ -1604,7 +1617,6 @@ async function submitOperation(args: {
     });
   }
   const keypair = Keypair.fromSecret(args.source.secretKey);
-  const server = new Horizon.Server(profile.horizonUrl);
   try {
     const operations = args.operations ?? (args.operation ? [args.operation] : []);
     if (operations.length < 1 || operations.length > 100) {
@@ -1615,7 +1627,7 @@ async function submitOperation(args: {
         exitCode: EXIT_CODES.usage
       });
     }
-    const sourceAccount = await server.loadAccount(args.source.publicKey);
+    const sourceAccount = await loadAccountFromHorizon(args.source.publicKey, profile);
     const fee = await estimateTransactionFee({
       profile,
       operationCount: operations.length,
@@ -1632,21 +1644,17 @@ async function submitOperation(args: {
     if (args.memo) builder = builder.addMemo(Memo.text(args.memo));
     const tx = builder.setTimeout(60).build();
     tx.sign(keypair);
-    const result: any = await server.submitTransaction(tx);
-    if (result.successful === false) {
-      throw new StellarAgentError({
-        code: "TRANSACTION_SUBMIT_FAILED",
-        message: "Stellar transaction was submitted but Horizon marked it unsuccessful.",
-        hint: "Inspect the transaction result codes and retry only if the transaction hash is known.",
-        docs: "docs/troubleshooting.md#transaction-timeout",
-        details: result
-      });
-    }
+    const result = await submitTransactionXdr({
+      xdr: tx.toXDR(),
+      profile,
+      ...(args.allowRealFunds === undefined ? {} : { allowRealFunds: args.allowRealFunds }),
+      fetchImpl: fetch
+    });
     return {
       hash: result.hash,
-      ledger: result.ledger,
       successful: result.successful ?? true,
-      feeCharged: result.fee_charged?.toString(),
+      ...(result.ledger === undefined ? {} : { ledger: result.ledger }),
+      ...(result.feeCharged === undefined ? {} : { feeCharged: result.feeCharged }),
       feeBid: fee.transactionFee,
       feeStrategy: fee.strategy
     };
@@ -1668,6 +1676,46 @@ async function submitOperation(args: {
       details: normalizeHorizonError(error)
     });
   }
+}
+
+async function loadAccountFromHorizon(publicKey: string, profile: NetworkProfile): Promise<Account> {
+  if (!profile.horizonUrl) {
+    throw new StellarAgentError({
+      code: "HORIZON_UNAVAILABLE",
+      message: "Horizon is not configured for this profile."
+    });
+  }
+  const response = await fetch(`${profile.horizonUrl.replace(/\/$/, "")}/accounts/${publicKey}`, {
+    signal: AbortSignal.timeout(15_000)
+  });
+  const body = await response.text();
+  const parsed = safeJson(body);
+  if (response.status === 404) {
+    throw new StellarAgentError({
+      code: "ACCOUNT_NOT_FOUND",
+      message: "The source account was not found on the selected Stellar network.",
+      hint: "Fund the account on Testnet before submitting transactions.",
+      docs: "docs/quickstart-testnet.md"
+    });
+  }
+  if (!response.ok) {
+    throw new StellarAgentError({
+      code: "LEDGER_LOOKUP_FAILED",
+      message: "Could not load source account from Horizon.",
+      docs: "docs/troubleshooting.md#transaction-timeout",
+      details: parsed ?? body
+    });
+  }
+  const sequence = parsed?.sequence?.toString();
+  if (!sequence) {
+    throw new StellarAgentError({
+      code: "LEDGER_LOOKUP_FAILED",
+      message: "Horizon account record did not include a sequence number.",
+      docs: "docs/troubleshooting.md#transaction-timeout",
+      details: parsed
+    });
+  }
+  return new Account(parsed.account_id ?? parsed.id ?? publicKey, sequence);
 }
 
 function stellarSdkAsset(input: string): Asset {

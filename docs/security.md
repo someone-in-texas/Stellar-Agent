@@ -7,7 +7,7 @@ Report vulnerabilities privately to maintainers.
 ## Key Handling
 
 - Testnet secret keys may be stored in local Testnet wallet files.
-- Mainnet secret-key storage is not implemented in v0.
+- Mainnet secret-key storage is not implemented in v0. Agent-wallet autosigning reads a user-provided environment variable at runtime and must not persist it.
 - Secret keys must not be printed, logged, or written to receipts.
 
 ## Safety Defaults
@@ -31,7 +31,7 @@ Protocol SDKs are treated as untrusted supply-chain inputs:
 ## Review Checklist
 
 - No raw secret keys in output.
-- No Mainnet auto-signing.
+- No generic Mainnet auto-signing; only the explicitly enabled risk-budgeted agent-wallet payment path may autosign.
 - Policy denial prevents signing and submission.
 - Unsupported production features fail closed and do not access secrets or submit transactions.
 - Protocol SDK additions update `scripts/check-protocol-sdk-boundaries.mjs`, docs, and policy tests before release.

@@ -91,7 +91,7 @@ Trusted publishing through GitHub Actions OIDC provides npm provenance for publi
 
 Before a release advertises Mainnet usage:
 
-- Mainnet local auto-signing remains blocked.
+- Generic Mainnet local auto-signing remains blocked; agent-wallet autosigning is allowed only for the explicitly enabled risk-budgeted payment path.
 - Mainnet signed-XDR submission requires Mainnet enablement, an active Mainnet profile, explicit real-funds flags, an already signed envelope, and a receipt.
 - Mainnet contract commands require explicit real-funds flags.
 - Raw Mainnet secret keys are refused.

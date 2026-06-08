@@ -62,6 +62,26 @@ export interface MainnetAgentWalletConfig {
   createdAt: string;
   updatedAt: string;
   riskBudget: MainnetAgentWalletRiskBudget;
+  autosign?: {
+    enabled: boolean;
+    secretKeyEnvVar: string;
+    enabledAt: string;
+    warningAcknowledgedAt: string;
+  } | undefined;
+  spendCounters?: {
+    updatedAt: string;
+    source: "receipts";
+    assets: Record<
+      string,
+      {
+        dailyTotal?: string | undefined;
+        monthlyTotal?: string | undefined;
+        knownRecipients?: string[] | undefined;
+        knownDomains?: string[] | undefined;
+        unreadable?: boolean | undefined;
+      }
+    >;
+  } | undefined;
   arming?: {
     armedAt: string;
     configPath: string;
@@ -458,6 +478,29 @@ export const mainnetAgentWalletConfigSchema = z.object({
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   riskBudget: mainnetAgentWalletRiskBudgetSchema,
+  autosign: z
+    .object({
+      enabled: z.boolean(),
+      secretKeyEnvVar: z.string().min(1),
+      enabledAt: z.string().datetime(),
+      warningAcknowledgedAt: z.string().datetime()
+    })
+    .optional(),
+  spendCounters: z
+    .object({
+      updatedAt: z.string().datetime(),
+      source: z.literal("receipts"),
+      assets: z.record(
+        z.object({
+          dailyTotal: z.string().optional(),
+          monthlyTotal: z.string().optional(),
+          knownRecipients: z.array(z.string()).optional(),
+          knownDomains: z.array(z.string()).optional(),
+          unreadable: z.boolean().optional()
+        })
+      )
+    })
+    .optional(),
   arming: z
     .object({
       armedAt: z.string().datetime(),
@@ -517,7 +560,8 @@ export const paymentRequestSchema = z.object({
   memo: z.string().max(28).optional(),
   network: z.enum(["testnet", "mainnet", "local"]).default("testnet"),
   domain: z.string().optional(),
-  url: z.string().url().optional()
+  url: z.string().url().optional(),
+  agentWalletAutosign: z.boolean().optional()
 });
 
 export type PaymentRequest = z.infer<typeof paymentRequestSchema>;

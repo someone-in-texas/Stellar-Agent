@@ -12,7 +12,7 @@ Rules:
 6. Prefer `pay quote` before `pay send`.
 7. Never print or log secrets.
 8. Never use `--allow-real-funds` as a policy bypass.
-9. Mainnet agent-wallet spend is bounded, not safe; local Mainnet auto-signing remains blocked.
+9. Mainnet agent-wallet spend is bounded, not safe; generic Mainnet auto-signing remains blocked.
 
 Direct payments:
 
@@ -41,6 +41,9 @@ Risk-budgeted Mainnet agent wallet:
 - Request payment signing with:
   `stellar-agent --profile mainnet tx request-payment-signature --from mainnet-agent --to <G...> --amount <amount> --allow-real-funds --i-understand-real-funds --json`.
 - Disarm after the workflow with `stellar-agent mainnet agent-wallet disarm --json`.
+- For agent-wallet autosigning, require an explicit user request, then run `stellar-agent mainnet agent-wallet autosign enable --secret-key-env <ENV_NAME> --i-understand-agent-wallet-autosign --json`, re-arm the wallet, and submit only with `stellar-agent --profile mainnet pay send --from mainnet-agent --to <G...> --amount <amount> --allow-real-funds --i-understand-real-funds --i-understand-agent-wallet-autosign --json`.
+- Autosign submission must have policy status `allowed`; default Mainnet `requires_approval` blocks it. Do not add `approval.allowMainnetAgentWalletAutosign: true` unless the user explicitly approves that policy exception.
+- Never print, request in chat, or store the environment variable value. Stop if the secret-key env var is absent or does not match the configured public key.
 - If config, policy, receipts, balance, destination, asset, or spend limits fail closed, stop and report the matched error. Do not loosen caps or allowlists without explicit user instruction.
 
 HTTP payment demos:

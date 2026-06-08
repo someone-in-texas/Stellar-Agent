@@ -35,7 +35,7 @@
 - Paid but service fails: receipts capture transaction and command context, and paid-resource command results distinguish settlement from resource delivery.
 - Log privacy leaks: URL query params are redacted by default.
 - Mainnet/Testnet confusion: Mainnet is disabled and marked `realFunds: true`; Mainnet signed-XDR submission and contract operations require explicit real-funds flags and refuse local Testnet wallet secrets.
-- Risk-budgeted Mainnet agent-wallet misuse: the agent-wallet mode stores only a dedicated watch-only Mainnet public key, requires explicit arming, records config and policy fingerprints, enforces balance/spend/asset/destination/operation caps before payment-signature workflows, and fails closed when receipts, policy, config, or balance state cannot be verified.
+- Risk-budgeted Mainnet agent-wallet misuse: the agent-wallet mode stores only a dedicated Mainnet public key plus guard metadata, requires explicit arming, records config and policy fingerprints, enforces balance/spend/asset/destination/operation caps before payment-signature and agent-wallet autosign workflows, and fails closed when receipts, policy, config, or balance state cannot be verified.
 - DeFi leverage risk: Blend borrow and protocol exposure are governed by explicit policy limits, minimum health-factor checks, and preflight simulation requirements.
 - Aquarius AMM route risk: Aquarius API responses, pool metadata, swap routes, and swap-chain XDR are untrusted inputs; policy gates allowed pools, assets, actions, nominal exposure, slippage bounds, and Mainnet approval before any future submitted action.
 - Liquidity-pool loss risk: core liquidity-pool deposits are governed by explicit pool, asset, action, exposure, and price-bound policy controls; estimates are marked as non-guaranteed snapshots.
@@ -49,7 +49,7 @@
 
 ## Out of Scope
 
-Hosted custody, mobile wallets, generalized blockchain indexing, and local Mainnet auto-signing are out of scope for v0. Risk-budgeted Mainnet agent-wallet workflows are limited to guard checks before externally signed XDR.
+Hosted custody, mobile wallets, generalized blockchain indexing, and generic local Mainnet auto-signing are out of scope for v0. The only local Mainnet autosign exception is explicitly enabled, risk-budgeted agent-wallet payment submission using a runtime environment-variable secret.
 
 ## Protocol SDK Boundary Rules
 

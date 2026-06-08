@@ -53,11 +53,39 @@ describe("policy evaluation", () => {
       destination,
       amount: "0.01",
       asset: "XLM",
-      network: "mainnet"
+      network: "mainnet",
+      agentWalletAutosign: true
     });
     expect(decision.realFunds).toBe(true);
     expect(decision.status).toBe("requires_approval");
     expect(decision.matchedRules).toContain("mainnet_requires_approval");
+  });
+
+  it("allows Mainnet agent-wallet autosign only with an explicit policy exception", () => {
+    const decision = evaluatePaymentRequest(
+      {
+        ...DEFAULT_MAINNET_POLICY,
+        approval: {
+          requireForAllPayments: false,
+          requireForNewRecipient: false,
+          requireForNewDomain: false,
+          requireAbove: "1 XLM",
+          allowMainnetAgentWalletAutosign: true
+        }
+      },
+      {
+        destination,
+        amount: "0.01",
+        asset: "XLM",
+        network: "mainnet",
+        agentWalletAutosign: true
+      },
+      { knownRecipients: [destination] }
+    );
+    expect(decision.realFunds).toBe(true);
+    expect(decision.status).toBe("allowed");
+    expect(decision.matchedRules).toContain("mainnet_agent_wallet_autosign_policy_exception");
+    expect(decision.matchedRules).not.toContain("mainnet_requires_approval");
   });
 
   it("fails closed when a payment request network does not match the policy network", () => {

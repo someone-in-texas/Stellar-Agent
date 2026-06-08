@@ -7,14 +7,14 @@ Build payment-capable agents on Stellar from Testnet prototypes to risk-budgeted
 
 ## Status
 
-This repository is a `0.4.4` Testnet-first release with v0.5.0 Mainnet agent-wallet work in progress. Core primitives, policy evaluation, local receipt logging, Testnet wallet creation, Friendbot funding, fee-aware Testnet payment submission, bundled Testnet payments, issued-asset trustlines, claimable balances, local approval bridge requests, local x402-style and MPP Testnet demos, Blend DeFi inspection and guarded Testnet mutation, Aquarius AMM inspection and policy-gated preflight, core Stellar liquidity-pool inspection/preflight/Testnet mutation, market listeners, strategy investigation, MCP tools, Codex plugin packaging, cache controls, and the CLI command surface are present. Mainnet local auto-signing remains blocked; guarded Mainnet submission is limited to externally signed XDR, explicitly acknowledged real-funds contract operations, and armed risk-budgeted agent-wallet checks before payment-signature workflows.
+This repository is a `0.4.4` Testnet-first release with v0.5.0 Mainnet agent-wallet work in progress. Core primitives, policy evaluation, local receipt logging, Testnet wallet creation, Friendbot funding, fee-aware Testnet payment submission, bundled Testnet payments, issued-asset trustlines, claimable balances, local approval bridge requests, local x402-style and MPP Testnet demos, Blend DeFi inspection and guarded Testnet mutation, Aquarius AMM inspection and policy-gated preflight, core Stellar liquidity-pool inspection/preflight/Testnet mutation, market listeners, strategy investigation, MCP tools, Codex plugin packaging, cache controls, and the CLI command surface are present. Mainnet local auto-signing remains blocked except for explicitly enabled, armed, risk-budgeted agent-wallet payments; other guarded Mainnet submission is limited to externally signed XDR and explicitly acknowledged real-funds contract operations.
 
 ## Safety First
 
 - Testnet is the default.
-- Mainnet is disabled by default and cannot auto-sign payments.
-- Guarded Mainnet usage requires external signing, explicit real-funds flags, receipts, and Mainnet enablement.
-- Risk-budgeted Mainnet agent wallets require a dedicated watch-only wallet, explicit arming, policy/config fingerprints, balance caps, spend limits, asset controls, and destination allowlists.
+- Mainnet is disabled by default and generic Mainnet auto-signing is blocked.
+- Guarded Mainnet usage requires explicit real-funds flags, receipts, and Mainnet enablement.
+- Risk-budgeted Mainnet agent wallets require a dedicated wallet, explicit arming, policy/config fingerprints, balance caps, spend limits, asset controls, and destination allowlists. Autosigning is opt-in for this wallet only and reads the secret key from an environment variable, never config.
 - Secret keys are redacted from CLI output, logs, and receipts.
 - Policy evaluation runs before payment submission.
 - Staged features exit with code `8` instead of attempting hidden payment work.
@@ -64,6 +64,8 @@ stellar-agent mainnet enable --i-understand-real-funds --json
 stellar-agent mainnet agent-wallet create --address G... --max-balance 25 --daily-limit 5 --per-tx-limit 1 --asset XLM --allow-destination G... --json
 stellar-agent mainnet agent-wallet arm --i-understand-real-funds --json
 stellar-agent --profile mainnet tx request-payment-signature --from mainnet-agent --to G... --amount 0.1 --allow-real-funds --i-understand-real-funds --json
+stellar-agent mainnet agent-wallet autosign enable --secret-key-env STELLAR_AGENT_MAINNET_AGENT_SECRET_KEY --i-understand-agent-wallet-autosign --json
+stellar-agent --profile mainnet pay send --from mainnet-agent --to G... --amount 0.01 --allow-real-funds --i-understand-real-funds --i-understand-agent-wallet-autosign --json
 stellar-agent mainnet agent-wallet disarm --json
 stellar-agent wallet connect-freighter --json
 stellar-agent wallet trustline list --account merchant --json
@@ -112,6 +114,7 @@ stellar-agent contract asset-deploy --source agent --asset native --json
 stellar-agent contract extend --source agent --id C... --ledgers-to-extend 535679 --json
 stellar-agent contract restore --source agent --id C... --json
 stellar-agent testnet scenario x402-payment --json
+stellar-agent x402 init-server --out ./paid-api-server --json
 stellar-agent pay x402 http://127.0.0.1:PORT/paid-report --allow-localhost-demo --json
 stellar-agent pay mpp http://127.0.0.1:PORT/mpp-report --allow-localhost-demo --json
 ```
@@ -121,6 +124,8 @@ stellar-agent pay mpp http://127.0.0.1:PORT/mpp-report --allow-localhost-demo --
 Agents should call the CLI with `--json`, parse the standard envelope, and stop on `requires_approval` unless the user explicitly approves. Example prompt:
 
 > Run `stellar-agent testnet doctor --json`, initialize Testnet if needed, run a dry-run smoke test, and summarize the latest receipt without printing secrets.
+
+For composable workflow examples, see [docs/agent-recipes.md](docs/agent-recipes.md).
 
 ## Release Artifacts
 
@@ -172,7 +177,7 @@ The project is CLI-first with shared packages underneath:
 
 ## Mainnet
 
-Mainnet uses real funds. It is disabled by default, requires explicit enablement, refuses local Mainnet secret-key storage, and supports only guarded externally signed XDR, explicitly acknowledged contract operations, and risk-budgeted agent-wallet checks for payment-signature workflows. The agent-wallet mode stores a dedicated watch-only Mainnet public key, enforces hard caps and allowlists before unsigned payment XDR is handed to an external signer, and disarms on config or policy changes. See [docs/mainnet-safety.md](docs/mainnet-safety.md).
+Mainnet uses real funds. It is disabled by default, requires explicit enablement, refuses local Mainnet secret-key storage, and supports guarded externally signed XDR, explicitly acknowledged contract operations, and risk-budgeted agent-wallet payment workflows. The agent-wallet mode stores a dedicated Mainnet public key, enforces hard caps and allowlists, disarms on config or policy changes, and can autosign only when the user explicitly enables env-var based autosigning for that wallet and policy evaluates the payment as `allowed`. See [docs/mainnet-safety.md](docs/mainnet-safety.md).
 
 ## Roadmap
 

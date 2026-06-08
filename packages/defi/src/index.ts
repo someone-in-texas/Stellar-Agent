@@ -262,15 +262,12 @@ const AQUARIUS_DEPLOYMENTS: Record<AquariusNetworkName, AquariusDeployment> = {
       "https://docs.aqua.network/developers/aquarius-soroban-functions"
     ],
     assets: [
-      { symbol: "XLM", contractId: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA" },
-      {
-        symbol: "AQUA",
-        contractId: "CAUIKL3IYGMERDRUN6YSCLWVAKIFG5Q4YJHUKM4S4NJZQIA3BAS6OJPK",
-        issuer: "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
-        classicAsset: "AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
-      }
+      { symbol: "XLM", contractId: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA" }
     ],
-    notes: ["Mainnet Aquarius mutation is not supported by stellar-agent local auto-signing."]
+    notes: [
+      "Mainnet Aquarius mutation is not supported by stellar-agent local auto-signing.",
+      "Mainnet non-native asset aliases are intentionally not shipped as static constants; use live Aquarius API pool metadata or exact contract ids."
+    ]
   }
 };
 

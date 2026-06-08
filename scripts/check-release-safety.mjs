@@ -53,7 +53,8 @@ requireText("docs/security.md", securityGuide, [
   "scripts/check-protocol-sdk-boundaries.mjs"
 ]);
 requireText("docs/mainnet-safety.md", mainnetSafety, [
-  "Mainnet local auto-signing is blocked.",
+  "Mainnet local auto-signing is blocked except for explicitly enabled, armed agent-wallet payments.",
+  "Agent-wallet autosigning is the only local Mainnet autosign exception.",
   "do not pass raw Mainnet secret keys",
   "Mainnet Aquarius mutation must not use local generated wallet secrets",
   "--allow-real-funds",
@@ -62,7 +63,8 @@ requireText("docs/mainnet-safety.md", mainnetSafety, [
 ]);
 requireText("README.md", readme, [
   "Testnet is the default.",
-  "Mainnet is disabled by default and cannot auto-sign payments.",
+  "Mainnet is disabled by default and generic Mainnet auto-signing is blocked.",
+  "Autosigning is opt-in for this wallet only",
   "Secret keys are redacted from CLI output, logs, and receipts.",
   "Policy evaluation runs before payment submission.",
   "Aquarius AMM inspection and policy-gated preflight"
@@ -130,6 +132,8 @@ requireText("packages/policy/test/policy.test.ts", policyTests, ["mainnet_requir
 requireText("packages/cli/test/cli.test.ts", cliTests, [
   "blocks Mainnet contract submissions unless guarded Mainnet mode is enabled",
   "submits externally signed Mainnet XDR only with explicit real-funds flags and writes a receipt",
+  "autosigns only the armed Mainnet agent-wallet payment path with explicit acknowledgements",
+  "refuses Mainnet agent-wallet autosign payments over the per-transaction cap",
   "prints known Aquarius deployments without network access",
   "not.toContain(\"\\\"S\")"
 ]);

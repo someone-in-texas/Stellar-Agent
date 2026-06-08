@@ -6,7 +6,7 @@ Defaults:
 
 - Mainnet is disabled.
 - Mainnet auto-approval is disabled.
-- Mainnet local auto-signing is blocked.
+- Mainnet local auto-signing is blocked except for explicitly enabled, armed agent-wallet payments.
 - Mainnet policies require explicit approval.
 - JSON output includes `realFunds: true` for Mainnet status.
 
@@ -20,7 +20,7 @@ stellar-agent mainnet enable --i-understand-real-funds
 
 Risk-budgeted Mainnet agent-wallet mode is for a deliberately small, dedicated Mainnet wallet that the user is willing to expose to agent-driven workflows. It limits loss; it does not make autonomous Mainnet spending safe.
 
-The wallet is stored as a watch-only Mainnet public key. `stellar-agent` does not store a Mainnet secret key and does not locally auto-sign Mainnet payments. The agent-wallet guard runs before Mainnet payment-signature workflows hand unsigned XDR to a browser wallet or other external signer.
+The wallet is stored as a Mainnet public key plus risk-budget metadata. `stellar-agent` does not store a Mainnet secret key. By default, the agent-wallet guard runs before Mainnet payment-signature workflows hand unsigned XDR to a browser wallet or other external signer. Users can additionally enable autosigning for this agent wallet only; that path reads the secret key from a named environment variable at runtime and never writes it to config, logs, or receipts.
 
 Create and arm a dedicated wallet:
 
@@ -36,6 +36,21 @@ stellar-agent mainnet agent-wallet create \
   --json
 stellar-agent mainnet agent-wallet arm --i-understand-real-funds --json
 stellar-agent mainnet agent-wallet status --json
+```
+
+Optional shortcut:
+
+```bash
+stellar-agent mainnet agent-wallet enable \
+  --address G... \
+  --max-balance 25 \
+  --daily-limit 5 \
+  --per-tx-limit 1 \
+  --asset XLM \
+  --allow-destination G... \
+  --arm \
+  --i-understand-real-funds \
+  --json
 ```
 
 Request an externally signed payment only after the wallet is armed:
@@ -64,6 +79,7 @@ Controls:
 - Allowed assets and payment operation type are enforced before payment-signature XDR is created.
 - Per-transaction, daily, optional monthly, and max-wallet-balance caps are enforced.
 - Spend history is read from durable receipts and fails closed if receipt parsing fails.
+- A derived spend-counter snapshot is written to config for status and auditing, but receipt history remains the enforcement source of truth.
 - Arming records config path, config fingerprint, policy path, and policy fingerprint. Config path changes, config edits, or policy edits require re-arming.
 - Balance checks fail closed if Horizon cannot read the dedicated wallet balance or if the balance exceeds the risk budget.
 - `--allow-real-funds` acknowledges real-funds intent; it does not bypass policy, receipts, fingerprints, balance checks, or the agent-wallet risk budget.
@@ -75,6 +91,7 @@ stellar-agent mainnet agent-wallet limits --daily-limit 2 --per-tx-limit 0.5 --a
 stellar-agent mainnet agent-wallet disarm --json
 stellar-agent mainnet agent-wallet rotate --address G... --json
 stellar-agent receipts latest --json
+stellar-agent receipts summary --profile mainnet --json
 ```
 
 Changing limits or rotating the public key disarms the wallet. Disarm before handing control back to a general-purpose agent, after demos, or whenever the policy/config state is unclear.
@@ -93,6 +110,63 @@ Recommended signing model:
 - Show transaction explanation before signing.
 - Keep Mainnet secret keys out of local plaintext files.
 - Use a Stellar CLI identity or signed XDR for guarded Mainnet operations; do not pass raw Mainnet secret keys to `stellar-agent`.
+
+## Agent-Wallet Autosigning
+
+Agent-wallet autosigning is the only local Mainnet autosign exception. It is intended for a deliberately small, dedicated wallet with strict caps and a short operational window.
+
+Enable autosigning only after creating the wallet and reviewing the risk budget:
+
+```bash
+stellar-agent mainnet agent-wallet autosign enable \
+  --secret-key-env STELLAR_AGENT_MAINNET_AGENT_SECRET_KEY \
+  --i-understand-agent-wallet-autosign \
+  --json
+stellar-agent mainnet agent-wallet arm --i-understand-real-funds --json
+```
+
+Policy must also explicitly allow this exception. The default Mainnet policy still returns `requires_approval` and blocks autosign submission. A deliberately small agent-wallet policy can opt in with:
+
+```yaml
+approval:
+  requireForAllPayments: false
+  requireForNewRecipient: false
+  requireForNewDomain: false
+  requireAbove: "1 XLM"
+  allowMainnetAgentWalletAutosign: true
+```
+
+Then run a bounded direct payment:
+
+Set `STELLAR_AGENT_MAINNET_AGENT_SECRET_KEY` in the shell environment for the signing process, then run:
+
+```bash
+stellar-agent --profile mainnet pay send \
+  --from mainnet-agent \
+  --to G... \
+  --amount 0.01 \
+  --allow-real-funds \
+  --i-understand-real-funds \
+  --i-understand-agent-wallet-autosign \
+  --json
+```
+
+Autosign controls:
+
+- The secret key is read only from the configured environment variable.
+- The secret key must match the configured agent-wallet public key.
+- The command requires `--allow-real-funds`, `--i-understand-real-funds`, and `--i-understand-agent-wallet-autosign`.
+- The evaluated payment policy must return `allowed`; `requires_approval` blocks autosign submission.
+- Non-agent-wallet Mainnet `pay send`, batch payments, contracts, DeFi, and liquidity mutation remain blocked from local autosigning.
+- Receipts include the autosign warning and risk-budget before/after state, but not the secret key.
+- `agent-wallet autosign enable` and `agent-wallet autosign disable` disarm the wallet, so review and re-arm after changing autosign state.
+
+Disable autosigning and disarm when the task is done:
+
+```bash
+stellar-agent mainnet agent-wallet autosign disable --json
+stellar-agent mainnet agent-wallet disarm --json
+```
 
 ## Local Approval Bridge
 
@@ -169,7 +243,7 @@ stellar-agent --profile mainnet tx submit-xdr \
   --json
 ```
 
-These commands do not import or store Mainnet secret keys and do not auto-sign.
+These signed-XDR commands do not import or store Mainnet secret keys and do not auto-sign.
 
 ## Mainnet Contracts
 

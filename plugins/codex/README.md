@@ -24,7 +24,7 @@ Rules:
 - Stop on approval-required results.
 - Never print secrets.
 - Never enable Mainnet unless the user explicitly asks.
-- For Mainnet agent-wallet work, require explicit Mainnet enablement, a dedicated watch-only wallet, strict caps, a destination allowlist, `agent-wallet arm --i-understand-real-funds`, and external signing.
+- For Mainnet agent-wallet work, require explicit Mainnet enablement, a dedicated wallet, strict caps, a destination allowlist, and `agent-wallet arm --i-understand-real-funds`. External signing is preferred; autosigning is allowed only when the user explicitly asks for `agent-wallet autosign enable` and the command includes all real-funds/autosign acknowledgements.
 - Never treat `--allow-real-funds` as a policy bypass.
 - Treat x402 and MPP as local Testnet demos unless production facilitator support is explicitly added.
 - Run `contract doctor` before Stellar CLI-backed contract commands.

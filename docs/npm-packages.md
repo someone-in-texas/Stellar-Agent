@@ -45,6 +45,6 @@ README changes require a new package version before they appear on npmjs.com.
 ## Safety Defaults
 
 - Testnet remains the default.
-- Mainnet local auto-signing remains blocked.
+- Generic Mainnet local auto-signing remains blocked; only the explicitly enabled risk-budgeted agent-wallet payment path may autosign.
 - Secret keys are redacted from CLI output, logs, and receipts.
 - Policy checks run before submitted payment and protocol workflows.

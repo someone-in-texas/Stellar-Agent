@@ -140,6 +140,7 @@ Common commands:
   addApprovalCommands(program);
   addTransactionCommands(program);
   addPayCommands(program);
+  addX402Commands(program);
   addClaimableCommands(program);
   addContractCommands(program);
   addMarketCommands(program);
@@ -1202,7 +1203,7 @@ function addPayCommands(program: Command): void {
     );
   pay
     .command("send")
-    .description("Send an XLM or issued-asset payment on Testnet when policy allows.")
+    .description("Send an XLM or issued-asset payment on Testnet, or an explicitly armed Mainnet agent-wallet payment.")
     .requiredOption("--to <address>", "Destination public key")
     .requiredOption("--amount <amount>", "Payment amount")
     .option("--asset <asset>", "Asset", "XLM")
@@ -1210,15 +1211,14 @@ function addPayCommands(program: Command): void {
     .option("--memo <memo>", "Memo")
     .option("--fee-strategy <strategy>", "Fee strategy: base, low, medium, high, p95", "medium")
     .option("--approval-id <id>", "Approved local approval request id")
+    .option("--allow-real-funds", "Permit the guarded Mainnet agent-wallet autosign path")
+    .option("--i-understand-real-funds", "Acknowledge this payment can spend real Mainnet funds")
+    .option("--i-understand-agent-wallet-autosign", "Acknowledge bounded Mainnet agent-wallet autosigning risk")
     .option("--dry-run", "Evaluate locally without submitting")
     .action(
-      withContext(async (context, options: { to: string; amount: string; asset: string; from: string; memo?: string; feeStrategy: string; approvalId?: string; dryRun?: boolean }) => {
+      withContext(async (context, options: { to: string; amount: string; asset: string; from: string; memo?: string; feeStrategy: string; approvalId?: string; allowRealFunds?: boolean; iUnderstandRealFunds?: boolean; iUnderstandAgentWalletAutosign?: boolean; dryRun?: boolean }) => {
         if (context.profileName === "mainnet") {
-          throw new StellarAgentError({
-            code: "MAINNET_NOT_ENABLED",
-            message: "Mainnet payment submission is blocked in v0.",
-            docs: "docs/mainnet-safety.md"
-          });
+          return sendMainnetAgentWalletPayment(context, options);
         }
         const policy = await loadPolicy(context);
         const source = await loadWallet(context.config, options.from);
@@ -1511,6 +1511,45 @@ function addPayCommands(program: Command): void {
         },
         "MPP session complete."
       )
+    );
+}
+
+function addX402Commands(program: Command): void {
+  const x402 = program.command("x402").description("Scaffold and inspect x402-style paid API workflows.");
+  x402
+    .command("init-server")
+    .description("Create a local Testnet x402-style paid API server scaffold.")
+    .option("--out <dir>", "Output directory", "./stellar-agent-x402-server")
+    .option("--force", "Overwrite scaffold files if they already exist")
+    .action(
+      withContext(async (_context, options: { out: string; force?: boolean }) => {
+        const outDir = resolvePath(options.out);
+        const files = x402ServerScaffoldFiles();
+        await mkdir(outDir, { recursive: true });
+        for (const [name, contents] of Object.entries(files)) {
+          const target = join(outDir, name);
+          if (!options.force) {
+            try {
+              await readFile(target, "utf8");
+              throw new StellarAgentError({
+                code: "INVALID_INPUT",
+                message: `Refusing to overwrite existing scaffold file '${target}'.`,
+                hint: "Use --force to replace scaffold files intentionally."
+              });
+            } catch (error: any) {
+              if (error instanceof StellarAgentError) throw error;
+              if (error?.code !== "ENOENT") throw error;
+            }
+          }
+          await writeFile(target, contents, { mode: name.endsWith(".mjs") ? 0o755 : 0o600 });
+        }
+        return {
+          path: outDir,
+          files: Object.keys(files),
+          network: "testnet",
+          realFunds: false
+        };
+      }, "x402 server scaffold initialized.")
     );
 }
 
@@ -3195,6 +3234,21 @@ function addReceiptCommands(program: Command): void {
       }, "Latest receipt loaded.")
     );
   receipts
+    .command("summary")
+    .description("Summarize local receipt spend, Mainnet exposure, and recent activity.")
+    .option("--profile <name>", "Filter by profile: testnet, mainnet, or local")
+    .option("--asset <asset>", "Filter by payment asset")
+    .action(
+      withContext(
+        async (context, options: { profile?: NetworkName; asset?: string }) =>
+          receiptSummary(context, {
+            ...(options.profile === undefined ? {} : { profile: options.profile }),
+            ...(options.asset === undefined ? {} : { asset: options.asset })
+          }),
+        "Receipt summary loaded."
+      )
+    );
+  receipts
     .command("show")
     .description("Show a receipt file.")
     .argument("<path>", "Receipt path")
@@ -3328,6 +3382,78 @@ function addMainnetCommands(program: Command): void {
       )
     );
   agentWallet
+    .command("enable")
+    .description("Configure the dedicated Mainnet agent wallet, optionally enable env-var autosigning, and optionally arm it.")
+    .requiredOption("--address <address>", "Dedicated Mainnet agent wallet public key")
+    .option("--name <name>", "Local watch-only wallet name", "mainnet-agent")
+    .option("--max-balance <amount>", "Maximum allowed wallet balance", "25")
+    .option("--per-tx-limit <amount>", "Maximum single payment amount", "1")
+    .option("--daily-limit <amount>", "Maximum daily payment amount", "5")
+    .option("--monthly-limit <amount>", "Optional monthly payment amount")
+    .option("--asset <asset>", "Allowed asset; repeat for more than one", collectArg, [])
+    .option("--allow-destination <address>", "Allowed destination; repeat for more than one", collectArg, [])
+    .option("--enable-autosign", "Enable env-var based autosigning for this agent wallet only")
+    .option("--secret-key-env <name>", "Environment variable containing the agent-wallet secret key", "STELLAR_AGENT_MAINNET_AGENT_SECRET_KEY")
+    .option("--i-understand-agent-wallet-autosign", "Acknowledge bounded Mainnet agent-wallet autosigning risk")
+    .option("--arm", "Arm the wallet after configuration")
+    .option("--i-understand-real-funds", "Acknowledge this wallet can spend real Mainnet funds")
+    .action(
+      withContext(
+        async (
+          context,
+          options: {
+            address: string;
+            name: string;
+            maxBalance: string;
+            perTxLimit: string;
+            dailyLimit: string;
+            monthlyLimit?: string;
+            asset: string[];
+            allowDestination: string[];
+            enableAutosign?: boolean;
+            secretKeyEnv: string;
+            iUnderstandAgentWalletAutosign?: boolean;
+            arm?: boolean;
+            iUnderstandRealFunds?: boolean;
+          }
+        ) => {
+          const now = new Date().toISOString();
+          const riskBudget = parseMainnetAgentWalletRiskBudget(options);
+          await importPublicWallet({
+            config: context.config,
+            name: options.name,
+            publicKey: options.address,
+            network: "mainnet"
+          });
+          context.config.mainnetAgentWallet = {
+            schemaVersion: "stellar-agent.mainnetAgentWallet.v1",
+            walletName: options.name,
+            publicKey: options.address,
+            status: "disarmed",
+            createdAt: context.config.mainnetAgentWallet?.createdAt ?? now,
+            updatedAt: now,
+            riskBudget,
+            ...(options.enableAutosign
+              ? {
+                  autosign: mainnetAgentWalletAutosignConfig({
+                    secretKeyEnvVar: options.secretKeyEnv,
+                    acknowledged: Boolean(options.iUnderstandAgentWalletAutosign)
+                  })
+                }
+              : {})
+          };
+          if (options.arm) {
+            context.config.mainnetAgentWallet = await armMainnetAgentWallet(context, {
+              iUnderstandRealFunds: Boolean(options.iUnderstandRealFunds)
+            });
+          }
+          await writeConfig(context.config, context.options);
+          return mainnetAgentWalletView(context.config.mainnetAgentWallet);
+        },
+        "Mainnet agent wallet enabled."
+      )
+    );
+  agentWallet
     .command("status")
     .description("Show Mainnet agent-wallet arming and risk-budget status.")
     .action(
@@ -3340,6 +3466,59 @@ function addMainnetCommands(program: Command): void {
           ...(await mainnetAgentWalletIntegrity(context, wallet))
         };
       }, "Mainnet agent wallet status loaded.")
+    );
+  const autosign = agentWallet.command("autosign").description("Manage env-var based Mainnet agent-wallet autosigning.");
+  autosign
+    .command("enable")
+    .description("Enable autosigning for the armed agent-wallet path only; no secret key is stored.")
+    .option("--secret-key-env <name>", "Environment variable containing the agent-wallet secret key", "STELLAR_AGENT_MAINNET_AGENT_SECRET_KEY")
+    .option("--i-understand-agent-wallet-autosign", "Acknowledge bounded Mainnet agent-wallet autosigning risk")
+    .action(
+      withContext(async (context, options: { secretKeyEnv: string; iUnderstandAgentWalletAutosign?: boolean }) => {
+        const wallet = requireMainnetAgentWallet(context.config);
+        context.config.mainnetAgentWallet = {
+          ...wallet,
+          status: "disarmed",
+          updatedAt: new Date().toISOString(),
+          autosign: mainnetAgentWalletAutosignConfig({
+            secretKeyEnvVar: options.secretKeyEnv,
+            acknowledged: Boolean(options.iUnderstandAgentWalletAutosign)
+          }),
+          arming: undefined
+        };
+        await writeConfig(context.config, context.options);
+        return mainnetAgentWalletView(context.config.mainnetAgentWallet);
+      }, "Mainnet agent-wallet autosigning enabled and wallet disarmed for re-arming.")
+    );
+  autosign
+    .command("disable")
+    .description("Disable Mainnet agent-wallet autosigning and disarm the wallet.")
+    .action(
+      withContext(async (context) => {
+        const wallet = requireMainnetAgentWallet(context.config);
+        context.config.mainnetAgentWallet = {
+          ...wallet,
+          status: "disarmed",
+          updatedAt: new Date().toISOString(),
+          autosign: { ...(wallet.autosign ?? mainnetAgentWalletAutosignConfig({ secretKeyEnvVar: "STELLAR_AGENT_MAINNET_AGENT_SECRET_KEY", acknowledged: true })), enabled: false },
+          arming: undefined
+        };
+        await writeConfig(context.config, context.options);
+        return mainnetAgentWalletView(context.config.mainnetAgentWallet);
+      }, "Mainnet agent-wallet autosigning disabled.")
+    );
+  autosign
+    .command("status")
+    .description("Show Mainnet agent-wallet autosigning status without reading the secret key.")
+    .action(
+      withContext(async (context) => {
+        const wallet = requireMainnetAgentWallet(context.config);
+        return {
+          publicKey: wallet.publicKey,
+          autosign: mainnetAgentWalletAutosignView(wallet),
+          warning: mainnetAgentWalletAutosignWarning()
+        };
+      }, "Mainnet agent-wallet autosigning status loaded.")
     );
   agentWallet
     .command("limits")
@@ -3392,56 +3571,11 @@ function addMainnetCommands(program: Command): void {
     .option("--i-understand-real-funds", "Acknowledge this wallet can spend real funds through guarded external-signing workflows")
     .action(
       withContext(async (context, options: { iUnderstandRealFunds?: boolean }) => {
-        if (!options.iUnderstandRealFunds) {
-          throw new StellarAgentError({
-            code: "MAINNET_NOT_ENABLED",
-            message: "Arming the Mainnet agent wallet requires --i-understand-real-funds.",
-            docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
-          });
-        }
-        if (!context.config.profiles.mainnet?.enabled) {
-          throw new StellarAgentError({
-            code: "MAINNET_NOT_ENABLED",
-            message: "Arming the Mainnet agent wallet requires Mainnet enablement.",
-            hint: "Run stellar-agent mainnet enable --i-understand-real-funds first.",
-            docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
-          });
-        }
-        const current = requireMainnetAgentWallet(context.config);
-        if (!current.publicKey) {
-          throw new StellarAgentError({
-            code: "WALLET_NOT_FOUND",
-            message: "Mainnet agent wallet does not have a public key.",
-            hint: "Run stellar-agent mainnet agent-wallet create --address G...",
-            docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
-          });
-        }
-        if (current.riskBudget.allowedDestinations.length === 0) {
-          throw new StellarAgentError({
-            code: "POLICY_DENIED",
-            message: "Mainnet agent wallet requires an explicit destination allowlist before arming.",
-            docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
-          });
-        }
-        await assertMainnetAgentWalletBalanceWithinBudget(context, current);
-        const now = new Date().toISOString();
-        const armedWallet: MainnetAgentWalletConfig = {
-          ...current,
-          status: "armed",
-          updatedAt: now,
-          arming: undefined
-        };
-        const policyFingerprint = await mainnetAgentWalletPolicyFingerprint(context);
-        armedWallet.arming = {
-          armedAt: now,
-          configPath: configFingerprintPath(context),
-          configFingerprint: mainnetAgentWalletConfigFingerprint({ ...context.config, mainnetAgentWallet: armedWallet }),
-          policyPath: policyFingerprint.path,
-          policyFingerprint: policyFingerprint.fingerprint
-        };
-        context.config.mainnetAgentWallet = armedWallet;
+        context.config.mainnetAgentWallet = await armMainnetAgentWallet(context, {
+          iUnderstandRealFunds: Boolean(options.iUnderstandRealFunds)
+        });
         await writeConfig(context.config, context.options);
-        return mainnetAgentWalletView(armedWallet);
+        return mainnetAgentWalletView(context.config.mainnetAgentWallet);
       }, "Mainnet agent wallet armed.")
     );
   agentWallet
@@ -4325,6 +4459,89 @@ function parseMainnetAgentWalletRiskBudget(options: {
   };
 }
 
+function mainnetAgentWalletAutosignConfig(options: {
+  secretKeyEnvVar: string;
+  acknowledged: boolean;
+}): NonNullable<MainnetAgentWalletConfig["autosign"]> {
+  if (!options.acknowledged) {
+    throw new StellarAgentError({
+      code: "MAINNET_NOT_ENABLED",
+      message: "Enabling Mainnet agent-wallet autosigning requires --i-understand-agent-wallet-autosign.",
+      hint: mainnetAgentWalletAutosignWarning(),
+      docs: "docs/mainnet-safety.md#agent-wallet-autosigning"
+    });
+  }
+  if (!/^[A-Z_][A-Z0-9_]*$/.test(options.secretKeyEnvVar)) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Agent-wallet autosign secret key env var must be an uppercase environment variable name.",
+      docs: "docs/mainnet-safety.md#agent-wallet-autosigning"
+    });
+  }
+  const now = new Date().toISOString();
+  return {
+    enabled: true,
+    secretKeyEnvVar: options.secretKeyEnvVar,
+    enabledAt: now,
+    warningAcknowledgedAt: now
+  };
+}
+
+async function armMainnetAgentWallet(
+  context: CliContext,
+  options: { iUnderstandRealFunds: boolean }
+): Promise<MainnetAgentWalletConfig> {
+  if (!options.iUnderstandRealFunds) {
+    throw new StellarAgentError({
+      code: "MAINNET_NOT_ENABLED",
+      message: "Arming the Mainnet agent wallet requires --i-understand-real-funds.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+    });
+  }
+  if (!context.config.profiles.mainnet?.enabled) {
+    throw new StellarAgentError({
+      code: "MAINNET_NOT_ENABLED",
+      message: "Arming the Mainnet agent wallet requires Mainnet enablement.",
+      hint: "Run stellar-agent mainnet enable --i-understand-real-funds first.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+    });
+  }
+  const current = requireMainnetAgentWallet(context.config);
+  if (!current.publicKey) {
+    throw new StellarAgentError({
+      code: "WALLET_NOT_FOUND",
+      message: "Mainnet agent wallet does not have a public key.",
+      hint: "Run stellar-agent mainnet agent-wallet create --address G...",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+    });
+  }
+  if (current.riskBudget.allowedDestinations.length === 0) {
+    throw new StellarAgentError({
+      code: "POLICY_DENIED",
+      message: "Mainnet agent wallet requires an explicit destination allowlist before arming.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+    });
+  }
+  await assertMainnetAgentWalletBalanceWithinBudget(context, current);
+  const now = new Date().toISOString();
+  const armedWallet: MainnetAgentWalletConfig = {
+    ...current,
+    status: "armed",
+    updatedAt: now,
+    spendCounters: await mainnetAgentWalletSpendCounters(context, current),
+    arming: undefined
+  };
+  const policyFingerprint = await mainnetAgentWalletPolicyFingerprint(context);
+  armedWallet.arming = {
+    armedAt: now,
+    configPath: configFingerprintPath(context),
+    configFingerprint: mainnetAgentWalletConfigFingerprint({ ...context.config, mainnetAgentWallet: armedWallet }),
+    policyPath: policyFingerprint.path,
+    policyFingerprint: policyFingerprint.fingerprint
+  };
+  return armedWallet;
+}
+
 function requireMainnetAgentWallet(config: StellarAgentConfig): MainnetAgentWalletConfig {
   const wallet = config.mainnetAgentWallet;
   if (!wallet) {
@@ -4346,6 +4563,8 @@ function mainnetAgentWalletView(wallet: MainnetAgentWalletConfig) {
     status: wallet.status,
     realFunds: true,
     riskBudget: wallet.riskBudget,
+    spendCounters: wallet.spendCounters,
+    autosign: mainnetAgentWalletAutosignView(wallet),
     warning: mainnetAgentWalletWarning(),
     arming:
       wallet.arming === undefined
@@ -4359,7 +4578,20 @@ function mainnetAgentWalletView(wallet: MainnetAgentWalletConfig) {
 }
 
 function mainnetAgentWalletWarning(): string {
-  return "Mainnet agent-wallet spend is bounded, not safe. Local Mainnet auto-signing remains blocked.";
+  return "Mainnet agent-wallet spend is bounded, not safe. Local Mainnet auto-signing remains blocked except explicitly enabled agent-wallet autosigning.";
+}
+
+function mainnetAgentWalletAutosignWarning(): string {
+  return "Mainnet agent-wallet autosigning can spend real funds within configured limits; any process with the configured secret-key env var can spend from this wallet.";
+}
+
+function mainnetAgentWalletAutosignView(wallet: MainnetAgentWalletConfig) {
+  return {
+    enabled: Boolean(wallet.autosign?.enabled),
+    secretKeyEnvVar: wallet.autosign?.secretKeyEnvVar,
+    enabledAt: wallet.autosign?.enabledAt,
+    warning: wallet.autosign?.enabled ? mainnetAgentWalletAutosignWarning() : undefined
+  };
 }
 
 async function mainnetAgentWalletIntegrity(context: CliContext, wallet: MainnetAgentWalletConfig) {
@@ -4471,6 +4703,228 @@ async function assertMainnetAgentWalletPaymentAllowed(
   return { warning: mainnetAgentWalletWarning(), spendHistory };
 }
 
+async function assertMainnetAgentWalletAutosignPayment(
+  context: CliContext,
+  request: PaymentRequest,
+  options: { allowRealFunds?: boolean; iUnderstandRealFunds?: boolean; iUnderstandAgentWalletAutosign?: boolean }
+): Promise<{ wallet: MainnetAgentWalletConfig; source: { publicKey: string; secretKey: string }; warning: string; spendHistory: Awaited<ReturnType<typeof loadSpendHistory>> }> {
+  if (!options.allowRealFunds || !options.iUnderstandRealFunds || !options.iUnderstandAgentWalletAutosign) {
+    throw new StellarAgentError({
+      code: "MAINNET_NOT_ENABLED",
+      message: "Mainnet agent-wallet autosigning requires --allow-real-funds, --i-understand-real-funds, and --i-understand-agent-wallet-autosign.",
+      hint: mainnetAgentWalletAutosignWarning(),
+      docs: "docs/mainnet-safety.md#agent-wallet-autosigning"
+    });
+  }
+  const wallet = requireMainnetAgentWallet(context.config);
+  if (!wallet.autosign?.enabled) {
+    throw new StellarAgentError({
+      code: "MAINNET_NOT_ENABLED",
+      message: "Mainnet agent-wallet autosigning is not enabled.",
+      hint: "Run stellar-agent mainnet agent-wallet autosign enable --i-understand-agent-wallet-autosign, then arm the wallet.",
+      docs: "docs/mainnet-safety.md#agent-wallet-autosigning"
+    });
+  }
+  const allowed = await assertMainnetAgentWalletPaymentAllowed(context, request);
+  if (!allowed) {
+    throw new StellarAgentError({
+      code: "MAINNET_NOT_ENABLED",
+      message: "Mainnet auto-signing is blocked outside the dedicated agent-wallet path.",
+      docs: "docs/mainnet-safety.md#agent-wallet-autosigning"
+    });
+  }
+  const secretKey = process.env[wallet.autosign.secretKeyEnvVar];
+  if (!secretKey) {
+    throw new StellarAgentError({
+      code: "SECRET_KEY_BLOCKED",
+      message: `Mainnet agent-wallet secret key env var '${wallet.autosign.secretKeyEnvVar}' is not set.`,
+      hint: "Set the env var only in the process that should autosign; the secret is never stored in config or receipts.",
+      docs: "docs/mainnet-safety.md#agent-wallet-autosigning"
+    });
+  }
+  const { publicKeyFromSecret } = await import("@stellar-agent/stellar");
+  let publicKey: string;
+  try {
+    publicKey = publicKeyFromSecret(secretKey);
+  } catch {
+    throw new StellarAgentError({
+      code: "WALLET_INVALID",
+      message: "Mainnet agent-wallet autosign secret key is invalid.",
+      docs: "docs/mainnet-safety.md#agent-wallet-autosigning"
+    });
+  }
+  if (publicKey !== wallet.publicKey) {
+    throw new StellarAgentError({
+      code: "WALLET_INVALID",
+      message: "Mainnet agent-wallet autosign secret key does not match the configured public key.",
+      docs: "docs/mainnet-safety.md#agent-wallet-autosigning"
+    });
+  }
+  return {
+    wallet,
+    source: { publicKey, secretKey },
+    warning: mainnetAgentWalletAutosignWarning(),
+    spendHistory: allowed.spendHistory
+  };
+}
+
+async function sendMainnetAgentWalletPayment(
+  context: CliContext,
+  options: {
+    to: string;
+    amount: string;
+    asset: string;
+    from: string;
+    memo?: string;
+    feeStrategy: string;
+    allowRealFunds?: boolean;
+    iUnderstandRealFunds?: boolean;
+    iUnderstandAgentWalletAutosign?: boolean;
+    dryRun?: boolean;
+  }
+) {
+  const configured = requireMainnetAgentWallet(context.config);
+  if (options.from !== configured.walletName && options.from !== configured.publicKey) {
+    throw new StellarAgentError({
+      code: "MAINNET_NOT_ENABLED",
+      message: "Mainnet auto-signing is blocked outside the configured agent-wallet account.",
+      hint: `Use --from ${configured.walletName} for the dedicated agent-wallet flow.`,
+      docs: "docs/mainnet-safety.md#agent-wallet-autosigning"
+    });
+  }
+  if (!configured.publicKey) {
+    throw new StellarAgentError({
+      code: "WALLET_NOT_FOUND",
+      message: "Mainnet agent wallet does not have a public key.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+    });
+  }
+  const policy = await loadPolicy(context, undefined, "mainnet");
+  const request = paymentRequestSchema.parse({
+    source: configured.publicKey,
+    destination: options.to,
+    amount: options.amount,
+    asset: options.asset,
+    memo: options.memo,
+    network: "mainnet",
+    agentWalletAutosign: true
+  });
+  const history = await loadSpendHistory(context, request);
+  if (history.unreadable) {
+    throw new StellarAgentError({
+      code: "POLICY_DENIED",
+      message: "Mainnet agent-wallet spend history could not be read, so payment fails closed.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+    });
+  }
+  const policyDecision = evaluatePaymentRequest(policy, request, history);
+  if (options.dryRun) return { request, policyDecision, spendHistory: history, dryRun: true, autosign: mainnetAgentWalletAutosignView(configured) };
+  await assertMainnetAgentWalletPaymentAllowed(context, request);
+  if (policyDecision.status === "denied") throw policyDeniedError();
+  if (policyDecision.status === "requires_approval") {
+    throw new StellarAgentError({
+      code: "APPROVAL_REQUIRED",
+      message: "Mainnet agent-wallet autosigning requires policy status 'allowed'.",
+      hint: "Use an external approval flow or add an explicit policy exception for risk-budgeted agent-wallet autosigning.",
+      docs: "docs/mainnet-safety.md#agent-wallet-autosigning",
+      details: { policyDecision }
+    });
+  }
+  const autosign = await assertMainnetAgentWalletAutosignPayment(context, request, options);
+  const { sendPayment } = await import("@stellar-agent/stellar");
+  const mainnetProfile = resolveNetworkProfile("mainnet", context.config.profiles);
+  const transaction = await sendPayment({
+    source: autosign.source,
+    destination: options.to,
+    amount: options.amount,
+    asset: options.asset,
+    ...(options.memo === undefined ? {} : { memo: options.memo }),
+    profile: mainnetProfile,
+    allowRealFunds: true,
+    feeStrategy: parseFeeStrategy(options.feeStrategy),
+    ...(context.options.noCache === undefined ? {} : { noCache: context.options.noCache })
+  });
+  const eventLog = join(context.config.storage.logsDir, "events.jsonl");
+  await appendEvent(eventLog, {
+    event: "transaction_confirmed",
+    status: "successful",
+    command: "pay send",
+    profile: "mainnet",
+    data: {
+      transaction,
+      source: configured.walletName,
+      sourcePublicKey: configured.publicKey,
+      destination: options.to,
+      asset: options.asset,
+      mainnetAgentWalletAutosign: true,
+      warning: autosign.warning
+    }
+  });
+  const { path: receiptPath } = await writeReceipt(context.config.storage.receiptsDir, {
+    command: "pay send",
+    profile: "mainnet",
+    networkPassphrase: mainnetProfile.networkPassphrase,
+    realFunds: true,
+    payment: {
+      source: configured.publicKey,
+      destination: options.to,
+      asset: options.asset,
+      amount: request.amount,
+      ...(options.memo === undefined ? {} : { memo: options.memo })
+    },
+    operation: {
+      type: "pay.send",
+      source: configured.publicKey,
+      destination: options.to,
+      asset: options.asset,
+      amount: request.amount,
+      details: {
+        mainnetAgentWallet: {
+          autosign: true,
+          walletName: configured.walletName,
+          publicKey: configured.publicKey,
+          secretKeyEnvVar: configured.autosign?.secretKeyEnvVar,
+          riskBudgetState: mainnetAgentWalletRiskBudgetState(configured, autosign.spendHistory, request),
+          warning: autosign.warning
+        },
+        realFundsAcknowledged: true
+      }
+    },
+    policyDecision: {
+      status: policyDecision.status,
+      matchedRules: [...policyDecision.matchedRules, "mainnet_agent_wallet_autosign_acknowledged"]
+    },
+    transaction,
+    ...(transaction.ledger === undefined ? {} : { ledger: { confirmedLedger: transaction.ledger } }),
+    eventLog
+  });
+  await appendEvent(eventLog, {
+    event: "receipt_written",
+    status: "success",
+    command: "pay send",
+    profile: "mainnet",
+    data: { receiptPath }
+  });
+  if (context.config.mainnetAgentWallet) {
+    context.config.mainnetAgentWallet = {
+      ...context.config.mainnetAgentWallet,
+      spendCounters: await mainnetAgentWalletSpendCounters(context, context.config.mainnetAgentWallet)
+    };
+    await writeConfig(context.config, context.options);
+  }
+  return {
+    request,
+    policyDecision,
+    autosign: {
+      enabled: true,
+      warning: autosign.warning
+    },
+    transaction,
+    receiptPath,
+    realFunds: true
+  };
+}
+
 async function assertMainnetAgentWalletBalanceWithinBudget(
   context: CliContext,
   wallet: MainnetAgentWalletConfig
@@ -4547,8 +5001,44 @@ async function mainnetAgentWalletPolicyFingerprint(context: CliContext): Promise
 
 function mainnetAgentWalletConfigFingerprint(config: StellarAgentConfig): string {
   const clone = JSON.parse(JSON.stringify(config)) as StellarAgentConfig;
-  if (clone.mainnetAgentWallet) clone.mainnetAgentWallet.arming = undefined;
+  if (clone.mainnetAgentWallet) {
+    clone.mainnetAgentWallet.arming = undefined;
+    clone.mainnetAgentWallet.spendCounters = undefined;
+  }
   return sha256(JSON.stringify(sortJson(clone)));
+}
+
+async function mainnetAgentWalletSpendCounters(
+  context: CliContext,
+  wallet: MainnetAgentWalletConfig
+): Promise<NonNullable<MainnetAgentWalletConfig["spendCounters"]>> {
+  const entries = await Promise.all(
+    wallet.riskBudget.allowedAssets.map(async (asset) => [
+      asset,
+      await spendHistoryFromReceipts(context.config.storage.receiptsDir, {
+        profile: "mainnet",
+        asset
+      })
+    ] as const)
+  );
+  return {
+    updatedAt: new Date().toISOString(),
+    source: "receipts",
+    assets: Object.fromEntries(entries)
+  };
+}
+
+function mainnetAgentWalletRiskBudgetState(
+  wallet: MainnetAgentWalletConfig | undefined,
+  before: Awaited<ReturnType<typeof loadSpendHistory>>,
+  payment: PaymentRequest
+) {
+  if (!wallet) return undefined;
+  return {
+    limits: wallet.riskBudget,
+    before,
+    after: incrementBatchSpendHistory(before, payment)
+  };
 }
 
 function configFingerprintPath(context: CliContext): string {
@@ -4568,11 +5058,11 @@ function sortJson(value: any): any {
 }
 
 function amountGreaterThan(left: string, right: string, asset: string): boolean {
-  return parseAmount(left, asset).stroops > parseAmount(right, asset).stroops;
+  return parseNonnegativeStroops(left, asset) > parseNonnegativeStroops(right, asset);
 }
 
 function addAmountValues(left: string, right: string, asset: string): string {
-  return formatStroops(parseAmount(left, asset).stroops + parseAmount(right, asset).stroops);
+  return formatStroops(parseNonnegativeStroops(left, asset) + parseNonnegativeStroops(right, asset));
 }
 
 function parseAssetForPolicy(asset: string): void {
@@ -5175,8 +5665,11 @@ async function writeSubmittedPaymentApprovalReceipt(
                 armed: true,
                 walletName: context.config.mainnetAgentWallet?.walletName,
                 publicKey: context.config.mainnetAgentWallet?.publicKey,
-                riskBudget: context.config.mainnetAgentWallet?.riskBudget,
-                spendHistoryBefore: args.mainnetAgentWallet.spendHistory,
+                riskBudgetState: mainnetAgentWalletRiskBudgetState(
+                  context.config.mainnetAgentWallet,
+                  args.mainnetAgentWallet.spendHistory,
+                  args.payment
+                ),
                 warning: args.mainnetAgentWallet.warning
               }
             })
@@ -5197,6 +5690,13 @@ async function writeSubmittedPaymentApprovalReceipt(
     profile: args.profile.name,
     data: { receiptPath }
   });
+  if (context.config.mainnetAgentWallet && args.mainnetAgentWallet) {
+    context.config.mainnetAgentWallet = {
+      ...context.config.mainnetAgentWallet,
+      spendCounters: await mainnetAgentWalletSpendCounters(context, context.config.mainnetAgentWallet)
+    };
+    await writeConfig(context.config, context.options);
+  }
   return receiptPath;
 }
 
@@ -5264,6 +5764,123 @@ async function buildLocalReport(context: CliContext) {
     redactions: {
       secretKeysIncluded: false
     }
+  };
+}
+
+async function receiptSummary(context: CliContext, options: { profile?: NetworkName; asset?: string } = {}) {
+  const paths = await listReceipts(context.config.storage.receiptsDir);
+  const summary = {
+    receiptCount: 0,
+    unreadableCount: 0,
+    paymentCount: 0,
+    realFundsCount: 0,
+    totals: {} as Record<string, { amount: string; count: number }>,
+    profiles: {} as Record<string, { count: number; realFundsCount: number }>,
+    latest: null as null | { path: string; id: string; command: string; createdAt: string; profile: NetworkName }
+  };
+  for (const path of paths) {
+    try {
+      const receipt = await readReceipt(path);
+      if (options.profile && receipt.profile !== options.profile) continue;
+      if (options.asset && receipt.payment?.asset.toUpperCase() !== options.asset.toUpperCase()) continue;
+      summary.receiptCount += 1;
+      const profile = (summary.profiles[receipt.profile] ??= { count: 0, realFundsCount: 0 });
+      profile.count += 1;
+      if (receipt.network.realFunds) {
+        summary.realFundsCount += 1;
+        profile.realFundsCount += 1;
+      }
+      if (!summary.latest) {
+        summary.latest = {
+          path,
+          id: receipt.id,
+          command: receipt.command,
+          createdAt: receipt.createdAt,
+          profile: receipt.profile
+        };
+      }
+      if (!receipt.payment || receipt.transaction.successful !== true || receipt.policyDecision.status === "denied") continue;
+      summary.paymentCount += 1;
+      const key = `${receipt.profile}:${receipt.payment.asset.toUpperCase()}`;
+      const current = summary.totals[key] ?? { amount: "0.0000000", count: 0 };
+      summary.totals[key] = {
+        amount: addAmountValues(current.amount, receipt.payment.amount, receipt.payment.asset),
+        count: current.count + 1
+      };
+    } catch {
+      summary.unreadableCount += 1;
+    }
+  }
+  return summary;
+}
+
+function x402ServerScaffoldFiles(): Record<string, string> {
+  return {
+    "package.json": `${JSON.stringify(
+      {
+        type: "module",
+        scripts: {
+          start: "node server.mjs"
+        },
+        dependencies: {}
+      },
+      null,
+      2
+    )}\n`,
+    "server.mjs": `import { createServer } from "node:http";
+
+const port = Number(process.env.PORT ?? 8787);
+const price = process.env.X402_PRICE ?? "0.0000001 XLM";
+const destination = process.env.X402_DESTINATION ?? "set-testnet-merchant-public-key";
+
+const server = createServer((request, response) => {
+  if (request.url === "/health") {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  const payment = request.headers["x-payment"];
+  if (!payment) {
+    response.writeHead(402, {
+      "content-type": "application/json",
+      "x-accepts-payment": JSON.stringify({
+        network: "testnet",
+        asset: "XLM",
+        amount: price,
+        destination
+      })
+    });
+    response.end(JSON.stringify({ error: "payment_required", network: "testnet", price, destination }));
+    return;
+  }
+
+  response.writeHead(200, { "content-type": "application/json" });
+  response.end(JSON.stringify({ ok: true, paid: true, message: "Replace this demo verifier before production." }));
+});
+
+server.listen(port, () => {
+  console.log(\`x402 demo server listening on http://127.0.0.1:\${port}\`);
+});
+`,
+    "README.md": `# Stellar Agent x402 Testnet Server
+
+This scaffold is a local Testnet demo target for \`stellar-agent pay x402\`.
+
+Run it:
+
+\`\`\`sh
+npm start
+\`\`\`
+
+Configure the destination with a Testnet merchant public key:
+
+\`\`\`sh
+X402_DESTINATION=G... npm start
+\`\`\`
+
+This scaffold does not verify payments. Replace the demo verifier before using it outside a local Testnet experiment.
+`
   };
 }
 

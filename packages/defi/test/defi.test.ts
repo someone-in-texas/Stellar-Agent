@@ -85,12 +85,10 @@ describe("Aquarius helpers", () => {
     expect(deployment.assets).toEqual(expect.arrayContaining([expect.objectContaining({ symbol: "AQUA" })]));
   });
 
-  it("uses the live Mainnet AQUA asset contract id", () => {
+  it("does not ship a static Mainnet AQUA alias", () => {
     const deployment = aquariusDeployment("mainnet");
-    expect(resolveAquariusAsset(deployment, "AQUA")).toMatchObject({
-      contractId: "CAUIKL3IYGMERDRUN6YSCLWVAKIFG5Q4YJHUKM4S4NJZQIA3BAS6OJPK",
-      classicAsset: "AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
-    });
+    expect(deployment.assets).not.toEqual(expect.arrayContaining([expect.objectContaining({ symbol: "AQUA" })]));
+    expect(() => resolveAquariusAsset(deployment, "AQUA")).toThrow("Aquarius asset 'AQUA' was not found");
   });
 
   it("maps Aquarius API pools into stable summaries", async () => {
