@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stellar-agent.dev/schemas/cli/defi-aquarius-swap-preflight.schema.json",
+  "title": "stellar-agent defi aquarius swap preflight --json data",
+  "type": "object",
+  "required": ["policyDecision", "preflight"],
+  "additionalProperties": true,
+  "properties": {
+    "policyDecision": { "$ref": "#/$defs/policyDecision" },
+    "preflight": {
+      "type": "object",
+      "required": [
+        "network",
+        "mode",
+        "inputAsset",
+        "outputAsset",
+        "assets",
+        "assetGroups",
+        "amount",
+        "quote",
+        "policyAction",
+        "slippageBoundsProvided",
+        "simulated",
+        "submitted",
+        "signing",
+        "riskNotes"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "network": { "enum": ["testnet", "mainnet"] },
+        "mode": { "enum": ["strict_send", "strict_receive"] },
+        "inputAsset": { "type": "string" },
+        "outputAsset": { "type": "string" },
+        "assets": { "type": "array", "items": { "type": "string" } },
+        "assetGroups": { "type": "array", "items": { "type": "array", "items": { "type": "string" } } },
+        "amount": { "type": "string" },
+        "slippageBps": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "quote": {
+          "type": "object",
+          "required": ["success"],
+          "additionalProperties": true,
+          "properties": {
+            "success": { "type": "boolean" },
+            "amountIn": { "type": "string" },
+            "amountOut": { "type": "string" },
+            "priceImpactPct": { "type": "string" },
+            "route": { "type": "array" },
+            "xdr": { "type": "string" }
+          }
+        },
+        "policyAction": { "const": "swap" },
+        "slippageBoundsProvided": { "type": "boolean" },
+        "simulated": { "const": false },
+        "submitted": { "const": false },
+        "signing": { "const": false },
+        "riskNotes": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+  "$defs": {
+    "policyDecision": {
+      "type": "object",
+      "required": ["status", "matchedRules", "reasons"],
+      "additionalProperties": true,
+      "properties": {
+        "status": { "enum": ["allowed", "denied", "requires_approval"] },
+        "matchedRules": { "type": "array", "items": { "type": "string" } },
+        "reasons": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

@@ -4,7 +4,7 @@ import { writeReceipt } from "@stellar-agent/ledger-logger";
 import { DEFAULT_MAINNET_POLICY, DEFAULT_TESTNET_POLICY, policyToYaml } from "@stellar-agent/policy";
 import { ensureWallet } from "@stellar-agent/testnet-suite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -15,7 +15,8 @@ import { buildProgram, isCliEntrypoint } from "../src/index.js";
 const transactionHash = "a".repeat(64);
 const contractId = "CB7Y2XA3ULT62HEH6DPAUGVGUTSVL7JO5T5VOYUW6UVZI6SG72UOKSYR";
 const require = createRequire(import.meta.url);
-const { version: cliVersion } = require("../package.json");
+const cliPackage = require("../package.json");
+const { version: cliVersion } = cliPackage;
 const { Account, Asset, BASE_FEE, Keypair, Networks, Operation, TransactionBuilder } = require("../../stellar/node_modules/@stellar/stellar-sdk");
 
 const walletConnectMockState = vi.hoisted(() => ({
@@ -142,6 +143,186 @@ describe("CLI package entrypoint", () => {
       if (originalSecret === undefined) delete process.env.STELLAR_SECRET_KEY;
       else process.env.STELLAR_SECRET_KEY = originalSecret;
     }
+  });
+
+  it("publishes JSON schemas for agent-facing CLI outputs", async () => {
+    const schemaDir = fileURLToPath(new URL("../schemas/cli/", import.meta.url));
+    const entries = (await readdir(schemaDir)).sort();
+    const expected = [
+      "approval-list.schema.json",
+      "approval-request.schema.json",
+      "defi-aquarius-swap-preflight.schema.json",
+      "envelope.schema.json",
+      "index.json",
+      "market-lp-preflight.schema.json",
+      "pay-quote.schema.json",
+      "policy-explain.schema.json",
+      "receipt.schema.json",
+      "receipts-latest.schema.json",
+      "receipts-summary.schema.json"
+    ];
+    expect(entries).toEqual(expected);
+    expect(cliPackage.files).toContain("schemas");
+    expect(cliPackage.exports["./schemas/cli/index.json"]).toBe("./schemas/cli/index.json");
+    expect(cliPackage.exports["./schemas/cli/*.schema.json"]).toBe("./schemas/cli/*.schema.json");
+
+    const index = JSON.parse(await readFile(join(schemaDir, "index.json"), "utf8"));
+    expect(Object.values(index.schemas).sort()).toEqual(expected.filter((entry) => entry !== "index.json").sort());
+    for (const entry of entries) {
+      const schema = JSON.parse(await readFile(join(schemaDir, entry), "utf8"));
+      expect(schema.$schema).toBe("https://json-schema.org/draft/2020-12/schema");
+      expect(schema.$id).toMatch(/^https:\/\/stellar-agent\.dev\/schemas\/cli\//);
+    }
+  });
+
+  it("validates representative CLI payloads against the published schemas", async () => {
+    const schemaDir = fileURLToPath(new URL("../schemas/cli/", import.meta.url));
+    const loadSchema = async (name: string) => JSON.parse(await readFile(join(schemaDir, name), "utf8"));
+    const paymentRequest = {
+      destination: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      amount: "1",
+      asset: "XLM",
+      network: "testnet"
+    };
+    const policyDecision = {
+      status: "allowed",
+      matchedRules: ["policy_allowed"],
+      reasons: ["Payment is allowed by policy."]
+    };
+    const spendHistory = {
+      dailyTotal: "0.0000000",
+      monthlyTotal: "0.0000000",
+      knownRecipients: [],
+      knownDomains: [],
+      receiptCount: 0,
+      unreadableCount: 0
+    };
+    const approval = {
+      schemaVersion: "stellar-agent.approval.v1",
+      id: "appr_test",
+      kind: "payment",
+      status: "pending",
+      createdAt: "2026-06-08T12:00:00.000Z",
+      updatedAt: "2026-06-08T12:00:00.000Z",
+      network: "testnet",
+      requestHash: "hash",
+      summary: "Pay 1 XLM",
+      payment: paymentRequest,
+      redactions: { secretKeysIncluded: false }
+    };
+    const receipt = {
+      schemaVersion: "stellar-agent.receipt.v1",
+      id: "rcpt_test",
+      createdAt: "2026-06-08T12:00:00.000Z",
+      command: "pay send",
+      profile: "testnet",
+      network: {
+        name: "testnet",
+        passphrase: "Test SDF Network ; September 2015",
+        realFunds: false
+      },
+      payment: {
+        source: "GBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        destination: paymentRequest.destination,
+        amount: "1.0000000",
+        asset: "XLM"
+      },
+      policyDecision,
+      transaction: { hash: transactionHash, successful: true },
+      redactions: { urlQueryParamsRedacted: true, secretKeysIncluded: false }
+    };
+
+    validateSchema(await loadSchema("envelope.schema.json"), { ok: true, data: { status: "allowed" } }, "envelope");
+    validateSchema(
+      await loadSchema("pay-quote.schema.json"),
+      {
+        request: paymentRequest,
+        estimatedFee: {
+          source: "base_fee_fallback",
+          strategy: "medium",
+          perOperationFee: "100",
+          transactionFee: "100",
+          operationCount: 1,
+          cached: false
+        },
+        policyDecision,
+        spendHistory,
+        profile: "testnet"
+      },
+      "pay quote"
+    );
+    validateSchema(await loadSchema("policy-explain.schema.json"), { ...policyDecision, spendHistory }, "policy explain");
+    validateSchema(
+      await loadSchema("market-lp-preflight.schema.json"),
+      {
+        policyDecision,
+        preflight: {
+          action: "deposit",
+          pool: {
+            id: "pool",
+            feeBp: 30,
+            type: "constant_product",
+            totalTrustlines: "1",
+            totalShares: "10.0000000",
+            reserves: [
+              { asset: "XLM", amount: "10.0000000" },
+              { asset: "USD:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", amount: "20.0000000" }
+            ]
+          },
+          assets: ["XLM"],
+          nominalExposure: { value: "2.0000000", semantics: "sum_of_max_reserve_amounts_not_mark_to_market" },
+          risk: { notes: ["Preflight only."] }
+        }
+      },
+      "market lp preflight"
+    );
+    validateSchema(
+      await loadSchema("defi-aquarius-swap-preflight.schema.json"),
+      {
+        policyDecision,
+        preflight: {
+          network: "testnet",
+          mode: "strict_send",
+          inputAsset: "XLM",
+          outputAsset: "AQUA",
+          assets: ["XLM", "AQUA"],
+          assetGroups: [["XLM"], ["AQUA"]],
+          amount: "1",
+          slippageBps: 100,
+          quote: { success: true, amountIn: "1", amountOut: "2" },
+          policyAction: "swap",
+          slippageBoundsProvided: true,
+          simulated: false,
+          submitted: false,
+          signing: false,
+          riskNotes: ["Preflight only."]
+        }
+      },
+      "aquarius swap preflight"
+    );
+    validateSchema(await loadSchema("approval-request.schema.json"), approval, "approval request");
+    validateSchema(await loadSchema("approval-list.schema.json"), { approvals: [approval] }, "approval list", { "approval-request.schema.json": await loadSchema("approval-request.schema.json") });
+    validateSchema(await loadSchema("receipt.schema.json"), receipt, "receipt");
+    validateSchema(await loadSchema("receipts-latest.schema.json"), { path: "/tmp/receipt.json", receipt }, "receipts latest", { "receipt.schema.json": await loadSchema("receipt.schema.json") });
+    validateSchema(
+      await loadSchema("receipts-summary.schema.json"),
+      {
+        receiptCount: 1,
+        unreadableCount: 0,
+        paymentCount: 1,
+        realFundsCount: 0,
+        totals: { "testnet:XLM": { amount: "1.0000000", count: 1 } },
+        profiles: { testnet: { count: 1, realFundsCount: 0 } },
+        latest: {
+          path: "/tmp/receipt.json",
+          id: receipt.id,
+          command: receipt.command,
+          createdAt: receipt.createdAt,
+          profile: receipt.profile
+        }
+      },
+      "receipts summary"
+    );
   });
 });
 
@@ -2325,4 +2506,77 @@ function accountFixture(address = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
       }
     ]
   };
+}
+
+function validateSchema(
+  schema: any,
+  value: unknown,
+  label: string,
+  externalRefs: Record<string, any> = {},
+  root: any = schema
+): void {
+  if (schema.$ref) {
+    const ref = String(schema.$ref);
+    if (ref.startsWith("#/$defs/")) {
+      validateSchema(root.$defs?.[ref.slice("#/$defs/".length)], value, `${label}.${ref}`, externalRefs, root);
+      return;
+    }
+    validateSchema(externalRefs[ref], value, `${label}.${ref}`, externalRefs, externalRefs[ref]);
+    return;
+  }
+  if (schema.oneOf) {
+    const matches = schema.oneOf.filter((candidate: any) => {
+      try {
+        validateSchema(candidate, value, label, externalRefs, root);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    expect(matches.length, `${label} should match exactly one oneOf branch`).toBe(1);
+    return;
+  }
+  if (schema.const !== undefined) {
+    expect(value, `${label} const`).toEqual(schema.const);
+  }
+  if (schema.enum) {
+    expect(schema.enum, `${label} enum`).toContain(value);
+  }
+  if (schema.type) {
+    const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+    const actualType = value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+    const matchesType = types.includes(actualType) || (types.includes("integer") && Number.isInteger(value));
+    expect(matchesType, `${label} type`).toBe(true);
+  }
+  if (schema.required) {
+    expect(value && typeof value === "object" && !Array.isArray(value), `${label} required object`).toBe(true);
+    for (const key of schema.required) {
+      expect(value as Record<string, unknown>, `${label} required ${key}`).toHaveProperty(key);
+    }
+  }
+  if (schema.properties && value && typeof value === "object" && !Array.isArray(value)) {
+    for (const [key, child] of Object.entries(schema.properties)) {
+      if (Object.prototype.hasOwnProperty.call(value, key)) {
+        validateSchema(child, (value as Record<string, unknown>)[key], `${label}.${key}`, externalRefs, root);
+      }
+    }
+  }
+  if (schema.items && Array.isArray(value)) {
+    for (const [index, item] of value.entries()) {
+      validateSchema(schema.items, item, `${label}[${index}]`, externalRefs, root);
+    }
+  }
+  if (
+    schema.additionalProperties &&
+    typeof schema.additionalProperties === "object" &&
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+  ) {
+    for (const [key, child] of Object.entries(value)) {
+      if (!schema.properties?.[key]) {
+        validateSchema(schema.additionalProperties, child, `${label}.${key}`, externalRefs, root);
+      }
+    }
+  }
 }

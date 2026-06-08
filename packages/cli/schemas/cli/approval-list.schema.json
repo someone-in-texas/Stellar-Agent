@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stellar-agent.dev/schemas/cli/approval-list.schema.json",
+  "title": "stellar-agent approval list --json data",
+  "type": "object",
+  "required": ["approvals"],
+  "additionalProperties": true,
+  "properties": {
+    "approvals": {
+      "type": "array",
+      "items": { "$ref": "approval-request.schema.json" }
+    }
+  }
+}

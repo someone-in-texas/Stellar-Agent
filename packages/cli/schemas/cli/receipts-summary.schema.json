@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stellar-agent.dev/schemas/cli/receipts-summary.schema.json",
+  "title": "stellar-agent receipts summary --json data",
+  "type": "object",
+  "required": ["receiptCount", "unreadableCount", "paymentCount", "realFundsCount", "totals", "profiles", "latest"],
+  "additionalProperties": true,
+  "properties": {
+    "receiptCount": { "type": "integer", "minimum": 0 },
+    "unreadableCount": { "type": "integer", "minimum": 0 },
+    "paymentCount": { "type": "integer", "minimum": 0 },
+    "realFundsCount": { "type": "integer", "minimum": 0 },
+    "totals": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["amount", "count"],
+        "additionalProperties": true,
+        "properties": {
+          "amount": { "type": "string" },
+          "count": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "profiles": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["count", "realFundsCount"],
+        "additionalProperties": true,
+        "properties": {
+          "count": { "type": "integer", "minimum": 0 },
+          "realFundsCount": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "latest": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["path", "id", "command", "createdAt", "profile"],
+          "additionalProperties": true,
+          "properties": {
+            "path": { "type": "string" },
+            "id": { "type": "string" },
+            "command": { "type": "string" },
+            "createdAt": { "type": "string", "format": "date-time" },
+            "profile": { "enum": ["testnet", "mainnet", "local"] }
+          }
+        }
+      ]
+    }
+  }
+}

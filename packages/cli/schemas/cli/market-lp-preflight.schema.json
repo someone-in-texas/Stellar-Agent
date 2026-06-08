@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stellar-agent.dev/schemas/cli/market-lp-preflight.schema.json",
+  "title": "stellar-agent market lp preflight --json data",
+  "type": "object",
+  "required": ["policyDecision", "preflight"],
+  "additionalProperties": true,
+  "properties": {
+    "policyDecision": { "$ref": "#/$defs/policyDecision" },
+    "preflight": {
+      "type": "object",
+      "required": ["action", "pool", "assets", "nominalExposure", "risk"],
+      "additionalProperties": true,
+      "properties": {
+        "action": { "enum": ["deposit", "withdraw"] },
+        "pool": {
+          "type": "object",
+          "required": ["id", "feeBp", "type", "totalTrustlines", "totalShares", "reserves"],
+          "additionalProperties": true,
+          "properties": {
+            "id": { "type": "string" },
+            "feeBp": { "type": "integer" },
+            "type": { "type": "string" },
+            "totalTrustlines": { "type": "string" },
+            "totalShares": { "type": "string" },
+            "reserves": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["asset", "amount"],
+                "additionalProperties": true,
+                "properties": {
+                  "asset": { "type": "string" },
+                  "amount": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "account": { "type": "string" },
+        "assets": { "type": "array", "items": { "type": "string" } },
+        "currentPrice": { "type": "string" },
+        "nominalExposure": {
+          "type": "object",
+          "required": ["value", "semantics"],
+          "additionalProperties": true,
+          "properties": {
+            "value": { "type": "string" },
+            "semantics": { "type": "string" }
+          }
+        },
+        "trustlines": { "type": "object", "additionalProperties": true },
+        "deposit": { "type": "object", "additionalProperties": true },
+        "withdraw": { "type": "object", "additionalProperties": true },
+        "risk": {
+          "type": "object",
+          "required": ["notes"],
+          "additionalProperties": true,
+          "properties": {
+            "notes": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "policyDecision": {
+      "type": "object",
+      "required": ["status", "matchedRules", "reasons"],
+      "additionalProperties": true,
+      "properties": {
+        "status": { "enum": ["allowed", "denied", "requires_approval"] },
+        "matchedRules": { "type": "array", "items": { "type": "string" } },
+        "reasons": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

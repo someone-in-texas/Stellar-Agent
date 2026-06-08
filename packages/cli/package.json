@@ -25,10 +25,13 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./schemas/cli/index.json": "./schemas/cli/index.json",
+    "./schemas/cli/*.schema.json": "./schemas/cli/*.schema.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "schemas"
   ],
   "scripts": {
     "build": "tsc -b",

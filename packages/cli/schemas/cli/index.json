@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stellar-agent.dev/schemas/cli/index.json",
+  "title": "Stellar Agent CLI JSON Schemas",
+  "schemas": {
+    "envelope": "envelope.schema.json",
+    "payQuote": "pay-quote.schema.json",
+    "policyExplain": "policy-explain.schema.json",
+    "marketLpPreflight": "market-lp-preflight.schema.json",
+    "defiAquariusSwapPreflight": "defi-aquarius-swap-preflight.schema.json",
+    "approvalRequest": "approval-request.schema.json",
+    "approvalList": "approval-list.schema.json",
+    "receipt": "receipt.schema.json",
+    "receiptsLatest": "receipts-latest.schema.json",
+    "receiptsSummary": "receipts-summary.schema.json"
+  }
+}

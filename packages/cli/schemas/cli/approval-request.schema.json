@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stellar-agent.dev/schemas/cli/approval-request.schema.json",
+  "title": "stellar-agent approval request --json data",
+  "type": "object",
+  "required": ["schemaVersion", "id", "kind", "status", "createdAt", "updatedAt", "network", "requestHash", "summary", "redactions"],
+  "additionalProperties": true,
+  "properties": {
+    "schemaVersion": { "const": "stellar-agent.approval.v1" },
+    "id": { "type": "string", "pattern": "^appr_" },
+    "kind": { "enum": ["payment", "transaction_xdr"] },
+    "status": { "enum": ["pending", "approved", "denied"] },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "network": { "enum": ["testnet", "mainnet", "local"] },
+    "requestHash": { "type": "string" },
+    "summary": { "type": "string" },
+    "payment": { "type": "object", "additionalProperties": true },
+    "transactionXdr": { "type": "string" },
+    "decision": { "type": "object", "additionalProperties": true },
+    "redactions": {
+      "type": "object",
+      "required": ["secretKeysIncluded"],
+      "additionalProperties": true,
+      "properties": {
+        "secretKeysIncluded": { "const": false }
+      }
+    }
+  }
+}

@@ -27,6 +27,8 @@ stellar-agent receipts latest --json
 
 The CLI defaults to Stellar Testnet. Generated local wallets are Testnet-only. Mainnet is disabled by default and local Mainnet auto-signing is blocked.
 
+JSON Schema files for key `--json` payloads are included in the package under `schemas/cli`, for example `@stellar-agent/cli/schemas/cli/pay-quote.schema.json` and `@stellar-agent/cli/schemas/cli/envelope.schema.json`.
+
 ## Common Workflows
 
 ```bash

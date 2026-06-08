@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stellar-agent.dev/schemas/cli/pay-quote.schema.json",
+  "title": "stellar-agent pay quote --json data",
+  "type": "object",
+  "required": ["request", "estimatedFee", "policyDecision", "spendHistory", "profile"],
+  "additionalProperties": true,
+  "properties": {
+    "request": { "$ref": "#/$defs/paymentRequest" },
+    "estimatedFee": { "$ref": "#/$defs/feeStats" },
+    "policyDecision": { "$ref": "#/$defs/policyDecision" },
+    "spendHistory": { "$ref": "#/$defs/spendHistory" },
+    "profile": { "enum": ["testnet", "mainnet", "local"] }
+  },
+  "$defs": {
+    "paymentRequest": {
+      "type": "object",
+      "required": ["destination", "amount", "asset", "network"],
+      "additionalProperties": true,
+      "properties": {
+        "source": { "type": "string" },
+        "destination": { "type": "string", "pattern": "^G[A-Z2-7]{55}$" },
+        "amount": { "type": "string", "minLength": 1 },
+        "asset": { "type": "string", "minLength": 1 },
+        "memo": { "type": "string" },
+        "network": { "enum": ["testnet", "mainnet", "local"] },
+        "domain": { "type": "string" },
+        "url": { "type": "string" }
+      }
+    },
+    "feeStats": {
+      "type": "object",
+      "required": ["source", "strategy", "perOperationFee", "transactionFee", "operationCount", "cached"],
+      "additionalProperties": true,
+      "properties": {
+        "source": { "enum": ["horizon", "base_fee_fallback"] },
+        "strategy": { "enum": ["base", "low", "medium", "high", "p95"] },
+        "perOperationFee": { "type": "string" },
+        "transactionFee": { "type": "string" },
+        "operationCount": { "type": "integer", "minimum": 1 },
+        "cached": { "type": "boolean" },
+        "ledgerCapacityUsage": { "type": "string" }
+      }
+    },
+    "policyDecision": {
+      "type": "object",
+      "required": ["status", "matchedRules", "reasons"],
+      "additionalProperties": true,
+      "properties": {
+        "status": { "enum": ["allowed", "denied", "requires_approval"] },
+        "matchedRules": { "type": "array", "items": { "type": "string" } },
+        "reasons": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "spendHistory": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "dailyTotal": { "type": "string" },
+        "monthlyTotal": { "type": "string" },
+        "knownRecipients": { "type": "array", "items": { "type": "string" } },
+        "knownDomains": { "type": "array", "items": { "type": "string" } },
+        "receiptCount": { "type": "integer", "minimum": 0 },
+        "unreadableCount": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

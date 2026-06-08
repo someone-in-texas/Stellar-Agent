@@ -23,6 +23,8 @@ stellar-agent contract asset-deploy --source agent --asset native --json
 stellar-agent contract info --kind interface --id C... --json
 ```
 
+Published JSON Schemas for key `--json` payloads ship with `@stellar-agent/cli` under `schemas/cli`. Validate the common envelope with `envelope.schema.json`, then validate `data` with the command-specific schema. See [cli-json-schemas.md](cli-json-schemas.md).
+
 The standard success envelope is:
 
 ```json

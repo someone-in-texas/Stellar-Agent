@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stellar-agent.dev/schemas/cli/receipt.schema.json",
+  "title": "stellar-agent receipt object",
+  "type": "object",
+  "required": ["schemaVersion", "id", "createdAt", "command", "profile", "network", "policyDecision", "transaction", "redactions"],
+  "additionalProperties": true,
+  "properties": {
+    "schemaVersion": { "const": "stellar-agent.receipt.v1" },
+    "id": { "type": "string" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "command": { "type": "string" },
+    "profile": { "enum": ["testnet", "mainnet", "local"] },
+    "network": {
+      "type": "object",
+      "required": ["name", "passphrase", "realFunds"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "enum": ["testnet", "mainnet", "local"] },
+        "passphrase": { "type": "string" },
+        "realFunds": { "type": "boolean" }
+      }
+    },
+    "payment": { "type": "object", "additionalProperties": true },
+    "operation": { "type": "object", "additionalProperties": true },
+    "policyDecision": {
+      "type": "object",
+      "required": ["status", "matchedRules"],
+      "additionalProperties": true,
+      "properties": {
+        "status": { "enum": ["allowed", "denied", "requires_approval"] },
+        "matchedRules": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "transaction": {
+      "type": "object",
+      "required": ["hash", "successful"],
+      "additionalProperties": true,
+      "properties": {
+        "hash": { "type": "string" },
+        "ledger": { "type": "integer" },
+        "successful": { "type": "boolean" },
+        "feeCharged": { "type": "string" }
+      }
+    },
+    "ledger": { "type": "object", "additionalProperties": true },
+    "files": { "type": "object", "additionalProperties": true },
+    "redactions": {
+      "type": "object",
+      "required": ["secretKeysIncluded"],
+      "additionalProperties": true,
+      "properties": {
+        "urlQueryParamsRedacted": { "type": "boolean" },
+        "secretKeysIncluded": { "const": false }
+      }
+    }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stellar-agent.dev/schemas/cli/envelope.schema.json",
+  "title": "Stellar Agent CLI JSON Envelope",
+  "description": "Common --json envelope returned by stellar-agent commands.",
+  "type": "object",
+  "properties": {
+    "ok": { "type": "boolean" },
+    "data": {},
+    "error": { "$ref": "#/$defs/error" }
+  },
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "required": ["ok", "data"],
+      "properties": {
+        "ok": { "const": true },
+        "data": {}
+      }
+    },
+    {
+      "required": ["ok", "error"],
+      "properties": {
+        "ok": { "const": false },
+        "error": { "$ref": "#/$defs/error" }
+      }
+    }
+  ],
+  "$defs": {
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "additionalProperties": true,
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "hint": { "type": "string" },
+        "docs": { "type": "string" },
+        "details": {}
+      }
+    }
+  }
+}

@@ -121,6 +121,8 @@ stellar-agent pay x402 http://127.0.0.1:PORT/paid-report --allow-localhost-demo 
 stellar-agent pay mpp http://127.0.0.1:PORT/mpp-report --allow-localhost-demo --json
 ```
 
+JSON Schema files for agent/tool integrations ship with `@stellar-agent/cli` under `schemas/cli`. See [docs/cli-json-schemas.md](docs/cli-json-schemas.md).
+
 ## Agent Integration
 
 Agents should call the CLI with `--json`, parse the standard envelope, and stop on `requires_approval` unless the user explicitly approves. Example prompt:

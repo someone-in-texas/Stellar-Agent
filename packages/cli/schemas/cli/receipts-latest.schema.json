@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stellar-agent.dev/schemas/cli/receipts-latest.schema.json",
+  "title": "stellar-agent receipts latest --json data",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["path", "receipt"],
+      "additionalProperties": true,
+      "properties": {
+        "path": { "type": "string" },
+        "receipt": { "$ref": "receipt.schema.json" }
+      }
+    },
+    {
+      "type": "object",
+      "required": ["receipt"],
+      "additionalProperties": true,
+      "properties": {
+        "receipt": { "type": "null" }
+      }
+    }
+  ]
+}
