@@ -16,6 +16,77 @@ Enablement requires:
 stellar-agent mainnet enable --i-understand-real-funds
 ```
 
+## Risk-Budgeted Mainnet Agent Wallet
+
+Risk-budgeted Mainnet agent-wallet mode is for a deliberately small, dedicated Mainnet wallet that the user is willing to expose to agent-driven workflows. It limits loss; it does not make autonomous Mainnet spending safe.
+
+The wallet is stored as a watch-only Mainnet public key. `stellar-agent` does not store a Mainnet secret key and does not locally auto-sign Mainnet payments. The agent-wallet guard runs before Mainnet payment-signature workflows hand unsigned XDR to a browser wallet or other external signer.
+
+Create and arm a dedicated wallet:
+
+```bash
+stellar-agent mainnet enable --i-understand-real-funds --json
+stellar-agent mainnet agent-wallet create \
+  --address G... \
+  --max-balance 25 \
+  --daily-limit 5 \
+  --per-tx-limit 1 \
+  --asset XLM \
+  --allow-destination G... \
+  --json
+stellar-agent mainnet agent-wallet arm --i-understand-real-funds --json
+stellar-agent mainnet agent-wallet status --json
+```
+
+Request an externally signed payment only after the wallet is armed:
+
+```bash
+stellar-agent --profile mainnet tx request-payment-signature \
+  --from mainnet-agent \
+  --to G... \
+  --amount 0.1 \
+  --allow-real-funds \
+  --i-understand-real-funds \
+  --json
+stellar-agent approval serve
+stellar-agent --profile mainnet tx submit-approval appr_... \
+  --allow-real-funds \
+  --i-understand-real-funds \
+  --json
+```
+
+Controls:
+
+- The wallet must be a dedicated Mainnet watch-only wallet, not an arbitrary active Testnet wallet.
+- Mainnet must already be enabled.
+- Arming requires `--i-understand-real-funds`.
+- Destination allowlists are deny-by-default; at least one allowed destination is required before arming.
+- Allowed assets and payment operation type are enforced before payment-signature XDR is created.
+- Per-transaction, daily, optional monthly, and max-wallet-balance caps are enforced.
+- Spend history is read from durable receipts and fails closed if receipt parsing fails.
+- Arming records config path, config fingerprint, policy path, and policy fingerprint. Config path changes, config edits, or policy edits require re-arming.
+- Balance checks fail closed if Horizon cannot read the dedicated wallet balance or if the balance exceeds the risk budget.
+- `--allow-real-funds` acknowledges real-funds intent; it does not bypass policy, receipts, fingerprints, balance checks, or the agent-wallet risk budget.
+
+Operational commands:
+
+```bash
+stellar-agent mainnet agent-wallet limits --daily-limit 2 --per-tx-limit 0.5 --allow-destination G... --json
+stellar-agent mainnet agent-wallet disarm --json
+stellar-agent mainnet agent-wallet rotate --address G... --json
+stellar-agent receipts latest --json
+```
+
+Changing limits or rotating the public key disarms the wallet. Disarm before handing control back to a general-purpose agent, after demos, or whenever the policy/config state is unclear.
+
+Failure modes:
+
+- `Mainnet agent-wallet payment workflows require the wallet to be armed.` Arm explicitly after reviewing limits.
+- `Mainnet agent-wallet arming is stale and must be refreshed.` Review config/policy changes, then disarm and arm again.
+- `Mainnet agent-wallet spend history could not be read.` Repair or inspect receipts before spending.
+- `Mainnet agent-wallet balance exceeds the configured risk budget.` Move funds out or raise the cap deliberately.
+- `Mainnet agent-wallet destination is not allowlisted.` Add only the exact destination intended for the workflow.
+
 Recommended signing model:
 
 - Use Freighter or another human approval flow.

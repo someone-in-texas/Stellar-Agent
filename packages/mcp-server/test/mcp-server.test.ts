@@ -27,6 +27,9 @@ describe("mcp server", () => {
         expect.objectContaining({ name: "stellar_testnet_scenario_contract_asset_smoke" }),
         expect.objectContaining({ name: "stellar_tx_build_payment" }),
         expect.objectContaining({ name: "stellar_tx_submit_approval" }),
+        expect.objectContaining({ name: "stellar_mainnet_agent_wallet_status" }),
+        expect.objectContaining({ name: "stellar_mainnet_agent_wallet_create" }),
+        expect.objectContaining({ name: "stellar_mainnet_agent_wallet_arm" }),
         expect.objectContaining({ name: "stellar_wallet_trustline_list" }),
         expect.objectContaining({ name: "stellar_claimable_claim" }),
         expect.objectContaining({ name: "stellar_market_pools_list" }),
@@ -102,6 +105,47 @@ describe("mcp server", () => {
       "--allow-real-funds",
       "--i-understand-real-funds"
     ]);
+  });
+
+  it("builds CLI arguments for risk-budgeted Mainnet agent wallets", () => {
+    expect(
+      buildCliArgs("stellar_mainnet_agent_wallet_create", {
+        configPath: "/tmp/config.yaml",
+        address: "GAGENT",
+        maxBalance: "25",
+        dailyLimit: "5",
+        perTxLimit: "1",
+        assets: ["XLM", "USDC"],
+        allowDestinations: ["GMERCHANT"]
+      })
+    ).toEqual([
+      "--config",
+      "/tmp/config.yaml",
+      "--json",
+      "mainnet",
+      "agent-wallet",
+      "create",
+      "--address",
+      "GAGENT",
+      "--max-balance",
+      "25",
+      "--daily-limit",
+      "5",
+      "--per-tx-limit",
+      "1",
+      "--asset",
+      "XLM",
+      "--asset",
+      "USDC",
+      "--allow-destination",
+      "GMERCHANT"
+    ]);
+
+    expect(
+      buildCliArgs("stellar_mainnet_agent_wallet_arm", {
+        iUnderstandRealFunds: true
+      })
+    ).toEqual(["--json", "mainnet", "agent-wallet", "arm", "--i-understand-real-funds"]);
   });
 
   it("builds CLI arguments for funded Testnet wallet spin-up", () => {

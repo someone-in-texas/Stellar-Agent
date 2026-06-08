@@ -22,6 +22,10 @@ Watch-only wallet files use schema `stellar-agent.publicWallet.v1` and store onl
 
 Run `stellar-agent mainnet status`. Enabling requires `stellar-agent mainnet enable --i-understand-real-funds`.
 
+## Mainnet Agent Wallet Blocked
+
+Run `stellar-agent mainnet agent-wallet status --json`. The risk-budgeted Mainnet agent wallet fails closed when it is disarmed, when config or policy fingerprints changed after arming, when receipts cannot be read, when the dedicated wallet balance exceeds `maxBalance`, when Horizon cannot read the balance, or when the requested asset, operation, destination, per-transaction amount, daily total, or monthly total is outside the configured limits. Review the change, then run `stellar-agent mainnet agent-wallet disarm --json` and re-arm only after confirming the limits still match the intended small-wallet workflow.
+
 ## Policy Denied
 
 Run `stellar-agent policy explain --request ./payment-request.json`.

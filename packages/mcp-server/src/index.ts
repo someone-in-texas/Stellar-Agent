@@ -250,6 +250,46 @@ export const MCP_TOOLS: McpTool[] = [
     requiredString(input, "id"),
     ...realFundsFlags(input)
   ], { id: { type: "string" }, ...realFundsProperties() }),
+  tool("stellar_mainnet_agent_wallet_status", "Show risk-budgeted Mainnet agent-wallet status and arming integrity.", {}, () => [
+    "mainnet",
+    "agent-wallet",
+    "status"
+  ], {}),
+  tool("stellar_mainnet_agent_wallet_create", "Create or replace the dedicated watch-only Mainnet agent wallet.", { address: true }, (input) => [
+    "mainnet",
+    "agent-wallet",
+    "create",
+    "--address",
+    requiredString(input, "address"),
+    "--max-balance",
+    string(input, "maxBalance") ?? "25",
+    "--daily-limit",
+    string(input, "dailyLimit") ?? "5",
+    "--per-tx-limit",
+    string(input, "perTxLimit") ?? "1",
+    ...option(input, "monthlyLimit", "--monthly-limit"),
+    ...stringArray(input, "assets").flatMap((asset) => ["--asset", asset]),
+    ...stringArray(input, "allowDestinations").flatMap((destination) => ["--allow-destination", destination])
+  ], {
+    address: { type: "string" },
+    maxBalance: { type: "string" },
+    dailyLimit: { type: "string" },
+    perTxLimit: { type: "string" },
+    monthlyLimit: { type: "string" },
+    assets: { type: "array", items: { type: "string" } },
+    allowDestinations: { type: "array", items: { type: "string" } }
+  }),
+  tool("stellar_mainnet_agent_wallet_arm", "Arm the Mainnet agent wallet after explicit real-funds acknowledgement.", { iUnderstandRealFunds: true }, (input) => [
+    "mainnet",
+    "agent-wallet",
+    "arm",
+    ...(bool(input, "iUnderstandRealFunds") ? ["--i-understand-real-funds"] : [])
+  ], { iUnderstandRealFunds: { type: "boolean" } }),
+  tool("stellar_mainnet_agent_wallet_disarm", "Disarm the Mainnet agent wallet.", {}, () => [
+    "mainnet",
+    "agent-wallet",
+    "disarm"
+  ], {}),
   tool("stellar_pay_quote", "Quote and policy-check a payment without submitting it.", { to: true, amount: true }, (input) => [
     "pay",
     "quote",

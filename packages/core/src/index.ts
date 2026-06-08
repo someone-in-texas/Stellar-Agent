@@ -36,11 +36,39 @@ export interface StellarAgentConfig {
   activeProfile: NetworkName;
   profiles: Record<string, NetworkProfile>;
   storage: StorageConfig;
+  mainnetAgentWallet?: MainnetAgentWalletConfig | undefined;
   output: {
     color: boolean;
     json: boolean;
     redactSensitiveData: boolean;
   };
+}
+
+export interface MainnetAgentWalletRiskBudget {
+  maxBalance: string;
+  perTxLimit: string;
+  dailyLimit: string;
+  monthlyLimit?: string | undefined;
+  allowedAssets: string[];
+  allowedDestinations: string[];
+  allowedOperations: string[];
+}
+
+export interface MainnetAgentWalletConfig {
+  schemaVersion: "stellar-agent.mainnetAgentWallet.v1";
+  walletName: string;
+  publicKey?: string | undefined;
+  status: "unconfigured" | "disarmed" | "armed";
+  createdAt: string;
+  updatedAt: string;
+  riskBudget: MainnetAgentWalletRiskBudget;
+  arming?: {
+    armedAt: string;
+    configPath: string;
+    configFingerprint: string;
+    policyPath: string;
+    policyFingerprint: string;
+  } | undefined;
 }
 
 export type CommandResult<T> = SuccessEnvelope<T> | ErrorEnvelope;
@@ -412,11 +440,41 @@ export const storageConfigSchema = z.object({
   scenariosDir: z.string().min(1)
 });
 
+export const mainnetAgentWalletRiskBudgetSchema = z.object({
+  maxBalance: z.string().min(1),
+  perTxLimit: z.string().min(1),
+  dailyLimit: z.string().min(1),
+  monthlyLimit: z.string().min(1).optional(),
+  allowedAssets: z.array(z.string().min(1)).default(["XLM"]),
+  allowedDestinations: z.array(z.string().min(1)).default([]),
+  allowedOperations: z.array(z.string().min(1)).default(["payment"])
+});
+
+export const mainnetAgentWalletConfigSchema = z.object({
+  schemaVersion: z.literal("stellar-agent.mainnetAgentWallet.v1"),
+  walletName: z.string().min(1),
+  publicKey: z.string().regex(gAddressPattern).optional(),
+  status: z.enum(["unconfigured", "disarmed", "armed"]),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  riskBudget: mainnetAgentWalletRiskBudgetSchema,
+  arming: z
+    .object({
+      armedAt: z.string().datetime(),
+      configPath: z.string().min(1),
+      configFingerprint: z.string().min(1),
+      policyPath: z.string().min(1),
+      policyFingerprint: z.string().min(1)
+    })
+    .optional()
+});
+
 export const configSchema = z.object({
   version: z.literal(1),
   activeProfile: z.enum(["testnet", "mainnet", "local"]),
   profiles: z.record(networkProfileSchema),
   storage: storageConfigSchema,
+  mainnetAgentWallet: mainnetAgentWalletConfigSchema.optional(),
   output: z.object({
     color: z.boolean(),
     json: z.boolean(),

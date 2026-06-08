@@ -79,7 +79,9 @@ export async function createTransactionXdrApprovalRequest(args: {
   network: NetworkName;
   transactionXdr: string;
   summary: string;
+  payment?: PaymentRequest;
 }): Promise<ApprovalRequest> {
+  const payment = args.payment ? paymentRequestSchema.parse(args.payment) : undefined;
   return writeApproval(args.approvalsDir, {
     schemaVersion: "stellar-agent.approval.v1",
     id: makeId("appr"),
@@ -88,9 +90,15 @@ export async function createTransactionXdrApprovalRequest(args: {
     createdAt: nowIso(),
     updatedAt: nowIso(),
     network: args.network,
-    requestHash: hashApprovalPayload({ kind: "transaction_xdr", network: args.network, transactionXdr: args.transactionXdr }),
+    requestHash: hashApprovalPayload({
+      kind: "transaction_xdr",
+      network: args.network,
+      transactionXdr: args.transactionXdr,
+      ...(payment === undefined ? {} : { payment })
+    }),
     summary: args.summary,
     transactionXdr: args.transactionXdr,
+    ...(payment === undefined ? {} : { payment }),
     redactions: { secretKeysIncluded: false }
   });
 }
@@ -286,7 +294,8 @@ async function handleRequest(
             approvalsDir,
             network: body.network,
             transactionXdr: body.transactionXdr,
-            summary: body.summary ?? "Approve transaction"
+            summary: body.summary ?? "Approve transaction",
+            ...(body.payment === undefined ? {} : { payment: body.payment })
           })
         : await createPaymentApprovalRequest({ approvalsDir, payment: body.payment, summary: body.summary });
       return json(response, approval, 201);

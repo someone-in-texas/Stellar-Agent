@@ -220,7 +220,7 @@ export async function spendHistoryFromReceipts(
 
     for (const path of paths) {
       const receipt = await readReceipt(path);
-      if (!receipt.payment || receipt.transaction.successful !== true || receipt.policyDecision.status !== "allowed") {
+      if (!receipt.payment || receipt.transaction.successful !== true || receipt.policyDecision.status === "denied") {
         continue;
       }
       if (options.profile && receipt.profile !== options.profile) continue;

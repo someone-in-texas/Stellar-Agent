@@ -60,7 +60,7 @@ describe("ledger logger", () => {
     expect(receipt.operation).toMatchObject({ type: "trustline.add", account: "merchant" });
   });
 
-  it("computes spend history from successful allowed payment receipts", async () => {
+  it("computes spend history from successful non-denied payment receipts", async () => {
     const dir = await mkdtemp(join(tmpdir(), "stellar-agent-"));
     await writeReceipt(dir, {
       command: "pay send",
@@ -93,9 +93,12 @@ describe("ledger logger", () => {
     });
 
     await expect(spendHistoryFromReceipts(dir, { profile: "testnet", asset: "XLM" })).resolves.toMatchObject({
-      dailyTotal: "1.5000000",
-      monthlyTotal: "1.5000000",
-      knownRecipients: ["GBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"],
+      dailyTotal: "3.5000000",
+      monthlyTotal: "3.5000000",
+      knownRecipients: expect.arrayContaining([
+        "GBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        "GCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+      ]),
       knownDomains: ["127.0.0.1:3000"]
     });
   });

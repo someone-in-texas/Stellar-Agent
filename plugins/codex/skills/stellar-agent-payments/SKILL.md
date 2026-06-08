@@ -1,6 +1,6 @@
 # Stellar Agent Payments
 
-Use this skill when asked to quote, explain, or send payments with `stellar-agent`, including direct payments, issued assets, signed-XDR approval flows, local x402, and local MPP demos.
+Use this skill when asked to quote, explain, or send payments with `stellar-agent`, including direct payments, issued assets, signed-XDR approval flows, risk-budgeted Mainnet agent-wallet workflows, local x402, and local MPP demos.
 
 Rules:
 
@@ -11,6 +11,8 @@ Rules:
 5. Never bypass the CLI.
 6. Prefer `pay quote` before `pay send`.
 7. Never print or log secrets.
+8. Never use `--allow-real-funds` as a policy bypass.
+9. Mainnet agent-wallet spend is bounded, not safe; local Mainnet auto-signing remains blocked.
 
 Direct payments:
 
@@ -25,6 +27,21 @@ Approval and signing:
 - If policy requires approval, stop after showing the approval summary.
 - Use `stellar-agent approval create-transaction --xdr <base64> --summary <text> --network testnet --json` for prebuilt XDR approval requests.
 - Use the Freighter bridge only for explicit user-approved signing workflows.
+- For Mainnet payment-signature workflows, use only externally signed XDR paths with `--allow-real-funds --i-understand-real-funds`.
+
+Risk-budgeted Mainnet agent wallet:
+
+- Use this only when the user explicitly asks for Mainnet.
+- First run `stellar-agent mainnet enable --i-understand-real-funds --json`.
+- Create the dedicated watch-only wallet with strict caps and an explicit destination allowlist:
+  `stellar-agent mainnet agent-wallet create --address <G...> --max-balance <amount> --daily-limit <amount> --per-tx-limit <amount> --asset XLM --allow-destination <G...> --json`.
+- Arm only with explicit acknowledgement:
+  `stellar-agent mainnet agent-wallet arm --i-understand-real-funds --json`.
+- Before requesting a Mainnet payment signature, inspect status with `stellar-agent mainnet agent-wallet status --json` and stop if integrity is not ok.
+- Request payment signing with:
+  `stellar-agent --profile mainnet tx request-payment-signature --from mainnet-agent --to <G...> --amount <amount> --allow-real-funds --i-understand-real-funds --json`.
+- Disarm after the workflow with `stellar-agent mainnet agent-wallet disarm --json`.
+- If config, policy, receipts, balance, destination, asset, or spend limits fail closed, stop and report the matched error. Do not loosen caps or allowlists without explicit user instruction.
 
 HTTP payment demos:
 

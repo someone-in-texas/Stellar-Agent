@@ -1,19 +1,20 @@
-Build payment-capable agents on Stellar without giving them a blank check.
+Build payment-capable agents on Stellar from Testnet prototypes to risk-budgeted Mainnet workflows without giving them a blank check.
 
-`stellar-agent` gives agents a Testnet-first wallet, policy engine, receipt trail, and guarded contract/DeFi/market toolkit. Use it to prototype paid APIs, MPP sessions, issued-asset payments, Blend and Aquarius preflights, core liquidity-pool monitoring, and approval-gated transactions while Mainnet stays locked behind explicit human signing.
+`stellar-agent` gives agents a Testnet-first wallet, policy engine, receipt trail, guarded contract/DeFi/market toolkit, and explicit Mainnet controls. Use it to prototype paid APIs, MPP sessions, issued-asset payments, Blend and Aquarius preflights, core liquidity-pool monitoring, approval-gated transactions, and small Mainnet agent-wallet workflows where spend is bounded, not safe.
 
 [![CI](https://github.com/someone-in-texas/Stellar-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/someone-in-texas/Stellar-Agent/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@stellar-agent/cli.svg)](https://www.npmjs.com/package/@stellar-agent/cli)
 
 ## Status
 
-This repository is a `0.4.4` Testnet-first release. Core primitives, policy evaluation, local receipt logging, Testnet wallet creation, Friendbot funding, fee-aware Testnet payment submission, bundled Testnet payments, issued-asset trustlines, claimable balances, local approval bridge requests, local x402-style and MPP Testnet demos, Blend DeFi inspection and guarded Testnet mutation, Aquarius AMM inspection and policy-gated preflight, core Stellar liquidity-pool inspection/preflight/Testnet mutation, market listeners, strategy investigation, MCP tools, Codex plugin packaging, cache controls, and the CLI command surface are present. Mainnet local auto-signing remains blocked; guarded Mainnet submission is limited to externally signed XDR and explicitly acknowledged real-funds contract operations.
+This repository is a `0.4.4` Testnet-first release with v0.5.0 Mainnet agent-wallet work in progress. Core primitives, policy evaluation, local receipt logging, Testnet wallet creation, Friendbot funding, fee-aware Testnet payment submission, bundled Testnet payments, issued-asset trustlines, claimable balances, local approval bridge requests, local x402-style and MPP Testnet demos, Blend DeFi inspection and guarded Testnet mutation, Aquarius AMM inspection and policy-gated preflight, core Stellar liquidity-pool inspection/preflight/Testnet mutation, market listeners, strategy investigation, MCP tools, Codex plugin packaging, cache controls, and the CLI command surface are present. Mainnet local auto-signing remains blocked; guarded Mainnet submission is limited to externally signed XDR, explicitly acknowledged real-funds contract operations, and armed risk-budgeted agent-wallet checks before payment-signature workflows.
 
 ## Safety First
 
 - Testnet is the default.
 - Mainnet is disabled by default and cannot auto-sign payments.
-- Guarded Mainnet usage requires external signing, explicit real-funds flags, and receipts.
+- Guarded Mainnet usage requires external signing, explicit real-funds flags, receipts, and Mainnet enablement.
+- Risk-budgeted Mainnet agent wallets require a dedicated watch-only wallet, explicit arming, policy/config fingerprints, balance caps, spend limits, asset controls, and destination allowlists.
 - Secret keys are redacted from CLI output, logs, and receipts.
 - Policy evaluation runs before payment submission.
 - Staged features exit with code `8` instead of attempting hidden payment work.
@@ -59,6 +60,11 @@ stellar-agent wallet create-testnet agent --json
 stellar-agent wallet create-testnet funded-agent --fund --json
 stellar-agent wallet create-testnet merchant --json
 stellar-agent wallet import-public --name treasury --network mainnet --address G... --json
+stellar-agent mainnet enable --i-understand-real-funds --json
+stellar-agent mainnet agent-wallet create --address G... --max-balance 25 --daily-limit 5 --per-tx-limit 1 --asset XLM --allow-destination G... --json
+stellar-agent mainnet agent-wallet arm --i-understand-real-funds --json
+stellar-agent --profile mainnet tx request-payment-signature --from mainnet-agent --to G... --amount 0.1 --allow-real-funds --i-understand-real-funds --json
+stellar-agent mainnet agent-wallet disarm --json
 stellar-agent wallet connect-freighter --json
 stellar-agent wallet trustline list --account merchant --json
 stellar-agent wallet trustline add --account merchant --asset USD:G... --json
@@ -166,7 +172,7 @@ The project is CLI-first with shared packages underneath:
 
 ## Mainnet
 
-Mainnet uses real funds. It is disabled by default, requires explicit enablement, refuses local Mainnet secret-key storage, and supports only guarded externally signed XDR or explicitly acknowledged contract operations. See [docs/mainnet-safety.md](docs/mainnet-safety.md).
+Mainnet uses real funds. It is disabled by default, requires explicit enablement, refuses local Mainnet secret-key storage, and supports only guarded externally signed XDR, explicitly acknowledged contract operations, and risk-budgeted agent-wallet checks for payment-signature workflows. The agent-wallet mode stores a dedicated watch-only Mainnet public key, enforces hard caps and allowlists before unsigned payment XDR is handed to an external signer, and disarms on config or policy changes. See [docs/mainnet-safety.md](docs/mainnet-safety.md).
 
 ## Roadmap
 

@@ -1,4 +1,5 @@
 import { createDefaultConfig } from "@stellar-agent/core";
+import { createTransactionXdrApprovalRequest, decideApprovalRequest } from "@stellar-agent/freighter-bridge";
 import { DEFAULT_TESTNET_POLICY, policyToYaml } from "@stellar-agent/policy";
 import { ensureWallet } from "@stellar-agent/testnet-suite";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -272,6 +273,98 @@ describe("CLI contract receipts", () => {
     expect(JSON.stringify(receipt)).not.toContain("\"S");
   });
 
+  it("writes payment receipts for signed payment approval submission", async () => {
+    const { configPath, config } = await createCliFixture(
+      {
+        stdout: "",
+        stderr: ""
+      },
+      { mainnetEnabled: true }
+    );
+    const { signerPublicKey, unsignedXdr, signedXdr } = signedPaymentXdrPair("0.01");
+    const payment = {
+      source: signerPublicKey,
+      destination: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      amount: "0.01",
+      asset: "XLM",
+      network: "mainnet" as const
+    };
+    const approval = await createTransactionXdrApprovalRequest({
+      approvalsDir: config.storage.approvalsDir,
+      network: "mainnet",
+      transactionXdr: unsignedXdr,
+      summary: "Sign small Mainnet payment",
+      payment
+    });
+    await decideApprovalRequest({
+      approvalsDir: config.storage.approvalsDir,
+      id: approval.id,
+      approved: true,
+      signerPublicKey,
+      signedTransactionXdr: signedXdr
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          hash: transactionHash,
+          ledger: 12345,
+          successful: true,
+          fee_charged: "100"
+        })
+      )
+    );
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--profile",
+      "mainnet",
+      "--json",
+      "tx",
+      "submit-approval",
+      approval.id,
+      "--allow-real-funds",
+      "--i-understand-real-funds"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        receiptPath: expect.any(String),
+        realFunds: true
+      }
+    });
+    const receipt = JSON.parse(await readFile(output.data.receiptPath, "utf8"));
+    expect(receipt).toMatchObject({
+      command: "tx submit-approval",
+      profile: "mainnet",
+      network: { realFunds: true },
+      payment: {
+        source: signerPublicKey,
+        destination: payment.destination,
+        amount: "0.01",
+        asset: "XLM"
+      },
+      operation: {
+        type: "tx.submit_payment_approval",
+        details: {
+          approvalId: approval.id,
+          signerPublicKey
+        }
+      },
+      policyDecision: {
+        status: "requires_approval",
+        matchedRules: expect.arrayContaining(["mainnet_requires_approval"])
+      },
+      transaction: {
+        hash: transactionHash,
+        ledger: 12345,
+        successful: true
+      }
+    });
+    expect(JSON.stringify(receipt)).not.toContain("\"S");
+  });
+
   it("quotes payments with fee stats metadata", async () => {
     const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -459,6 +552,168 @@ describe("CLI contract receipts", () => {
       data: {
         path: expect.stringContaining("default-local.yaml"),
         policy: { name: "default-local-policy", network: "local" }
+      }
+    });
+  });
+
+  it("manages a risk-budgeted Mainnet agent wallet without storing a secret key", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
+    const address = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+    const destination = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(accountFixture())));
+
+    const created = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "mainnet",
+      "agent-wallet",
+      "create",
+      "--address",
+      address,
+      "--max-balance",
+      "125",
+      "--daily-limit",
+      "5",
+      "--per-tx-limit",
+      "1",
+      "--asset",
+      "XLM",
+      "--allow-destination",
+      destination
+    ]);
+
+    expect(created).toMatchObject({
+      ok: true,
+      data: {
+        walletName: "mainnet-agent",
+        publicKey: address,
+        armed: false,
+        status: "disarmed",
+        realFunds: true,
+        warning: expect.stringContaining("bounded, not safe")
+      }
+    });
+    expect(JSON.stringify(created)).not.toContain("\"S");
+
+    const armed = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "mainnet",
+      "agent-wallet",
+      "arm",
+      "--i-understand-real-funds"
+    ]);
+
+    expect(armed).toMatchObject({
+      ok: true,
+      data: {
+        armed: true,
+        status: "armed",
+        arming: {
+          configPath,
+          policyPath: expect.stringContaining("default-mainnet.yaml")
+        }
+      }
+    });
+
+    const status = await runCli(["--config", configPath, "--json", "mainnet", "agent-wallet", "status"]);
+    expect(status).toMatchObject({
+      ok: true,
+      data: {
+        configured: true,
+        armed: true,
+        integrity: { ok: true, checked: true, failures: [] }
+      }
+    });
+
+    const disarmed = await runCli(["--config", configPath, "--json", "mainnet", "agent-wallet", "disarm"]);
+    expect(disarmed).toMatchObject({
+      ok: true,
+      data: { armed: false, status: "disarmed" }
+    });
+  });
+
+  it("refuses Mainnet agent-wallet payment-signature requests before arming", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
+    const address = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+
+    await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "mainnet",
+      "agent-wallet",
+      "create",
+      "--address",
+      address,
+      "--allow-destination",
+      address
+    ]);
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--profile",
+      "mainnet",
+      "--json",
+      "tx",
+      "request-payment-signature",
+      "--from",
+      "mainnet-agent",
+      "--to",
+      address,
+      "--amount",
+      "0.01",
+      "--allow-real-funds",
+      "--i-understand-real-funds"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: false,
+      error: {
+        code: "MAINNET_NOT_ENABLED",
+        message: "Mainnet agent-wallet payment workflows require the wallet to be armed."
+      }
+    });
+  });
+
+  it("refuses to arm a Mainnet agent wallet over the configured balance cap", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
+    const address = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(accountFixture())));
+
+    await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "mainnet",
+      "agent-wallet",
+      "create",
+      "--address",
+      address,
+      "--max-balance",
+      "25",
+      "--allow-destination",
+      address
+    ]);
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "mainnet",
+      "agent-wallet",
+      "arm",
+      "--i-understand-real-funds"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: false,
+      error: {
+        code: "POLICY_DENIED",
+        message: "Mainnet agent-wallet balance exceeds the configured risk budget."
       }
     });
   });
@@ -1038,7 +1293,7 @@ async function createCliFixture(
     { mode: 0o755 }
   );
 
-  return { configPath, stellarBinary };
+  return { configPath, stellarBinary, config };
 }
 
 async function runCli(args: string[]) {
@@ -1083,6 +1338,10 @@ function escapeSingleQuotedShell(value: string): string {
 }
 
 function signedPaymentXdrFixture(): string {
+  return signedPaymentXdrPair("1").signedXdr;
+}
+
+function signedPaymentXdrPair(amount: string): { signerPublicKey: string; unsignedXdr: string; signedXdr: string } {
   const signer = Keypair.random();
   const destination = Keypair.random().publicKey();
   const account = new Account(signer.publicKey(), "1");
@@ -1094,13 +1353,14 @@ function signedPaymentXdrFixture(): string {
       Operation.payment({
         destination,
         asset: Asset.native(),
-        amount: "1"
+        amount
       })
     )
     .setTimeout(60)
     .build();
+  const unsignedXdr = transaction.toXDR();
   transaction.sign(signer);
-  return transaction.toXDR();
+  return { signerPublicKey: signer.publicKey(), unsignedXdr, signedXdr: transaction.toXDR() };
 }
 
 function poolIdFixture(): string {

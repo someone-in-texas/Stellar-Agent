@@ -68,6 +68,23 @@ describe("freighter bridge approvals", () => {
     });
   });
 
+  it("can attach payment metadata to transaction XDR approvals", async () => {
+    const approvalsDir = await mkdtemp(join(tmpdir(), "stellar-agent-xdr-payment-approvals-"));
+    const { unsignedXdr } = signedPaymentFixture();
+    const approval = await createTransactionXdrApprovalRequest({
+      approvalsDir,
+      network: "testnet",
+      transactionXdr: unsignedXdr,
+      summary: "Sign payment transaction",
+      payment
+    });
+
+    expect(approval).toMatchObject({
+      kind: "transaction_xdr",
+      payment
+    });
+  });
+
   it("rejects signed transaction XDR that does not match the approval request", async () => {
     const approvalsDir = await mkdtemp(join(tmpdir(), "stellar-agent-xdr-mismatch-"));
     const original = signedPaymentFixture();

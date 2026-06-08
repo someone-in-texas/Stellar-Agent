@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import {
   EXIT_CODES,
+  MainnetAgentWalletConfig,
   NetworkName,
   NetworkProfile,
   PaymentRequest,
@@ -54,6 +55,7 @@ import {
   walletTrustlines
 } from "@stellar-agent/testnet-suite";
 import { Command } from "commander";
+import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -908,6 +910,7 @@ function addTransactionCommands(program: Command): void {
         const history = await loadSpendHistory(context, request);
         const policyDecision = evaluatePaymentRequest(policy, request, history);
         if (policyDecision.status === "denied") throw policyDeniedError();
+        const mainnetAgentWallet = await assertMainnetAgentWalletPaymentAllowed(context, request);
         if (profile.realFunds && policyDecision.status === "requires_approval") {
           throw new StellarAgentError({
             code: "APPROVAL_REQUIRED",
@@ -934,7 +937,13 @@ function addTransactionCommands(program: Command): void {
           profile: profile.name,
           data: { source: sourcePublicKey, destination: options.to, asset: options.asset, amount: built.amount, policyDecision }
         });
-        return { ...built, policyDecision, spendHistory: history, realFunds: profile.realFunds };
+        return {
+          ...built,
+          policyDecision,
+          spendHistory: mainnetAgentWallet?.spendHistory ?? history,
+          realFunds: profile.realFunds,
+          ...(mainnetAgentWallet === undefined ? {} : { mainnetAgentWallet })
+        };
       }, "Unsigned payment transaction built.")
     );
   tx
@@ -976,6 +985,7 @@ function addTransactionCommands(program: Command): void {
           const history = await loadSpendHistory(context, request);
           const policyDecision = evaluatePaymentRequest(policy, request, history);
           if (policyDecision.status === "denied") throw policyDeniedError();
+          const mainnetAgentWallet = await assertMainnetAgentWalletPaymentAllowed(context, request);
           const built = await buildPaymentTransactionXdr({
             sourcePublicKey,
             destination: options.to,
@@ -991,7 +1001,8 @@ function addTransactionCommands(program: Command): void {
             approvalsDir: context.config.storage.approvalsDir,
             network: profile.name,
             transactionXdr: built.xdr,
-            summary: options.summary ?? `Sign ${built.amount} ${built.asset} payment to ${options.to} on ${profile.name}`
+            summary: options.summary ?? `Sign ${built.amount} ${built.asset} payment to ${options.to} on ${profile.name}`,
+            payment: request
           });
           await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
             event: "approval_requested",
@@ -1001,7 +1012,14 @@ function addTransactionCommands(program: Command): void {
             requestId: approval.id,
             data: { approval, source: sourcePublicKey, destination: options.to, asset: options.asset, amount: built.amount, policyDecision }
           });
-          return { approval, built, policyDecision, spendHistory: history, realFunds: profile.realFunds };
+          return {
+            approval,
+            built,
+            policyDecision,
+            spendHistory: mainnetAgentWallet?.spendHistory ?? history,
+            realFunds: profile.realFunds,
+            ...(mainnetAgentWallet === undefined ? {} : { mainnetAgentWallet })
+          };
         },
         "Payment signature approval request created."
       )
@@ -1086,6 +1104,11 @@ function addTransactionCommands(program: Command): void {
           acknowledgeRealFunds: Boolean(options.iUnderstandRealFunds),
           action: "signed approval submission"
         });
+        const approvalPayment = approval.payment;
+        const approvedPayment =
+          approvalPayment === undefined
+            ? undefined
+            : await evaluateApprovedPaymentBeforeSubmission(context, approvalPayment);
         const { submitTransactionXdr } = await import("@stellar-agent/stellar");
         const transaction = await submitTransactionXdr({
           xdr: approval.decision.signedTransactionXdr,
@@ -1104,19 +1127,37 @@ function addTransactionCommands(program: Command): void {
             transaction
           }
         });
-        const receiptPath = await writeSubmittedXdrReceipt(context, {
-          command: "tx submit-approval",
-          profile,
-          operation: {
-            type: "tx.submit_approval",
-            details: {
-              approvalId: approval.id,
-              signerPublicKey: approval.decision.signerPublicKey,
-              realFundsAcknowledged: profile.realFunds
-            }
-          },
-          transaction
-        });
+        let receiptPath: string;
+        if (approvedPayment === undefined || approvalPayment === undefined) {
+          receiptPath = await writeSubmittedXdrReceipt(context, {
+            command: "tx submit-approval",
+            profile,
+            operation: {
+              type: "tx.submit_approval",
+              details: {
+                approvalId: approval.id,
+                signerPublicKey: approval.decision.signerPublicKey,
+                realFundsAcknowledged: profile.realFunds
+              }
+            },
+            transaction
+          });
+        } else {
+          receiptPath = await writeSubmittedPaymentApprovalReceipt(context, {
+            command: "tx submit-approval",
+            profile,
+            approvalId: approval.id,
+            ...(approval.decision.signerPublicKey === undefined
+              ? {}
+              : { signerPublicKey: approval.decision.signerPublicKey }),
+            payment: approvalPayment,
+            policyDecision: approvedPayment.policyDecision,
+            transaction,
+            ...(approvedPayment.mainnetAgentWallet === undefined
+              ? {}
+              : { mainnetAgentWallet: approvedPayment.mainnetAgentWallet })
+          });
+        }
         return { approvalId: approval.id, signerPublicKey: approval.decision.signerPublicKey, transaction, receiptPath, realFunds: profile.realFunds };
       }, "Signed approval transaction submitted.")
     );
@@ -3236,6 +3277,216 @@ function addMainnetCommands(program: Command): void {
         ]
       }), "Mainnet readiness checked.")
     );
+  const agentWallet = mainnet.command("agent-wallet").description("Manage a risk-budgeted Mainnet agent wallet for guarded external-signing workflows.");
+  agentWallet
+    .command("create")
+    .description("Create or replace the dedicated Mainnet agent-wallet profile without storing a Mainnet secret key.")
+    .requiredOption("--address <address>", "Dedicated Mainnet agent wallet public key")
+    .option("--name <name>", "Local watch-only wallet name", "mainnet-agent")
+    .option("--max-balance <amount>", "Maximum allowed wallet balance", "25")
+    .option("--per-tx-limit <amount>", "Maximum single payment amount", "1")
+    .option("--daily-limit <amount>", "Maximum daily payment amount", "5")
+    .option("--monthly-limit <amount>", "Optional monthly payment amount")
+    .option("--asset <asset>", "Allowed asset; repeat for more than one", collectArg, [])
+    .option("--allow-destination <address>", "Allowed destination; repeat for more than one", collectArg, [])
+    .action(
+      withContext(
+        async (
+          context,
+          options: {
+            address: string;
+            name: string;
+            maxBalance: string;
+            perTxLimit: string;
+            dailyLimit: string;
+            monthlyLimit?: string;
+            asset: string[];
+            allowDestination: string[];
+          }
+        ) => {
+          const now = new Date().toISOString();
+          const riskBudget = parseMainnetAgentWalletRiskBudget(options);
+          await importPublicWallet({
+            config: context.config,
+            name: options.name,
+            publicKey: options.address,
+            network: "mainnet"
+          });
+          context.config.mainnetAgentWallet = {
+            schemaVersion: "stellar-agent.mainnetAgentWallet.v1",
+            walletName: options.name,
+            publicKey: options.address,
+            status: "disarmed",
+            createdAt: context.config.mainnetAgentWallet?.createdAt ?? now,
+            updatedAt: now,
+            riskBudget
+          };
+          await writeConfig(context.config, context.options);
+          return mainnetAgentWalletView(context.config.mainnetAgentWallet);
+        },
+        "Mainnet agent wallet created."
+      )
+    );
+  agentWallet
+    .command("status")
+    .description("Show Mainnet agent-wallet arming and risk-budget status.")
+    .action(
+      withContext(async (context) => {
+        const wallet = context.config.mainnetAgentWallet;
+        if (!wallet) return { configured: false, armed: false, realFunds: true };
+        return {
+          configured: true,
+          ...mainnetAgentWalletView(wallet),
+          ...(await mainnetAgentWalletIntegrity(context, wallet))
+        };
+      }, "Mainnet agent wallet status loaded.")
+    );
+  agentWallet
+    .command("limits")
+    .description("Show or update Mainnet agent-wallet risk-budget limits. Updating limits disarms the wallet.")
+    .option("--max-balance <amount>", "Maximum allowed wallet balance")
+    .option("--per-tx-limit <amount>", "Maximum single payment amount")
+    .option("--daily-limit <amount>", "Maximum daily payment amount")
+    .option("--monthly-limit <amount>", "Optional monthly payment amount")
+    .option("--asset <asset>", "Allowed asset; repeat for more than one", collectArg, [])
+    .option("--allow-destination <address>", "Allowed destination; repeat for more than one", collectArg, [])
+    .action(
+      withContext(
+        async (
+          context,
+          options: {
+            maxBalance?: string;
+            perTxLimit?: string;
+            dailyLimit?: string;
+            monthlyLimit?: string;
+            asset: string[];
+            allowDestination: string[];
+          }
+        ) => {
+          const wallet = requireMainnetAgentWallet(context.config);
+          const updates = parseMainnetAgentWalletRiskBudget({
+            maxBalance: options.maxBalance ?? wallet.riskBudget.maxBalance,
+            perTxLimit: options.perTxLimit ?? wallet.riskBudget.perTxLimit,
+            dailyLimit: options.dailyLimit ?? wallet.riskBudget.dailyLimit,
+            monthlyLimit: options.monthlyLimit ?? wallet.riskBudget.monthlyLimit,
+            asset: options.asset.length > 0 ? options.asset : wallet.riskBudget.allowedAssets,
+            allowDestination:
+              options.allowDestination.length > 0 ? options.allowDestination : wallet.riskBudget.allowedDestinations
+          });
+          context.config.mainnetAgentWallet = {
+            ...wallet,
+            status: "disarmed",
+            updatedAt: new Date().toISOString(),
+            riskBudget: updates,
+            arming: undefined
+          };
+          await writeConfig(context.config, context.options);
+          return mainnetAgentWalletView(context.config.mainnetAgentWallet);
+        },
+        "Mainnet agent wallet limits updated."
+      )
+    );
+  agentWallet
+    .command("arm")
+    .description("Arm the Mainnet agent wallet after explicit Mainnet enablement and risk-budget checks.")
+    .option("--i-understand-real-funds", "Acknowledge this wallet can spend real funds through guarded external-signing workflows")
+    .action(
+      withContext(async (context, options: { iUnderstandRealFunds?: boolean }) => {
+        if (!options.iUnderstandRealFunds) {
+          throw new StellarAgentError({
+            code: "MAINNET_NOT_ENABLED",
+            message: "Arming the Mainnet agent wallet requires --i-understand-real-funds.",
+            docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+          });
+        }
+        if (!context.config.profiles.mainnet?.enabled) {
+          throw new StellarAgentError({
+            code: "MAINNET_NOT_ENABLED",
+            message: "Arming the Mainnet agent wallet requires Mainnet enablement.",
+            hint: "Run stellar-agent mainnet enable --i-understand-real-funds first.",
+            docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+          });
+        }
+        const current = requireMainnetAgentWallet(context.config);
+        if (!current.publicKey) {
+          throw new StellarAgentError({
+            code: "WALLET_NOT_FOUND",
+            message: "Mainnet agent wallet does not have a public key.",
+            hint: "Run stellar-agent mainnet agent-wallet create --address G...",
+            docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+          });
+        }
+        if (current.riskBudget.allowedDestinations.length === 0) {
+          throw new StellarAgentError({
+            code: "POLICY_DENIED",
+            message: "Mainnet agent wallet requires an explicit destination allowlist before arming.",
+            docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+          });
+        }
+        await assertMainnetAgentWalletBalanceWithinBudget(context, current);
+        const now = new Date().toISOString();
+        const armedWallet: MainnetAgentWalletConfig = {
+          ...current,
+          status: "armed",
+          updatedAt: now,
+          arming: undefined
+        };
+        const policyFingerprint = await mainnetAgentWalletPolicyFingerprint(context);
+        armedWallet.arming = {
+          armedAt: now,
+          configPath: configFingerprintPath(context),
+          configFingerprint: mainnetAgentWalletConfigFingerprint({ ...context.config, mainnetAgentWallet: armedWallet }),
+          policyPath: policyFingerprint.path,
+          policyFingerprint: policyFingerprint.fingerprint
+        };
+        context.config.mainnetAgentWallet = armedWallet;
+        await writeConfig(context.config, context.options);
+        return mainnetAgentWalletView(armedWallet);
+      }, "Mainnet agent wallet armed.")
+    );
+  agentWallet
+    .command("disarm")
+    .description("Disarm the Mainnet agent wallet.")
+    .action(
+      withContext(async (context) => {
+        const wallet = requireMainnetAgentWallet(context.config);
+        context.config.mainnetAgentWallet = {
+          ...wallet,
+          status: "disarmed",
+          updatedAt: new Date().toISOString(),
+          arming: undefined
+        };
+        await writeConfig(context.config, context.options);
+        return mainnetAgentWalletView(context.config.mainnetAgentWallet);
+      }, "Mainnet agent wallet disarmed.")
+    );
+  agentWallet
+    .command("rotate")
+    .description("Rotate the dedicated Mainnet agent-wallet public key. Rotation disarms the wallet.")
+    .requiredOption("--address <address>", "New dedicated Mainnet agent wallet public key")
+    .option("--name <name>", "Local watch-only wallet name")
+    .action(
+      withContext(async (context, options: { address: string; name?: string }) => {
+        const wallet = requireMainnetAgentWallet(context.config);
+        const walletName = options.name ?? wallet.walletName;
+        await importPublicWallet({
+          config: context.config,
+          name: walletName,
+          publicKey: options.address,
+          network: "mainnet"
+        });
+        context.config.mainnetAgentWallet = {
+          ...wallet,
+          walletName,
+          publicKey: options.address,
+          status: "disarmed",
+          updatedAt: new Date().toISOString(),
+          arming: undefined
+        };
+        await writeConfig(context.config, context.options);
+        return mainnetAgentWalletView(context.config.mainnetAgentWallet);
+      }, "Mainnet agent wallet rotated and disarmed.")
+    );
 }
 
 function withContext(handler: (...args: any[]) => Promise<unknown>, humanMessage: string) {
@@ -4030,6 +4281,327 @@ async function loadSpendHistory(context: CliContext, request: PaymentRequest) {
   });
 }
 
+async function evaluateApprovedPaymentBeforeSubmission(context: CliContext, payment: PaymentRequest): Promise<{
+  policyDecision: PolicyDecision;
+  mainnetAgentWallet?: { warning: string; spendHistory: Awaited<ReturnType<typeof loadSpendHistory>> };
+}> {
+  if (payment.network !== context.profileName) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Approval payment metadata must match the active submission profile.",
+      docs: "docs/mainnet-safety.md#signed-xdr-submission"
+    });
+  }
+  const policy = await loadPolicy(context, undefined, payment.network);
+  const history = await loadSpendHistory(context, payment);
+  const policyDecision = evaluatePaymentRequest(policy, payment, history);
+  if (policyDecision.status === "denied") throw policyDeniedError();
+  const mainnetAgentWallet = await assertMainnetAgentWalletPaymentAllowed(context, payment);
+  return {
+    policyDecision,
+    ...(mainnetAgentWallet === undefined ? {} : { mainnetAgentWallet })
+  };
+}
+
+function parseMainnetAgentWalletRiskBudget(options: {
+  maxBalance: string;
+  perTxLimit: string;
+  dailyLimit: string;
+  monthlyLimit?: string | undefined;
+  asset: string[];
+  allowDestination: string[];
+}): MainnetAgentWalletConfig["riskBudget"] {
+  const allowedAssets = options.asset.length > 0 ? options.asset : ["XLM"];
+  for (const asset of allowedAssets) parseAssetForPolicy(asset);
+  for (const destination of options.allowDestination) paymentRequestSchema.shape.destination.parse(destination);
+  return {
+    maxBalance: parseAmount(options.maxBalance, "XLM").value,
+    perTxLimit: parseAmount(options.perTxLimit, "XLM").value,
+    dailyLimit: parseAmount(options.dailyLimit, "XLM").value,
+    ...(options.monthlyLimit === undefined ? {} : { monthlyLimit: parseAmount(options.monthlyLimit, "XLM").value }),
+    allowedAssets: allowedAssets.map((asset) => asset.toUpperCase()),
+    allowedDestinations: [...new Set(options.allowDestination)],
+    allowedOperations: ["payment"]
+  };
+}
+
+function requireMainnetAgentWallet(config: StellarAgentConfig): MainnetAgentWalletConfig {
+  const wallet = config.mainnetAgentWallet;
+  if (!wallet) {
+    throw new StellarAgentError({
+      code: "WALLET_NOT_FOUND",
+      message: "Mainnet agent wallet is not configured.",
+      hint: "Run stellar-agent mainnet agent-wallet create --address G...",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+    });
+  }
+  return wallet;
+}
+
+function mainnetAgentWalletView(wallet: MainnetAgentWalletConfig) {
+  return {
+    walletName: wallet.walletName,
+    publicKey: wallet.publicKey,
+    armed: wallet.status === "armed",
+    status: wallet.status,
+    realFunds: true,
+    riskBudget: wallet.riskBudget,
+    warning: mainnetAgentWalletWarning(),
+    arming:
+      wallet.arming === undefined
+        ? undefined
+        : {
+            armedAt: wallet.arming.armedAt,
+            configPath: wallet.arming.configPath,
+            policyPath: wallet.arming.policyPath
+          }
+  };
+}
+
+function mainnetAgentWalletWarning(): string {
+  return "Mainnet agent-wallet spend is bounded, not safe. Local Mainnet auto-signing remains blocked.";
+}
+
+async function mainnetAgentWalletIntegrity(context: CliContext, wallet: MainnetAgentWalletConfig) {
+  if (wallet.status !== "armed") return { integrity: { ok: true, checked: false, reason: "wallet_not_armed" } };
+  const failures = await mainnetAgentWalletIntegrityFailures(context, wallet);
+  return { integrity: { ok: failures.length === 0, checked: true, failures } };
+}
+
+async function mainnetAgentWalletIntegrityFailures(
+  context: CliContext,
+  wallet: MainnetAgentWalletConfig
+): Promise<string[]> {
+  const failures: string[] = [];
+  if (!wallet.arming) {
+    failures.push("arming_metadata_missing");
+    return failures;
+  }
+  if (wallet.arming.configPath !== configFingerprintPath(context)) failures.push("config_path_changed");
+  const currentPolicy = await mainnetAgentWalletPolicyFingerprint(context);
+  if (wallet.arming.policyPath !== currentPolicy.path) failures.push("policy_path_changed");
+  if (wallet.arming.policyFingerprint !== currentPolicy.fingerprint) failures.push("policy_changed_after_arming");
+  if (wallet.arming.configFingerprint !== mainnetAgentWalletConfigFingerprint(context.config)) {
+    failures.push("config_changed_after_arming");
+  }
+  return failures;
+}
+
+async function assertMainnetAgentWalletPaymentAllowed(
+  context: CliContext,
+  request: PaymentRequest
+): Promise<{ warning: string; spendHistory: Awaited<ReturnType<typeof loadSpendHistory>> } | undefined> {
+  const wallet = context.config.mainnetAgentWallet;
+  if (!wallet || wallet.publicKey !== request.source || request.network !== "mainnet") return undefined;
+  if (wallet.status !== "armed") {
+    throw new StellarAgentError({
+      code: "MAINNET_NOT_ENABLED",
+      message: "Mainnet agent-wallet payment workflows require the wallet to be armed.",
+      hint: "Run stellar-agent mainnet agent-wallet arm --i-understand-real-funds after setting strict limits.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+    });
+  }
+  const failures = await mainnetAgentWalletIntegrityFailures(context, wallet);
+  if (failures.length > 0) {
+    throw new StellarAgentError({
+      code: "POLICY_DENIED",
+      message: "Mainnet agent-wallet arming is stale and must be refreshed.",
+      hint: "Review the config and policy changes, then disarm and arm the wallet again.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet",
+      details: { failures }
+    });
+  }
+  if (!wallet.riskBudget.allowedOperations.includes("payment")) {
+    throw new StellarAgentError({
+      code: "POLICY_DENIED",
+      message: "Mainnet agent-wallet policy does not allow payment operations.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+    });
+  }
+  const requestedAsset = request.asset.toUpperCase();
+  if (!assetAllowedByMainnetAgentWallet(requestedAsset, wallet.riskBudget.allowedAssets)) {
+    throw new StellarAgentError({
+      code: "POLICY_DENIED",
+      message: "Mainnet agent-wallet payment asset is not allowed.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet",
+      details: { requestedAsset, allowedAssets: wallet.riskBudget.allowedAssets }
+    });
+  }
+  if (!wallet.riskBudget.allowedDestinations.includes(request.destination)) {
+    throw new StellarAgentError({
+      code: "POLICY_DENIED",
+      message: "Mainnet agent-wallet destination is not allowlisted.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+    });
+  }
+  const amount = parseAmount(request.amount, request.asset).value;
+  if (amountGreaterThan(amount, wallet.riskBudget.perTxLimit, request.asset)) {
+    throw new StellarAgentError({
+      code: "POLICY_DENIED",
+      message: "Mainnet agent-wallet payment exceeds the per-transaction risk budget.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+    });
+  }
+  const spendHistory = await loadSpendHistory(context, request);
+  if (spendHistory.unreadable) {
+    throw new StellarAgentError({
+      code: "POLICY_DENIED",
+      message: "Mainnet agent-wallet spend history could not be read, so payment fails closed.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+    });
+  }
+  if (amountGreaterThan(addAmountValues(spendHistory.dailyTotal ?? "0", amount, request.asset), wallet.riskBudget.dailyLimit, request.asset)) {
+    throw new StellarAgentError({
+      code: "POLICY_DENIED",
+      message: "Mainnet agent-wallet payment would exceed the daily risk budget.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+    });
+  }
+  if (
+    wallet.riskBudget.monthlyLimit &&
+    amountGreaterThan(addAmountValues(spendHistory.monthlyTotal ?? "0", amount, request.asset), wallet.riskBudget.monthlyLimit, request.asset)
+  ) {
+    throw new StellarAgentError({
+      code: "POLICY_DENIED",
+      message: "Mainnet agent-wallet payment would exceed the monthly risk budget.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+    });
+  }
+  await assertMainnetAgentWalletBalanceWithinBudget(context, wallet);
+  return { warning: mainnetAgentWalletWarning(), spendHistory };
+}
+
+async function assertMainnetAgentWalletBalanceWithinBudget(
+  context: CliContext,
+  wallet: MainnetAgentWalletConfig
+): Promise<void> {
+  if (!wallet.publicKey) {
+    throw new StellarAgentError({ code: "WALLET_NOT_FOUND", message: "Mainnet agent wallet public key is missing." });
+  }
+  let balances: Array<{ asset: string; balance: string }>;
+  try {
+    const profile = resolveNetworkProfile("mainnet", context.config.profiles);
+    balances = await fetchMainnetAgentWalletBalances(wallet.publicKey, profile);
+  } catch (error) {
+    throw new StellarAgentError({
+      code: "HORIZON_UNAVAILABLE",
+      message: "Mainnet agent-wallet balance could not be read, so arming and spend fail closed.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet",
+      details: error instanceof Error ? error.message : String(error)
+    });
+  }
+  for (const asset of wallet.riskBudget.allowedAssets) {
+    const matchingBalances = balances.filter((line) => assetAllowedByMainnetAgentWallet(line.asset, [asset]));
+    for (const line of matchingBalances.length > 0 ? matchingBalances : [{ asset, balance: "0" }]) {
+      if (!amountGreaterThan(line.balance, wallet.riskBudget.maxBalance, line.asset)) continue;
+      throw new StellarAgentError({
+        code: "POLICY_DENIED",
+        message: "Mainnet agent-wallet balance exceeds the configured risk budget.",
+        docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet",
+        details: { asset: line.asset, balance: line.balance, maxBalance: wallet.riskBudget.maxBalance }
+      });
+    }
+  }
+}
+
+async function fetchMainnetAgentWalletBalances(
+  publicKey: string,
+  profile: NetworkProfile
+): Promise<Array<{ asset: string; balance: string }>> {
+  if (!profile.horizonUrl) {
+    throw new StellarAgentError({ code: "HORIZON_UNAVAILABLE", message: "Mainnet Horizon is not configured." });
+  }
+  const response = await fetch(`${profile.horizonUrl.replace(/\/$/, "")}/accounts/${publicKey}`, {
+    signal: AbortSignal.timeout(15_000)
+  });
+  const body = await response.text();
+  const parsed = safeJsonParse(body);
+  if (!response.ok) {
+    throw new StellarAgentError({
+      code: "HORIZON_UNAVAILABLE",
+      message: "Could not load Mainnet agent-wallet balances from Horizon.",
+      details: parsed ?? body
+    });
+  }
+  return ((parsed as any)?.balances ?? []).map((balance: any) => ({
+    asset: balance.asset_type === "native" ? "XLM" : `${balance.asset_code}:${balance.asset_issuer}`,
+    balance: String(balance.balance)
+  }));
+}
+
+async function mainnetAgentWalletPolicyFingerprint(context: CliContext): Promise<{ path: string; fingerprint: string }> {
+  const policyPath =
+    context.options.policy ??
+    process.env.STELLAR_AGENT_POLICY ??
+    join(context.config.storage.policiesDir, defaultPolicyFilename("mainnet"));
+  const resolvedPath = resolvePath(policyPath);
+  let source: string;
+  try {
+    source = await readFile(resolvedPath, "utf8");
+  } catch (error: any) {
+    if (error?.code !== "ENOENT") throw error;
+    source = policyToYaml(DEFAULT_MAINNET_POLICY);
+  }
+  return { path: resolvedPath, fingerprint: sha256(source) };
+}
+
+function mainnetAgentWalletConfigFingerprint(config: StellarAgentConfig): string {
+  const clone = JSON.parse(JSON.stringify(config)) as StellarAgentConfig;
+  if (clone.mainnetAgentWallet) clone.mainnetAgentWallet.arming = undefined;
+  return sha256(JSON.stringify(sortJson(clone)));
+}
+
+function configFingerprintPath(context: CliContext): string {
+  return resolvePath(
+    context.options.config ?? process.env.STELLAR_AGENT_CONFIG ?? join(context.config.storage.rootDir, "config.yaml")
+  );
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function sortJson(value: any): any {
+  if (Array.isArray(value)) return value.map(sortJson);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, sortJson(child)]));
+}
+
+function amountGreaterThan(left: string, right: string, asset: string): boolean {
+  return parseAmount(left, asset).stroops > parseAmount(right, asset).stroops;
+}
+
+function addAmountValues(left: string, right: string, asset: string): string {
+  return formatStroops(parseAmount(left, asset).stroops + parseAmount(right, asset).stroops);
+}
+
+function parseAssetForPolicy(asset: string): void {
+  if (asset.toUpperCase() === "XLM") return;
+  if (!/^[A-Z0-9]{1,12}(:G[A-Z2-7]{55})?$/.test(asset.toUpperCase())) {
+    throw new StellarAgentError({
+      code: "INVALID_ASSET",
+      message: "Allowed asset must be XLM, CODE, or CODE:G... issuer format.",
+      docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
+    });
+  }
+}
+
+function assetAllowedByMainnetAgentWallet(asset: string, allowedAssets: string[]): boolean {
+  const normalized = asset.toUpperCase();
+  return allowedAssets.some((allowed) => {
+    const normalizedAllowed = allowed.toUpperCase();
+    return normalized === normalizedAllowed || normalized.startsWith(`${normalizedAllowed}:`);
+  });
+}
+
+function safeJsonParse(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+}
+
 function parseFeeStrategy(value: string): "base" | "low" | "medium" | "high" | "p95" {
   if (value === "base" || value === "low" || value === "medium" || value === "high" || value === "p95") return value;
   throw new StellarAgentError({
@@ -4512,17 +5084,107 @@ async function writeSubmittedXdrReceipt(
   }
 ): Promise<string> {
   const eventLog = join(context.config.storage.logsDir, "events.jsonl");
+  const operation =
+    args.profile.realFunds && context.config.mainnetAgentWallet?.status === "armed"
+      ? {
+          ...args.operation,
+          details: {
+            ...(typeof args.operation.details === "object" && args.operation.details !== null ? args.operation.details : {}),
+            mainnetAgentWallet: {
+              armed: true,
+              walletName: context.config.mainnetAgentWallet.walletName,
+              publicKey: context.config.mainnetAgentWallet.publicKey,
+              warning: mainnetAgentWalletWarning()
+            }
+          }
+        }
+      : args.operation;
   const { path: receiptPath } = await writeReceipt(context.config.storage.receiptsDir, {
     command: args.command,
     profile: args.profile.name,
     networkPassphrase: args.profile.networkPassphrase,
     realFunds: args.profile.realFunds,
-    operation: args.operation,
+    operation,
     policyDecision: {
       status: args.profile.realFunds ? "requires_approval" : "allowed",
       matchedRules: args.profile.realFunds
         ? ["signed_xdr_external_wallet", "real_funds_acknowledged"]
         : ["signed_xdr_external_wallet"]
+    },
+    transaction: args.transaction,
+    ...(args.transaction.ledger === undefined ? {} : { ledger: { confirmedLedger: args.transaction.ledger } }),
+    eventLog
+  });
+  await appendEvent(eventLog, {
+    event: "receipt_written",
+    status: "success",
+    command: args.command,
+    profile: args.profile.name,
+    data: { receiptPath }
+  });
+  return receiptPath;
+}
+
+async function writeSubmittedPaymentApprovalReceipt(
+  context: CliContext,
+  args: {
+    command: string;
+    profile: NetworkProfile;
+    approvalId: string;
+    signerPublicKey?: string;
+    payment: PaymentRequest;
+    policyDecision: PolicyDecision;
+    mainnetAgentWallet?: { warning: string; spendHistory: Awaited<ReturnType<typeof loadSpendHistory>> };
+    transaction: {
+      hash: string;
+      ledger?: number;
+      successful: boolean;
+      feeCharged?: string;
+    };
+  }
+): Promise<string> {
+  const eventLog = join(context.config.storage.logsDir, "events.jsonl");
+  const { path: receiptPath } = await writeReceipt(context.config.storage.receiptsDir, {
+    command: args.command,
+    profile: args.profile.name,
+    networkPassphrase: args.profile.networkPassphrase,
+    realFunds: args.profile.realFunds,
+    payment: {
+      source: args.payment.source ?? "",
+      destination: args.payment.destination,
+      asset: args.payment.asset,
+      amount: args.payment.amount,
+      ...(args.payment.memo === undefined ? {} : { memo: args.payment.memo }),
+      ...(args.payment.domain === undefined ? {} : { domain: args.payment.domain }),
+      ...(args.payment.url === undefined ? {} : { url: args.payment.url })
+    },
+    operation: {
+      type: "tx.submit_payment_approval",
+      ...(args.payment.source === undefined ? {} : { source: args.payment.source }),
+      destination: args.payment.destination,
+      asset: args.payment.asset,
+      amount: args.payment.amount,
+      details: {
+        approvalId: args.approvalId,
+        signerPublicKey: args.signerPublicKey,
+        realFundsAcknowledged: args.profile.realFunds,
+        ...(args.mainnetAgentWallet === undefined
+          ? {}
+          : {
+              mainnetAgentWallet: {
+                armed: true,
+                walletName: context.config.mainnetAgentWallet?.walletName,
+                publicKey: context.config.mainnetAgentWallet?.publicKey,
+                riskBudget: context.config.mainnetAgentWallet?.riskBudget,
+                spendHistoryBefore: args.mainnetAgentWallet.spendHistory,
+                warning: args.mainnetAgentWallet.warning
+              }
+            })
+      }
+    },
+    policyDecision: {
+      status: args.policyDecision.status,
+      matchedRules: args.policyDecision.matchedRules
     },
     transaction: args.transaction,
     ...(args.transaction.ledger === undefined ? {} : { ledger: { confirmedLedger: args.transaction.ledger } }),
