@@ -70,9 +70,10 @@ describe("config and redaction", () => {
   });
 
   it("preserves explicit redaction metadata booleans", () => {
-    expect(redactSensitive({ redactions: { secretKeysIncluded: false }, hasSecret: true })).toEqual({
+    expect(redactSensitive({ redactions: { secretKeysIncluded: false }, hasSecret: true, secretPrinted: false })).toEqual({
       redactions: { secretKeysIncluded: false },
-      hasSecret: true
+      hasSecret: true,
+      secretPrinted: false
     });
   });
 

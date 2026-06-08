@@ -177,6 +177,11 @@ function installVersionPrecheck(program: Command, parseState: { json: boolean })
       printVersion(versionOptions);
       return program;
     }
+    const commandError = unknownCommandError(program, userArgs(argv, parseOptions));
+    if (commandError) {
+      printError({ json: parseState.json }, commandError);
+      return program;
+    }
     installExitOverride(program);
     try {
       return await originalParseAsync(argv, parseOptions);
@@ -186,6 +191,38 @@ function installVersionPrecheck(program: Command, parseState: { json: boolean })
       return program;
     }
   }) as Command["parseAsync"];
+}
+
+function unknownCommandError(rootCommand: Command, args: string[]): StellarAgentError | null {
+  let command = rootCommand;
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (!token || token === "--") return null;
+    if (token === "-h" || token === "--help") return null;
+    if (token.startsWith("-")) {
+      if (optionConsumesValue(command, token) && !token.includes("=")) index += 1;
+      continue;
+    }
+    if (command.commands.length === 0) return null;
+
+    const child = command.commands.find((candidate) => candidate.name() === token || candidate.aliases().includes(token));
+    if (!child) {
+      return new StellarAgentError({
+        code: "INVALID_INPUT",
+        message: `Unknown command '${token}'.`,
+        hint: "Run the nearest known command with --help and correct the input.",
+        docs: "README.md#common-commands",
+        exitCode: EXIT_CODES.usage
+      });
+    }
+    command = child;
+  }
+  return null;
+}
+
+function optionConsumesValue(command: Command, token: string): boolean {
+  const option = command.options.find((candidate) => candidate.long === token || candidate.short === token || token.startsWith(`${candidate.long}=`));
+  return Boolean(option?.required || option?.optional);
 }
 
 function rootVersionOptions(

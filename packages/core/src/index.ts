@@ -801,6 +801,7 @@ const publicTokenMetricKeys = new Set([
   "liabilityDTokens",
   "claimedTokens"
 ]);
+const publicSensitiveBooleanKeys = new Set(["secretKeysIncluded", "hasSecret", "secretPrinted"]);
 
 export function redactSensitive<T>(value: T): T {
   if (value === null || value === undefined) return value;
@@ -814,7 +815,7 @@ export function redactSensitive<T>(value: T): T {
     const redacted: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(value)) {
       redacted[key] =
-        key === "secretKeysIncluded" || key === "hasSecret"
+        publicSensitiveBooleanKeys.has(key) && typeof child === "boolean"
           ? child
           : sensitiveKeyPattern.test(key) && !publicTokenMetricKeys.has(key)
             ? "[REDACTED]"

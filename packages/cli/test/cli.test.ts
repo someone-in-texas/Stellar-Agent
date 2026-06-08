@@ -1,4 +1,4 @@
-import { createDefaultConfig } from "@stellar-agent/core";
+import { EXIT_CODES, createDefaultConfig } from "@stellar-agent/core";
 import { createTransactionXdrApprovalRequest, decideApprovalRequest, readApprovalRequest } from "@stellar-agent/freighter-bridge";
 import { writeReceipt } from "@stellar-agent/ledger-logger";
 import { DEFAULT_MAINNET_POLICY, DEFAULT_TESTNET_POLICY, policyToYaml } from "@stellar-agent/policy";
@@ -67,6 +67,10 @@ vi.mock("@stellar-agent/walletconnect-bridge", () => ({
 }));
 
 describe("CLI package entrypoint", () => {
+  afterEach(() => {
+    process.exitCode = undefined;
+  });
+
   it("treats npm .bin symlinks as executable entrypoints", async () => {
     const root = await mkdtemp(join(tmpdir(), "stellar-agent-cli-entrypoint-"));
     const sourcePath = fileURLToPath(new URL("../src/index.ts", import.meta.url));
@@ -103,6 +107,41 @@ describe("CLI package entrypoint", () => {
 
     expect(rootVersionOption?.required).toBe(false);
     expect(blendVersionOption?.required).toBe(true);
+  });
+
+  it("reports unknown commands as usage errors even when help is requested", async () => {
+    await expect(runCli(["--json", "does-not-exist", "--help"])).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "INVALID_INPUT",
+        message: "Unknown command 'does-not-exist'."
+      }
+    });
+    expect(process.exitCode).toBe(EXIT_CODES.usage);
+    process.exitCode = undefined;
+
+    await expect(runCli(["--json", "x402", "does-not-exist", "--help"])).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "INVALID_INPUT",
+        message: "Unknown command 'does-not-exist'."
+      }
+    });
+    expect(process.exitCode).toBe(EXIT_CODES.usage);
+  });
+
+  it("keeps wallet use-env secretPrinted as a boolean", async () => {
+    const originalSecret = process.env.STELLAR_SECRET_KEY;
+    delete process.env.STELLAR_SECRET_KEY;
+    try {
+      await expect(runCli(["--json", "wallet", "use-env"])).resolves.toEqual({
+        ok: true,
+        data: { configured: false, secretPrinted: false }
+      });
+    } finally {
+      if (originalSecret === undefined) delete process.env.STELLAR_SECRET_KEY;
+      else process.env.STELLAR_SECRET_KEY = originalSecret;
+    }
   });
 });
 
