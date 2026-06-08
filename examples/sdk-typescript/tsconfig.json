@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "types": ["node"],
+    "paths": {
+      "@stellar-agent/core": ["../../packages/core/src/index.ts"],
+      "@stellar-agent/defi": ["../../packages/defi/src/index.ts"],
+      "@stellar-agent/freighter-bridge": ["../../packages/freighter-bridge/src/index.ts"],
+      "@stellar-agent/stellar": ["../../packages/stellar/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

@@ -126,6 +126,7 @@ stellar-agent pay mpp http://127.0.0.1:PORT/mpp-report --allow-localhost-demo --
 
 JSON Schema files for agent/tool integrations ship with `@stellar-agent/cli` under `schemas/cli`. See [docs/cli-json-schemas.md](docs/cli-json-schemas.md).
 Safe demo bundle commands are documented in [docs/demo-bundles.md](docs/demo-bundles.md).
+Typed direct-import examples for `@stellar-agent/defi`, `@stellar-agent/stellar`, and `@stellar-agent/freighter-bridge` live under [examples/sdk-typescript](examples/sdk-typescript).
 
 ## Agent Integration
 

@@ -31,6 +31,8 @@ The other scoped packages are public so applications and agent runtimes can embe
 | [`@stellar-agent/mpp-client`](https://www.npmjs.com/package/@stellar-agent/mpp-client) | `npm install @stellar-agent/mpp-client` | You need local Testnet MPP demo helpers. |
 | [`@stellar-agent/codex-plugin`](https://www.npmjs.com/package/@stellar-agent/codex-plugin) | `npm install @stellar-agent/codex-plugin` | You need Codex plugin validation and manifest tooling. |
 
+Typed direct-import examples are available in [`examples/sdk-typescript`](../examples/sdk-typescript), including Aquarius quote/preflight, core market LP preflight, and local approval request handling.
+
 ## Package README Preview
 
 npm renders the `README.md` included in each package tarball. To preview what npm will receive before publishing:

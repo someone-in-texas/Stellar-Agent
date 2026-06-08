@@ -34,3 +34,4 @@ await fundWithFriendbot(wallet.publicKey, profile);
 - GitHub: https://github.com/someone-in-texas/Stellar-Agent
 - Testnet quickstart: https://github.com/someone-in-texas/Stellar-Agent/blob/main/docs/quickstart-testnet.md
 - Mainnet safety: https://github.com/someone-in-texas/Stellar-Agent/blob/main/docs/mainnet-safety.md
+- Typed SDK examples: https://github.com/someone-in-texas/Stellar-Agent/tree/main/examples/sdk-typescript

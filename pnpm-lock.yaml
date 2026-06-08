@@ -92,6 +92,25 @@ importers:
         specifier: workspace:*
         version: link:../../packages/x402-client
 
+  examples/sdk-typescript:
+    dependencies:
+      '@stellar-agent/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@stellar-agent/defi':
+        specifier: workspace:*
+        version: link:../../packages/defi
+      '@stellar-agent/freighter-bridge':
+        specifier: workspace:*
+        version: link:../../packages/freighter-bridge
+      '@stellar-agent/stellar':
+        specifier: workspace:*
+        version: link:../../packages/stellar
+    devDependencies:
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+
   examples/x402-paid-api:
     dependencies:
       '@stellar-agent/core':

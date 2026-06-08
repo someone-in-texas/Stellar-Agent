@@ -42,3 +42,4 @@ The UI uses Freighter's browser API when available. It reads the bridge token fr
 - GitHub: https://github.com/someone-in-texas/Stellar-Agent
 - Mainnet safety: https://github.com/someone-in-texas/Stellar-Agent/blob/main/docs/mainnet-safety.md
 - npm CLI package: https://www.npmjs.com/package/@stellar-agent/cli
+- Typed SDK examples: https://github.com/someone-in-texas/Stellar-Agent/tree/main/examples/sdk-typescript

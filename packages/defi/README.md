@@ -39,3 +39,4 @@ const preflight = await preflightAquariusSwap({
 - Blend docs: https://github.com/someone-in-texas/Stellar-Agent/blob/main/docs/defi-blend.md
 - Aquarius docs: https://github.com/someone-in-texas/Stellar-Agent/blob/main/docs/defi-aquarius.md
 - Threat model: https://github.com/someone-in-texas/Stellar-Agent/blob/main/docs/threat-model.md
+- Typed SDK examples: https://github.com/someone-in-texas/Stellar-Agent/tree/main/examples/sdk-typescript
