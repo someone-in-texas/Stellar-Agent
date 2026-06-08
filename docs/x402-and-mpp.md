@@ -53,7 +53,7 @@ Flow:
 
 The local demo binds proofs to the advertised resource and nonce, requires payer metadata, and rejects replay of a previously accepted transaction hash. Resource binding includes the URL origin, path, and query string, so a payment requirement for `?item=cheap` does not satisfy a request for `?item=expensive`.
 
-The demo paid API is available under `apps/paid-api-demo`:
+The demo paid API is available under `examples/paid-api-demo`:
 
 ```bash
 STELLAR_AGENT_DEMO_RECIPIENT=G... pnpm --filter @stellar-agent/paid-api-demo start
@@ -84,7 +84,7 @@ Session-budget flow:
 5. The demo server tracks remaining budget by transaction hash.
 6. Write a receipt for the budget transaction and log session request counts.
 
-The demo paid API under `apps/paid-api-demo` starts x402, one-time MPP, and MPP session endpoints.
+The demo paid API under `examples/paid-api-demo` starts x402, one-time MPP, and MPP session endpoints.
 
 For MPP sessions, `paidResourceDelivered` is `true` only when every requested session call returns a 2xx status after the budget payment.
 

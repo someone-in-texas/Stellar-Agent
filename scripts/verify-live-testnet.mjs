@@ -826,7 +826,7 @@ function formatMarketPrice(value) {
 
 function startPaidApiDemoChild(recipient) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["apps/paid-api-demo/server.mjs"], {
+    const child = spawn(process.execPath, ["examples/paid-api-demo/server.mjs"], {
       cwd: process.cwd(),
       env: {
         ...process.env,

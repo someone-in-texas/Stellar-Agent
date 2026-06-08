@@ -102,8 +102,8 @@ The following folders or commands may exist in v0 as explicit placeholders with 
 - `packages/freighter-bridge`
 - `packages/mcp-server`
 - `packages/codex-plugin`
-- `apps/local-approval-ui`
-- `apps/paid-api-demo`
+- `examples/freighter-manual`
+- `examples/paid-api-demo`
 - `plugins/codex`
 
 Placeholders must be honest. They should explain the intended role, link to relevant docs, and avoid hidden payment, signing, or network side effects.
@@ -290,9 +290,6 @@ stellar-agent-bridge/
       ci.yml
       smoke-test.yml
       release.yml
-  apps/
-    local-approval-ui/
-    paid-api-demo/
   docs/
     quickstart.md
     quickstart-testnet.md
@@ -307,6 +304,9 @@ stellar-agent-bridge/
     troubleshooting.md
     architecture.md
   examples/
+    freighter-manual/
+    paid-api-demo/
+    walletconnect-manual/
     shell/
     codex/
     openclaw/
@@ -520,7 +520,7 @@ Local browser wallet bridge.
 Responsibilities:
 
 - Start localhost approval server.
-- Serve approval UI or connect to `apps/local-approval-ui`.
+- Serve approval UI directly or document manual browser-wallet flows under `examples/freighter-manual`.
 - Integrate with Freighter.
 - Request address.
 - Request signing.
@@ -1661,7 +1661,7 @@ Implementation should be staged.
 
 ### Phase x402-b: local demo
 
-- Add `apps/paid-api-demo`.
+- Add `examples/paid-api-demo`.
 - Demo endpoint returns machine-readable 402.
 - CLI parses requirements.
 - Policy checks payment.

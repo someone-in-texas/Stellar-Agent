@@ -39,15 +39,6 @@ importers:
         specifier: ^3.1.4
         version: 3.2.4(@types/node@22.19.19)(tsx@4.22.3)(yaml@2.9.0)
 
-  apps/paid-api-demo:
-    dependencies:
-      '@stellar-agent/mpp-client':
-        specifier: workspace:*
-        version: link:../../packages/mpp-client
-      '@stellar-agent/x402-client':
-        specifier: workspace:*
-        version: link:../../packages/x402-client
-
   examples/agent-service-market:
     dependencies:
       '@stellar-agent/core':
@@ -91,6 +82,15 @@ importers:
       vitest:
         specifier: ^3.1.4
         version: 3.2.4(@types/node@22.19.19)(tsx@4.22.3)(yaml@2.9.0)
+
+  examples/paid-api-demo:
+    dependencies:
+      '@stellar-agent/mpp-client':
+        specifier: workspace:*
+        version: link:../../packages/mpp-client
+      '@stellar-agent/x402-client':
+        specifier: workspace:*
+        version: link:../../packages/x402-client
 
   examples/x402-paid-api:
     dependencies:

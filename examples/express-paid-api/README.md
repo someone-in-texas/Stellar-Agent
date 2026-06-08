@@ -1,6 +1,6 @@
 # Express Paid API Example
 
-The local paid API demo now lives in `apps/paid-api-demo`.
+The local paid API demo now lives in `examples/paid-api-demo`.
 
 Run it with a Testnet recipient:
 
