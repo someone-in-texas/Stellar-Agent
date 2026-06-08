@@ -1,0 +1,22 @@
+{
+  "name": "stellar-agent-example-agent-service-market",
+  "version": "0.5.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "seller": "tsx src/seller.ts",
+    "buyer": "tsx src/buyer.ts",
+    "test": "vitest run examples/agent-service-market/test/agent-service-market.test.ts"
+  },
+  "dependencies": {
+    "@stellar-agent/core": "workspace:*",
+    "@stellar-agent/ledger-logger": "workspace:*",
+    "@stellar-agent/policy": "workspace:*",
+    "@stellar-agent/x402-client": "workspace:*",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.4",
+    "vitest": "^3.1.4"
+  }
+}

@@ -22,8 +22,6 @@
       "@stellar-agent/defi": ["packages/defi/src/index.ts"],
       "@stellar-agent/testnet-suite": ["packages/testnet-suite/src/index.ts"],
       "@stellar-agent/ledger-logger": ["packages/ledger-logger/src/index.ts"],
-      "@stellar-agent/x402-client": ["packages/x402-client/src/index.ts"],
-      "@stellar-agent/mpp-client": ["packages/mpp-client/src/index.ts"],
       "@stellar-agent/freighter-bridge": ["packages/freighter-bridge/src/index.ts"],
       "@stellar-agent/mcp-server": ["packages/mcp-server/src/index.ts"],
       "@stellar-agent/codex-plugin": ["packages/codex-plugin/src/index.ts"]
