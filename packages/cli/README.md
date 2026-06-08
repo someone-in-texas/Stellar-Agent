@@ -45,6 +45,7 @@ stellar-agent demo x402 --out ./demo-x402 --json
 stellar-agent demo approval-flow --json
 stellar-agent defi blend preflight --pool TestnetV2 --account agent --request supply_collateral:USDC:1 --json
 stellar-agent defi aquarius swap preflight --from XLM --to AQUA --amount 0.01 --slippage-bps 100 --json
+stellar-agent market listen config --file ./alerts.yaml --json
 ```
 
 ## Command Map
@@ -58,7 +59,7 @@ stellar-agent defi aquarius swap preflight --from XLM --to AQUA --amount 0.01 --
 | `approval` | Create, list, decide, serve, inspect, and externally sign local approval requests. |
 | `tx` | Build, request signatures for, and submit signed XDR. |
 | `defi` | Inspect and preflight Blend and Aquarius workflows. |
-| `market` | Inspect core Stellar liquidity pools, preflight LP actions, and run finite listeners. |
+| `market` | Inspect core Stellar liquidity pools, preflight LP actions, and run finite or config-file listeners. |
 | `contract` | Run Stellar CLI-backed Soroban contract workflows. |
 | `ledger` and `receipts` | Inspect ledgers, effects, payments, reports, and local receipts. |
 | `policy` | Write, check, print, and explain policy decisions. |

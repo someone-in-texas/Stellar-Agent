@@ -2894,6 +2894,18 @@ function addMarketCommands(program: Command): void {
         };
       }, "Market position listener evaluated.")
     );
+  listen
+    .command("config")
+    .description("Evaluate market alert checks from a YAML or JSON config file.")
+    .requiredOption("--file <path>", "Alert config file with alerts[]")
+    .option("--network <name>", "Network profile to inspect: testnet or mainnet")
+    .option("--polls <n>", "Number of checks per alert", parsePositiveIntegerOption, 1)
+    .option("--interval-ms <n>", "Delay between checks", parsePositiveIntegerOption, 1000)
+    .action(
+      withContext(async (context, options: { file: string; network?: string; polls: number; intervalMs: number }) => {
+        return listenForMarketAlertConfig(context, options);
+      }, "Market alert config evaluated.")
+    );
 
   const soroban = market.command("soroban").description("Inspect Soroban AMM contracts without submitting liquidity actions.");
   const sorobanPool = soroban.command("pool").description("Read-only Soroban pool investigation.");
@@ -4229,6 +4241,19 @@ interface MarketPriceListenOptions {
   intervalMs: number;
 }
 
+interface MarketAlertConfigFile {
+  alerts: MarketAlertRule[];
+}
+
+interface MarketAlertRule {
+  name?: string;
+  pool: string;
+  above?: string;
+  below?: string;
+  action?: "log";
+  network?: string;
+}
+
 function resolveMarketProfile(context: CliContext, network?: string): NetworkProfile {
   if (!network) return resolveNetworkProfile(context.profileName, context.config.profiles);
   const normalized = network.toLowerCase();
@@ -4451,6 +4476,93 @@ async function listenForPoolPrice(context: CliContext, options: MarketPriceListe
     });
   }
   return { events, triggered: events.some((event) => event.status === "triggered") };
+}
+
+async function listenForMarketAlertConfig(
+  context: CliContext,
+  options: { file: string; network?: string; polls: number; intervalMs: number }
+): Promise<unknown> {
+  const config = await readMarketAlertConfig(options.file);
+  const results = [];
+  for (const [index, alert] of config.alerts.entries()) {
+    const result = (await listenForPoolPrice(context, {
+      pool: alert.pool,
+      ...(alert.above === undefined ? {} : { above: alert.above }),
+      ...(alert.below === undefined ? {} : { below: alert.below }),
+      ...(alert.network ?? options.network ? { network: alert.network ?? options.network } : {}),
+      polls: options.polls,
+      intervalMs: options.intervalMs
+    })) as { events: Array<Record<string, unknown>>; triggered: boolean };
+    results.push({
+      index,
+      name: alert.name ?? `alert_${index + 1}`,
+      action: alert.action ?? "log",
+      pool: alert.pool,
+      triggered: result.triggered,
+      events: result.events.map((event) => ({
+        ...event,
+        configAlert: {
+          index,
+          name: alert.name ?? `alert_${index + 1}`,
+          action: alert.action ?? "log"
+        }
+      }))
+    });
+  }
+  return {
+    source: resolvePath(options.file),
+    alerts: results,
+    triggered: results.some((result) => result.triggered)
+  };
+}
+
+async function readMarketAlertConfig(path: string): Promise<MarketAlertConfigFile> {
+  const raw = await readFile(resolvePath(path), "utf8");
+  const parsed = parseYaml(raw) as Partial<MarketAlertConfigFile> | null;
+  if (!parsed || !Array.isArray(parsed.alerts) || parsed.alerts.length === 0) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Market alert config must contain a non-empty alerts array.",
+      docs: "docs/market-liquidity.md#market-listeners"
+    });
+  }
+  return {
+    alerts: parsed.alerts.map((alert, index) => parseMarketAlertRule(alert, index))
+  };
+}
+
+function parseMarketAlertRule(value: unknown, index: number): MarketAlertRule {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw invalidMarketAlertConfig(index, "alert must be an object.");
+  }
+  const raw = value as Record<string, unknown>;
+  const action = raw.action === undefined ? "log" : String(raw.action);
+  if (action !== "log") throw invalidMarketAlertConfig(index, "action must be log.");
+  const pool = typeof raw.pool === "string" ? raw.pool : "";
+  if (!pool) throw invalidMarketAlertConfig(index, "pool is required.");
+  const above = raw.above === undefined ? undefined : String(raw.above);
+  const below = raw.below === undefined ? undefined : String(raw.below);
+  if (above === undefined && below === undefined) {
+    throw invalidMarketAlertConfig(index, "above or below is required.");
+  }
+  if (above !== undefined) parsePositiveDecimalInput(above, `alerts[${index}].above`);
+  if (below !== undefined) parsePositiveDecimalInput(below, `alerts[${index}].below`);
+  return {
+    ...(typeof raw.name === "string" ? { name: raw.name } : {}),
+    pool,
+    ...(above === undefined ? {} : { above }),
+    ...(below === undefined ? {} : { below }),
+    action,
+    ...(typeof raw.network === "string" ? { network: raw.network } : {})
+  };
+}
+
+function invalidMarketAlertConfig(index: number, reason: string): StellarAgentError {
+  return new StellarAgentError({
+    code: "INVALID_INPUT",
+    message: `Invalid market alert at alerts[${index}]: ${reason}`,
+    docs: "docs/market-liquidity.md#market-listeners"
+  });
 }
 
 function poolReservePrice(pool: LiquidityPoolSummary): number {

@@ -118,6 +118,22 @@ stellar-agent market listen price --pool 0123... --above 2 --json
 stellar-agent market listen position --pool 0123... --account agent --shares-below 1 --json
 ```
 
+Use `market listen config` when an agent needs a small file of repeatable price checks:
+
+```yaml
+alerts:
+  - name: xlm_usd_high
+    pool: 0123...
+    above: "1.2"
+    action: log
+```
+
+```bash
+stellar-agent market listen config --file ./alerts.yaml --json
+```
+
+Each alert requires `pool` plus either `above` or `below`. The only supported action is `log`; config listeners return alert events and do not execute trades.
+
 Listeners do not approve or submit transactions. Agents should treat a triggered event as a reason to re-run preflight, not as permission to mutate funds.
 
 ## Strategy Investigation

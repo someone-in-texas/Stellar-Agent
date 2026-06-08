@@ -2228,6 +2228,55 @@ describe("CLI market liquidity commands", () => {
     });
   });
 
+  it("evaluates market alert config files", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
+    const alertsPath = join(await mkdtemp(join(tmpdir(), "stellar-agent-alerts-")), "alerts.yaml");
+    await writeFile(
+      alertsPath,
+      [
+        "alerts:",
+        `  - name: xlm_usd_high`,
+        `    pool: ${poolIdFixture()}`,
+        `    above: "1.5"`,
+        "    action: log"
+      ].join("\n")
+    );
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(poolFixture())));
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "market",
+      "listen",
+      "config",
+      "--file",
+      alertsPath
+    ]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        source: alertsPath,
+        triggered: true,
+        alerts: [
+          {
+            name: "xlm_usd_high",
+            action: "log",
+            triggered: true,
+            events: [
+              {
+                type: "market.alert",
+                status: "triggered",
+                configAlert: { name: "xlm_usd_high", action: "log" }
+              }
+            ]
+          }
+        ]
+      }
+    });
+  });
+
   it("rejects invalid market listener thresholds and reversed LP price bounds", async () => {
     const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
 
@@ -2248,6 +2297,26 @@ describe("CLI market liquidity commands", () => {
       error: {
         code: "INVALID_INPUT",
         message: "above must be a decimal number."
+      }
+    });
+
+    const alertsPath = join(await mkdtemp(join(tmpdir(), "stellar-agent-alerts-invalid-")), "alerts.yaml");
+    await writeFile(alertsPath, ["alerts:", `  - pool: ${poolIdFixture()}`, "    action: trade"].join("\n"));
+    const config = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "market",
+      "listen",
+      "config",
+      "--file",
+      alertsPath
+    ]);
+    expect(config).toMatchObject({
+      ok: false,
+      error: {
+        code: "INVALID_INPUT",
+        message: "Invalid market alert at alerts[0]: action must be log."
       }
     });
 

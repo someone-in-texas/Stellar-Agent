@@ -33,6 +33,8 @@ Market listeners:
 
 - Use `stellar-agent market listen price --pool <pool-id> --above <price> --json` or `--below <price>` for finite price alerts.
 - Use `stellar-agent market listen position --pool <pool-id> --account <alias-or-G...> --shares-below <amount> --json` for pool-share position alerts.
+- Use `stellar-agent market listen config --file <alerts.yaml> --json` for repeatable price alert files with `alerts[].pool`, `alerts[].above` or `alerts[].below`, and `action: log`.
+- Treat config alerts as log events only. They do not approve, prepare, or submit liquidity actions.
 - After an alert triggers, re-run preflight before any action.
 
 Strategy investigation:

@@ -95,6 +95,7 @@ stellar-agent market lp preflight --pool 0123... --max-a 1 --max-b 2 --min-price
 stellar-agent market lp trustline add --pool 0123... --account agent --fee-strategy medium --json
 stellar-agent market lp deposit --pool 0123... --max-a 1 --max-b 2 --min-price 1.5 --max-price 2.5 --json
 stellar-agent market listen price --pool 0123... --above 2 --json
+stellar-agent market listen config --file ./alerts.yaml --json
 stellar-agent strategy investigate liquidity --pair XLM/USD:G... --json
 stellar-agent market soroban pool preflight --id C... --action deposit --json
 stellar-agent contract doctor --json
