@@ -14,8 +14,10 @@ import {
 import { spendHistoryFromReceipts, writeReceipt } from "@stellar-agent/ledger-logger";
 import { DEFAULT_MAINNET_POLICY, Policy, evaluatePaymentRequest, policyToYaml } from "@stellar-agent/policy";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const MAINNET_AGENT_WALLET_WARNING =
   "Mainnet agent-wallet spend is bounded, not safe. This playground never submits live Mainnet transactions by default.";
@@ -57,7 +59,7 @@ export function createPlaygroundState(rootDir = ".stellar-agent-mainnet-wallet-p
   return {
     config,
     configPath: join(root, "config.yaml"),
-    policy: DEFAULT_MAINNET_POLICY,
+    policy: cloneDefaultMainnetPolicy(),
     policyPath: join(root, "policies", "default-mainnet.yaml"),
     receiptsDir: join(root, "receipts"),
     eventLog: join(root, "logs", "events.jsonl"),
@@ -345,13 +347,44 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function cloneDefaultMainnetPolicy(): Policy {
+  return JSON.parse(JSON.stringify(DEFAULT_MAINNET_POLICY)) as Policy;
+}
+
 function sortJson(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortJson);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, sortJson(child)]));
 }
 
+export function loadPlaygroundEnv(filePath = resolve(dirname(fileURLToPath(import.meta.url)), "..", ".env")): void {
+  let source: string;
+  try {
+    source = readFileSync(filePath, "utf8");
+  } catch (error: any) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  for (const rawLine of source.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
+    if (!match) continue;
+    const [, key, rawValue] = match;
+    if (process.env[key] !== undefined) continue;
+    process.env[key] = unquoteEnvValue(rawValue.trim());
+  }
+}
+
+function unquoteEnvValue(value: string): string {
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
+  loadPlaygroundEnv();
   const state = createPlaygroundState(process.env.STELLAR_AGENT_PLAYGROUND_ROOT);
   configureAgentWallet(state, {
     address: process.env.AGENT_WALLET_ADDRESS ?? "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",

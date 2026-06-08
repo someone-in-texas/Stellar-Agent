@@ -23,6 +23,8 @@ pnpm exec tsx examples/mainnet-agent-wallet-playground/src/playground.ts
 pnpm test -- examples/mainnet-agent-wallet-playground/test/mainnet-agent-wallet-playground.test.ts
 ```
 
+The demo script loads `examples/mainnet-agent-wallet-playground/.env` automatically before reading `STELLAR_AGENT_PLAYGROUND_ROOT`, `AGENT_WALLET_ADDRESS`, `AGENT_WALLET_DESTINATION`, `AGENT_WALLET_MAX_BALANCE`, `AGENT_WALLET_DAILY_LIMIT`, or `AGENT_WALLET_PER_TX_LIMIT`.
+
 Expected output shape:
 
 ```json

@@ -8,6 +8,7 @@ import {
   configureAgentWallet,
   createPlaygroundState,
   disarmAgentWallet,
+  loadPlaygroundEnv,
   preflightSpend,
   recordSimulatedSpend,
   setSimulatedWalletBalance,
@@ -150,6 +151,54 @@ describe("examples/mainnet-agent-wallet-playground", () => {
       warning: MAINNET_AGENT_WALLET_WARNING
     });
   });
+
+  it("isolates default policy state between playground instances", () => {
+    const first = fixtureState();
+    first.policy.limits.dailyTotal = "99 XLM";
+    first.policy.approval.requireForAllPayments = false;
+
+    const second = fixtureState();
+    expect(second.policy.limits.dailyTotal).toBe("0.25 XLM");
+    expect(second.policy.approval.requireForAllPayments).toBe(true);
+  });
+
+  it("loads copied .env values before the demo reads process settings", async () => {
+    const root = fixtureState().config.storage.rootDir;
+    const envPath = join(root, ".env");
+    const previous = {
+      STELLAR_AGENT_PLAYGROUND_ROOT: process.env.STELLAR_AGENT_PLAYGROUND_ROOT,
+      AGENT_WALLET_ADDRESS: process.env.AGENT_WALLET_ADDRESS,
+      AGENT_WALLET_DESTINATION: process.env.AGENT_WALLET_DESTINATION,
+      AGENT_WALLET_MAX_BALANCE: process.env.AGENT_WALLET_MAX_BALANCE,
+      AGENT_WALLET_DAILY_LIMIT: process.env.AGENT_WALLET_DAILY_LIMIT,
+      AGENT_WALLET_PER_TX_LIMIT: process.env.AGENT_WALLET_PER_TX_LIMIT
+    };
+    for (const key of Object.keys(previous)) delete process.env[key];
+    await mkdir(root, { recursive: true });
+    await writeFile(
+      envPath,
+      [
+        "STELLAR_AGENT_PLAYGROUND_ROOT=.tmp-mainnet-wallet",
+        `AGENT_WALLET_ADDRESS=${agent}`,
+        `AGENT_WALLET_DESTINATION=${destination}`,
+        "AGENT_WALLET_MAX_BALANCE=0.5",
+        "AGENT_WALLET_DAILY_LIMIT=0.04",
+        "AGENT_WALLET_PER_TX_LIMIT=0.01"
+      ].join("\n")
+    );
+
+    try {
+      loadPlaygroundEnv(envPath);
+      expect(process.env.STELLAR_AGENT_PLAYGROUND_ROOT).toBe(".tmp-mainnet-wallet");
+      expect(process.env.AGENT_WALLET_ADDRESS).toBe(agent);
+      expect(process.env.AGENT_WALLET_DESTINATION).toBe(destination);
+      expect(process.env.AGENT_WALLET_MAX_BALANCE).toBe("0.5");
+      expect(process.env.AGENT_WALLET_DAILY_LIMIT).toBe("0.04");
+      expect(process.env.AGENT_WALLET_PER_TX_LIMIT).toBe("0.01");
+    } finally {
+      restoreEnv(previous);
+    }
+  });
 });
 
 function fixtureState() {
@@ -168,4 +217,11 @@ function configureDefaultWallet(
     perTxLimit: "0.02",
     ...overrides
   });
+}
+
+function restoreEnv(previous: Record<string, string | undefined>): void {
+  for (const [key, value] of Object.entries(previous)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
 }

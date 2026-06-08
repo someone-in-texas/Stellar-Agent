@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "demo": "tsx src/playground.ts",
-    "test": "vitest run examples/mainnet-agent-wallet-playground/test/mainnet-agent-wallet-playground.test.ts"
+    "test": "vitest run test/mainnet-agent-wallet-playground.test.ts"
   },
   "dependencies": {
     "@stellar-agent/core": "workspace:*",
