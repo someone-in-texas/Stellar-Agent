@@ -540,6 +540,115 @@ describe("CLI DeFi commands", () => {
       }
     });
   });
+
+  it("prints JSON for Aquarius parse-time slippage errors", async () => {
+    const output = await runCli([
+      "--json",
+      "defi",
+      "aquarius",
+      "swap",
+      "preflight",
+      "--from",
+      "XLM",
+      "--to",
+      "AQUA",
+      "--amount",
+      "0.01",
+      "--slippage-bps",
+      "10001"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: false,
+      error: {
+        code: "INVALID_INPUT",
+        message: "Slippage must be an integer between 0 and 10000 basis points.",
+        docs: "docs/defi-aquarius.md#swap-quoting-and-preflight"
+      }
+    });
+  });
+
+  it("prints JSON for missing required Aquarius options", async () => {
+    const output = await runCli([
+      "--json",
+      "defi",
+      "aquarius",
+      "swap",
+      "preflight",
+      "--from",
+      "XLM",
+      "--to",
+      "AQUA",
+      "--amount",
+      "0.01"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: false,
+      error: {
+        code: "INVALID_INPUT",
+        message: "required option '--slippage-bps <bps>' not specified",
+        docs: "docs/defi-aquarius.md#swap-quoting-and-preflight"
+      }
+    });
+  });
+
+  it("uses the Mainnet default policy for Mainnet Aquarius preflight", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          results: [
+            {
+              index: "pool-hash",
+              address: "CPOOL",
+              tokens_addresses: ["CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA", "CAQUA"],
+              tokens_str: ["native", "AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"],
+              pool_type: "constant_product",
+              fee: "0.0030"
+            }
+          ]
+        })
+      )
+    );
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "defi",
+      "aquarius",
+      "lp",
+      "preflight",
+      "--pool",
+      "XLM",
+      "--action",
+      "deposit",
+      "--account",
+      "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      "--amount",
+      "0.01",
+      "--amount",
+      "0.01",
+      "--min-shares",
+      "0.0000001",
+      "--network",
+      "mainnet"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        policyDecision: {
+          status: "denied",
+          network: "mainnet",
+          realFunds: true,
+          matchedRules: expect.arrayContaining(["defi_aquarius_disabled", "defi_aquarius_mainnet_requires_approval"])
+        },
+        preflight: { network: "mainnet" }
+      }
+    });
+  });
 });
 
 describe("CLI market liquidity commands", () => {

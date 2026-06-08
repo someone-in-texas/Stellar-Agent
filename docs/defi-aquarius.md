@@ -17,17 +17,21 @@ Fetch current Testnet pools from the Aquarius API:
 stellar-agent defi aquarius deployments --network testnet --pools --limit 10 --json
 ```
 
+`--limit` is enforced by the CLI output. Aquarius API pages can still report a larger upstream result count or return a default page internally.
+
 The Testnet router is `CBCFTQSPDBAIZ6R6PJQKSQWKNKWH2QIV3I4J72SHWBIK3ADRRAM5A6GD`. Aquarius documents this as updated in February 2026.
 
 ## Pool Inspection
 
-Inspect a pool by contract id, pool index, asset label, or search term:
+Inspect a pool by exact contract id, pool index, asset label, asset code, or asset contract id:
 
 ```bash
 stellar-agent defi aquarius pool inspect --pool XLM --network testnet --json
 ```
 
 Pool inspection reads Aquarius API metadata such as pool contract address, pool hash, public asset labels, asset contract ids, pool type, fee, transaction count, and reported volume.
+
+Aquarius symbol aliases such as `AQUA` are convenience metadata. If Aquarius changes a live asset contract before this package is updated, pass the exact `C...` contract id shown by `stellar-agent defi aquarius deployments --network <network> --pools --json`.
 
 ## Account Position
 
@@ -129,6 +133,8 @@ defi:
 ```
 
 Default Testnet policy enables Aquarius preflight for deposit, withdraw, and swap with required slippage bounds. Default Mainnet policy disables Aquarius and still requires explicit Mainnet approval if enabled.
+
+When an Aquarius command includes `--network mainnet`, preflight uses the default Mainnet policy unless `--policy` is supplied. An explicit policy file must match the requested Aquarius network.
 
 ## Examples
 

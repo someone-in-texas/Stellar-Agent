@@ -84,12 +84,11 @@ interface CliContext {
 
 type CommandParseArgs = Parameters<Command["parseAsync"]>[0];
 type CommandParseOptions = Parameters<Command["parseAsync"]>[1];
-type CommandWithExit = Command & {
-  _exit(exitCode: number, code: string, message: string): never;
-};
+type AquariusNetworkName = "testnet" | "mainnet";
 
 export function buildProgram(): Command {
   const program = new Command();
+  const parseState = { json: false };
   program
     .name("stellar-agent")
     .description("Stellar Agent Bridge\n\nSafe agentic payments on Stellar from your terminal.")
@@ -127,6 +126,11 @@ Common commands:
   stellar-agent market lp preflight --pool 0123... --max-a 1 --max-b 1 --min-price 0.9 --max-price 1.1 --json
   stellar-agent policy explain --request ./payment-request.json`
     );
+  program.configureOutput({
+    writeErr: (str) => {
+      if (!parseState.json) process.stderr.write(str);
+    }
+  });
 
   addProfileCommands(program);
   addTestnetCommands(program);
@@ -145,7 +149,7 @@ Common commands:
   addCacheCommands(program);
   addMainnetCommands(program);
 
-  installVersionPrecheck(program);
+  installVersionPrecheck(program, parseState);
 
   program.action(() => {
     program.outputHelp();
@@ -154,15 +158,23 @@ Common commands:
   return program;
 }
 
-function installVersionPrecheck(program: Command): void {
+function installVersionPrecheck(program: Command, parseState: { json: boolean }): void {
   const originalParseAsync = program.parseAsync.bind(program);
   program.parseAsync = (async (argv?: CommandParseArgs, parseOptions?: CommandParseOptions) => {
+    parseState.json = jsonOptionRequested(argv, parseOptions);
     const versionOptions = rootVersionOptions(program, argv, parseOptions);
     if (versionOptions) {
       printVersion(versionOptions);
-      (program as CommandWithExit)._exit(EXIT_CODES.success, "commander.version", VERSION);
+      return program;
     }
-    return await originalParseAsync(argv, parseOptions);
+    installExitOverride(program);
+    try {
+      return await originalParseAsync(argv, parseOptions);
+    } catch (error) {
+      if (isCommanderHelpOrVersionExit(error)) return program;
+      printError({ json: parseState.json }, commanderErrorToStellarAgentError(error));
+      return program;
+    }
   }) as Command["parseAsync"];
 }
 
@@ -202,6 +214,15 @@ function userArgs(argv: CommandParseArgs, parseOptions?: CommandParseOptions): s
   if (parseOptions?.from === "user") return args;
   if (parseOptions?.from === "electron") return args.slice(1);
   return args.slice(2);
+}
+
+function jsonOptionRequested(argv: CommandParseArgs = process.argv, parseOptions?: CommandParseOptions): boolean {
+  return userArgs(argv, parseOptions).includes("--json");
+}
+
+function installExitOverride(command: Command): void {
+  command.exitOverride();
+  for (const subcommand of command.commands) installExitOverride(subcommand);
 }
 
 function addCacheCommands(program: Command): void {
@@ -2879,7 +2900,7 @@ function addDefiCommands(program: Command): void {
             ...(options.shares === undefined ? {} : { shareAmount: options.shares }),
             ...(options.minAmount.length === 0 ? {} : { minAmounts: options.minAmount })
           });
-          const policy = await loadPolicy(context);
+          const policy = await loadPolicyForRequestNetwork(context, network);
           const policyDecision = evaluateDefiAquariusRequest(policy, aquariusLpPolicyRequest(preflight));
           return { policyDecision, preflight };
         },
@@ -2925,15 +2946,16 @@ function addDefiCommands(program: Command): void {
           options: { from: string; to: string; amount: string; mode: string; slippageBps: number; network?: string }
         ) => {
           const { preflightAquariusSwap } = await loadDefi();
+          const network = resolveAquariusNetworkOption(context, options.network);
           const preflight = await preflightAquariusSwap({
-            network: resolveAquariusNetworkOption(context, options.network),
+            network,
             inputAsset: options.from,
             outputAsset: options.to,
             amount: options.amount,
             mode: parseAquariusSwapMode(options.mode),
             slippageBps: options.slippageBps
           });
-          const policy = await loadPolicy(context);
+          const policy = await loadPolicyForRequestNetwork(context, network);
           const policyDecision = evaluateDefiAquariusRequest(policy, aquariusSwapPolicyRequest(preflight));
           return { policyDecision, preflight };
         },
@@ -3271,21 +3293,35 @@ async function createTestnetWalletResult(context: CliContext, name: string, fund
   return { wallet, funding };
 }
 
-async function loadPolicy(context: CliContext, explicitPath?: string) {
+async function loadPolicy(context: CliContext, explicitPath?: string, network: NetworkName = context.profileName) {
   const policyPath =
     explicitPath ??
     context.options.policy ??
     process.env.STELLAR_AGENT_POLICY ??
     join(
       context.config.storage.policiesDir,
-      context.profileName === "mainnet" ? "default-mainnet.yaml" : "default-testnet.yaml"
+      network === "mainnet" ? "default-mainnet.yaml" : "default-testnet.yaml"
     );
   try {
     return parsePolicyYaml(await readFile(resolvePath(policyPath), "utf8"));
   } catch (error: any) {
-    if (error?.code === "ENOENT") return defaultPolicyForNetwork(context.profileName);
+    if (error?.code === "ENOENT") return defaultPolicyForNetwork(network);
     throw error;
   }
+}
+
+async function loadPolicyForRequestNetwork(context: CliContext, network: AquariusNetworkName): Promise<Policy> {
+  const explicitPath = context.options.policy ?? process.env.STELLAR_AGENT_POLICY;
+  const policy = await loadPolicy(context, undefined, network);
+  if (explicitPath && policy.network !== network) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: `Policy network '${policy.network}' does not match Aquarius preflight network '${network}'.`,
+      hint: `Use a ${network} policy file or omit --policy to use the default ${network} policy.`,
+      docs: network === "mainnet" ? "docs/mainnet-safety.md#mainnet-defi" : "docs/defi-aquarius.md"
+    });
+  }
+  return policy;
 }
 
 function resolveBlendNetworkOption(context: CliContext, network?: string): "testnet" | "mainnet" {
@@ -4207,6 +4243,49 @@ function printError(options: CliOptions, error: unknown): void {
   process.stderr.write(`${serialized.code}: ${serialized.message}\n`);
   if (serialized.hint) process.stderr.write(`Hint: ${serialized.hint}\n`);
   if (serialized.docs) process.stderr.write(`Docs: ${serialized.docs}\n`);
+}
+
+function commanderErrorToStellarAgentError(error: unknown): unknown {
+  if (error instanceof StellarAgentError) return error;
+  if (!isCommanderError(error)) return error;
+  const message = normalizeCommanderMessage(error.message);
+  return new StellarAgentError({
+    code: "INVALID_INPUT",
+    message,
+    hint: "Run the command with --help and correct the input.",
+    docs: docsForCommanderMessage(message),
+    exitCode: typeof error.exitCode === "number" ? error.exitCode : EXIT_CODES.usage
+  });
+}
+
+function isCommanderError(error: unknown): error is { code: string; exitCode?: number; message: string } {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string" &&
+    (error as { code: string }).code.startsWith("commander.") &&
+    "message" in error &&
+    typeof (error as { message?: unknown }).message === "string"
+  );
+}
+
+function isCommanderHelpOrVersionExit(error: unknown): boolean {
+  return (
+    isCommanderError(error) &&
+    (error.code === "commander.helpDisplayed" || error.code === "commander.version") &&
+    (error.exitCode === undefined || error.exitCode === EXIT_CODES.success)
+  );
+}
+
+function normalizeCommanderMessage(message: string): string {
+  return message.replace(/^error:\s*/i, "");
+}
+
+function docsForCommanderMessage(message: string): string {
+  if (message.includes("--slippage-bps")) return "docs/defi-aquarius.md#swap-quoting-and-preflight";
+  if (message.includes("aquarius")) return "docs/defi-aquarius.md";
+  return "docs/troubleshooting.md";
 }
 
 function fixtureRequest(amount: string) {

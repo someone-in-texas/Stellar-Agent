@@ -265,7 +265,7 @@ const AQUARIUS_DEPLOYMENTS: Record<AquariusNetworkName, AquariusDeployment> = {
       { symbol: "XLM", contractId: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA" },
       {
         symbol: "AQUA",
-        contractId: "CD54JJVY7BM5HCJ37YH2QYDAKL3CMS2UY4WQ66NCKH3QOX2K6WHK4G2Z",
+        contractId: "CAUIKL3IYGMERDRUN6YSCLWVAKIFG5Q4YJHUKM4S4NJZQIA3BAS6OJPK",
         issuer: "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
         classicAsset: "AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
       }
@@ -450,13 +450,15 @@ export async function fetchAquariusPools(args: {
     });
   }
   const raw = await response.json();
+  const requestedLimit = args.limit === undefined ? undefined : validatePositiveInteger(args.limit, "limit");
   const records = Array.isArray((raw as any).results) ? (raw as any).results : Array.isArray(raw) ? raw : [];
-  const publicRaw = aquariusPublicRaw(raw);
+  const limitedRecords = requestedLimit === undefined ? records : records.slice(0, requestedLimit);
+  const publicRaw = aquariusPublicRaw(aquariusRawWithLimitedResults(raw, requestedLimit));
   return {
     network: args.network,
     apiBaseUrl: deployment.apiBaseUrl,
     ...(typeof (raw as any).count === "number" ? { count: (raw as any).count } : {}),
-    pools: records.map(aquariusPoolFromApi),
+    pools: limitedRecords.map(aquariusPoolFromApi),
     raw: publicRaw
   };
 }
@@ -474,13 +476,11 @@ export async function inspectAquariusPool(args: {
   });
   const needle = args.pool.toLowerCase();
   const pool = listed.pools.find((candidate) => {
-    const assets = [...candidate.assetLabels, ...candidate.assetContractIds].map((asset) => asset.toLowerCase());
+    const assets = aquariusAssetGroupsFromPool(candidate)
+      .flat()
+      .map((asset) => asset.toLowerCase());
     return candidate.address.toLowerCase() === needle || candidate.index.toLowerCase() === needle || assets.includes(needle);
   });
-  const firstPool = listed.pools[0];
-  if (!pool && firstPool !== undefined && !isContractId(args.pool)) {
-    return { network: args.network, pool: firstPool, raw: listed.raw };
-  }
   if (pool) return { network: args.network, pool, raw: listed.raw };
   if (isContractId(args.pool)) {
     return {
@@ -498,7 +498,7 @@ export async function inspectAquariusPool(args: {
   throw new StellarAgentError({
     code: "INVALID_INPUT",
     message: `Aquarius pool '${args.pool}' was not found in the ${args.network} API results.`,
-    hint: "Run stellar-agent defi aquarius deployments --network testnet --json to list known pools.",
+    hint: `Run stellar-agent defi aquarius deployments --network ${args.network} --pools --json and pass an exact pool address, pool index, asset label, or asset contract id.`,
     docs: "docs/defi-aquarius.md"
   });
 }
@@ -1208,6 +1208,15 @@ function aquariusPublicRaw(value: unknown): unknown {
     publicObject[aquariusPublicRawKey(key)] = aquariusPublicRaw(child);
   }
   return publicObject;
+}
+
+function aquariusRawWithLimitedResults(raw: unknown, limit: number | undefined): unknown {
+  if (limit === undefined) return raw;
+  if (Array.isArray(raw)) return raw.slice(0, limit);
+  if (raw === null || typeof raw !== "object") return raw;
+  const candidate = raw as { results?: unknown };
+  if (!Array.isArray(candidate.results)) return raw;
+  return { ...candidate, results: candidate.results.slice(0, limit) };
 }
 
 function aquariusPublicRawKey(key: string): string {

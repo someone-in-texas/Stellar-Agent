@@ -9,6 +9,7 @@ import {
   preflightAquariusLp,
   preflightAquariusSwap,
   parseBlendRequest,
+  resolveAquariusAsset,
   resolveBlendAsset,
   resolveBlendPool,
   quoteAquariusSwap
@@ -84,6 +85,14 @@ describe("Aquarius helpers", () => {
     expect(deployment.assets).toEqual(expect.arrayContaining([expect.objectContaining({ symbol: "AQUA" })]));
   });
 
+  it("uses the live Mainnet AQUA asset contract id", () => {
+    const deployment = aquariusDeployment("mainnet");
+    expect(resolveAquariusAsset(deployment, "AQUA")).toMatchObject({
+      contractId: "CAUIKL3IYGMERDRUN6YSCLWVAKIFG5Q4YJHUKM4S4NJZQIA3BAS6OJPK",
+      classicAsset: "AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
+    });
+  });
+
   it("maps Aquarius API pools into stable summaries", async () => {
     const fetchImpl = async () =>
       new Response(
@@ -114,7 +123,37 @@ describe("Aquarius helpers", () => {
     });
   });
 
-  it("resolves Aquarius pool search terms to the first API match", async () => {
+  it("trims Aquarius pool output to the requested limit", async () => {
+    const fetchImpl = async () =>
+      new Response(
+        JSON.stringify({
+          count: 2,
+          results: [
+            {
+              index: "pool-a",
+              address: "CPOOLA",
+              tokens_addresses: ["CXLM", "CAQUA"],
+              tokens_str: ["native", "AQUA:GISSUER"]
+            },
+            {
+              index: "pool-b",
+              address: "CPOOLB",
+              tokens_addresses: ["CXLM", "CUSDC"],
+              tokens_str: ["native", "USDC:GISSUER"]
+            }
+          ]
+        })
+      );
+
+    const pools = await fetchAquariusPools({ network: "testnet", limit: 1, fetchImpl: fetchImpl as typeof fetch });
+
+    expect(pools.count).toBe(2);
+    expect(pools.pools).toHaveLength(1);
+    expect(pools.pools[0]?.address).toBe("CPOOLA");
+    expect((pools.raw as any).results).toHaveLength(1);
+  });
+
+  it("resolves Aquarius pool terms against returned pool metadata", async () => {
     const fetchImpl = async () =>
       new Response(
         JSON.stringify({
@@ -132,6 +171,28 @@ describe("Aquarius helpers", () => {
       );
     const inspected = await inspectAquariusPool({ network: "testnet", pool: "XLM", fetchImpl: fetchImpl as typeof fetch });
     expect(inspected.pool.address).toBe("CPOOL");
+  });
+
+  it("does not fall back to an unrelated Aquarius pool", async () => {
+    const fetchImpl = async () =>
+      new Response(
+        JSON.stringify({
+          results: [
+            {
+              index: "pool-hash",
+              address: "CPOOL",
+              tokens_addresses: ["CUSDC", "CAQUA"],
+              tokens_str: ["USDC:GISSUER", "AQUA:GISSUER"],
+              pool_type: "constant_product",
+              fee: "0.0030"
+            }
+          ]
+        })
+      );
+
+    await expect(inspectAquariusPool({ network: "testnet", pool: "XLM", fetchImpl: fetchImpl as typeof fetch })).rejects.toMatchObject({
+      code: "INVALID_INPUT"
+    });
   });
 
   it("preflights Aquarius LP deposits without signing or submitting", async () => {
