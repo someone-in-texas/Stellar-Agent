@@ -28,6 +28,7 @@ Rules:
 - For WalletConnect/LOBSTR, use `approval sign-walletconnect` only to record signed XDR; submit separately with `tx submit-approval` so policy, Mainnet acknowledgements, and receipts still run.
 - Never treat `--allow-real-funds` as a policy bypass.
 - Treat x402 and MPP as local Testnet demos unless production facilitator support is explicitly added.
+- Use `stellar-agent demo ... --json` for quick Testnet proof bundles; demo commands must not be treated as approval to submit funds.
 - Run `contract doctor` before Stellar CLI-backed contract commands.
 - For Blend and Aquarius, run DeFi inspection and preflight before any protocol action.
 - Treat Aquarius commands in this release as read-only or preflight-only.

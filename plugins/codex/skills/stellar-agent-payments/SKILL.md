@@ -56,6 +56,8 @@ Risk-budgeted Mainnet agent wallet:
 
 HTTP payment demos:
 
+- `stellar-agent demo x402 --out <dir> --json` creates a local x402 paid API server bundle; it does not submit a payment.
+- `stellar-agent demo approval-flow --json` creates a local Testnet approval request; treat the output as a request to review, not approval to submit.
 - `stellar-agent pay x402 <localhost-url> --allow-localhost-demo --json` pays a compatible local x402 demo resource.
 - `stellar-agent pay mpp <localhost-url> --allow-localhost-demo --json` pays a compatible one-time MPP demo resource.
 - `stellar-agent pay mpp-session <localhost-url> --requests <n> --allow-localhost-demo --json` pays a local MPP session budget once, then performs authorized requests.

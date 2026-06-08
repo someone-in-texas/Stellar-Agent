@@ -15,6 +15,18 @@ stellar-agent receipts latest --json
 
 If the quote returns `requires_approval`, stop and ask the user before creating or submitting an approval.
 
+## Fast Demo Bundles
+
+Use these for quick Testnet package evaluation without signing or submitting Mainnet transactions.
+
+```bash
+stellar-agent demo market-aquarius --json
+stellar-agent demo x402 --out ./demo-x402 --json
+stellar-agent demo approval-flow --json
+```
+
+`demo x402` writes a local paid API server bundle. `demo approval-flow` creates a local approval request only. `demo market-aquarius` returns preflight-oriented market and Aquarius commands plus an Aquarius policy preview.
+
 ## Local Paid API Client
 
 Use this for local x402-style demos on Testnet.

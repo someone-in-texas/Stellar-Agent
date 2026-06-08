@@ -1059,6 +1059,81 @@ describe("CLI contract receipts", () => {
     });
   });
 
+  it("creates a local x402 demo bundle", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
+    const out = await mkdtemp(join(tmpdir(), "stellar-agent-demo-x402-"));
+
+    const output = await runCli(["--config", configPath, "--json", "demo", "x402", "--out", out]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        demo: "x402",
+        path: out,
+        network: "testnet",
+        realFunds: false,
+        files: expect.arrayContaining(["package.json", "server.mjs", "README.md"]),
+        commands: expect.arrayContaining([
+          "stellar-agent pay x402 http://127.0.0.1:8787/paid-report --allow-localhost-demo --json"
+        ])
+      }
+    });
+    await expect(readFile(join(out, "server.mjs"), "utf8")).resolves.toContain("verifyPaymentProof");
+
+    const again = await runCli(["--config", configPath, "--json", "demo", "x402", "--out", out]);
+    expect(again).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_INPUT", message: expect.stringContaining("Refusing to overwrite") }
+    });
+  });
+
+  it("creates a safe approval-flow demo request", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
+
+    const output = await runCli(["--config", configPath, "--json", "demo", "approval-flow"]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        demo: "approval-flow",
+        network: "testnet",
+        realFunds: false,
+        approval: {
+          schemaVersion: "stellar-agent.approval.v1",
+          kind: "payment",
+          status: "pending",
+          payment: { amount: "1", asset: "XLM", network: "testnet" },
+          redactions: { secretKeysIncluded: false }
+        },
+        commands: expect.arrayContaining(["stellar-agent approval serve"])
+      }
+    });
+  });
+
+  it("summarizes a Testnet market and Aquarius preflight demo bundle", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { testnetPolicy: true });
+
+    const output = await runCli(["--config", configPath, "--json", "demo", "market-aquarius"]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        demo: "market-aquarius",
+        network: "testnet",
+        realFunds: false,
+        policyPreview: { status: "allowed" },
+        aquarius: {
+          routerContractId: expect.any(String),
+          apiBaseUrl: expect.any(String),
+          assets: expect.arrayContaining([expect.objectContaining({ symbol: "XLM" })])
+        },
+        commands: expect.arrayContaining([
+          "stellar-agent defi aquarius swap preflight --from XLM --to AQUA --amount 0.01 --slippage-bps 100 --json"
+        ])
+      }
+    });
+  });
+
   it("manages a risk-budgeted Mainnet agent wallet without storing a secret key", async () => {
     const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
     const address = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";

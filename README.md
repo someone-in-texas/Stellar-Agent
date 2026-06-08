@@ -116,12 +116,16 @@ stellar-agent contract asset-deploy --source agent --asset native --json
 stellar-agent contract extend --source agent --id C... --ledgers-to-extend 535679 --json
 stellar-agent contract restore --source agent --id C... --json
 stellar-agent testnet scenario x402-payment --json
+stellar-agent demo market-aquarius --json
+stellar-agent demo x402 --out ./demo-x402 --json
+stellar-agent demo approval-flow --json
 stellar-agent x402 init-server --out ./paid-api-server --json
 stellar-agent pay x402 http://127.0.0.1:PORT/paid-report --allow-localhost-demo --json
 stellar-agent pay mpp http://127.0.0.1:PORT/mpp-report --allow-localhost-demo --json
 ```
 
 JSON Schema files for agent/tool integrations ship with `@stellar-agent/cli` under `schemas/cli`. See [docs/cli-json-schemas.md](docs/cli-json-schemas.md).
+Safe demo bundle commands are documented in [docs/demo-bundles.md](docs/demo-bundles.md).
 
 ## Agent Integration
 

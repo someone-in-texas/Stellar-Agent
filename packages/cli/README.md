@@ -39,6 +39,9 @@ stellar-agent approval create-payment --to G... --amount 6 --json
 stellar-agent tx request-payment-signature --from treasury --to G... --amount 1 --json
 stellar-agent approval sign-walletconnect appr_... --wallet lobstr --project-id "$WALLETCONNECT_PROJECT_ID" --json
 stellar-agent tx submit-approval appr_... --json
+stellar-agent demo market-aquarius --json
+stellar-agent demo x402 --out ./demo-x402 --json
+stellar-agent demo approval-flow --json
 stellar-agent defi blend preflight --pool TestnetV2 --account agent --request supply_collateral:USDC:1 --json
 stellar-agent defi aquarius swap preflight --from XLM --to AQUA --amount 0.01 --slippage-bps 100 --json
 ```
@@ -50,6 +53,7 @@ stellar-agent defi aquarius swap preflight --from XLM --to AQUA --amount 0.01 --
 | `testnet` | Initialize, diagnose, fund, smoke-test, and run Testnet scenarios. |
 | `wallet` | Create Testnet wallets, import watch-only wallets, inspect balances, manage trustlines, and inspect WalletConnect signer sessions. |
 | `pay` | Quote, send, batch, x402-demo, and MPP-demo payments. |
+| `demo` | Create or summarize safe Testnet proof bundles for x402, approval flow, and market/Aquarius preflight. |
 | `approval` | Create, list, decide, serve, inspect, and externally sign local approval requests. |
 | `tx` | Build, request signatures for, and submit signed XDR. |
 | `defi` | Inspect and preflight Blend and Aquarius workflows. |

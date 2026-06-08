@@ -148,6 +148,7 @@ Common commands:
   addTransactionCommands(program);
   addPayCommands(program);
   addX402Commands(program);
+  addDemoCommands(program);
   addClaimableCommands(program);
   addContractCommands(program);
   addMarketCommands(program);
@@ -1783,6 +1784,145 @@ function addX402Commands(program: Command): void {
           realFunds: false
         };
       }, "x402 server scaffold initialized.")
+    );
+}
+
+function addDemoCommands(program: Command): void {
+  const demo = program.command("demo").description("Create or summarize safe Testnet demo bundles.");
+
+  demo
+    .command("x402")
+    .description("Create a local x402 paid API server demo bundle.")
+    .option("--out <dir>", "Output directory", "./stellar-agent-x402-demo")
+    .option("--force", "Overwrite demo files if they already exist")
+    .action(
+      withContext(async (_context, options: { out: string; force?: boolean }) => {
+        const outDir = resolvePath(options.out);
+        const files = x402ServerScaffoldFiles();
+        await writeNamedFiles(outDir, files, Boolean(options.force));
+        return {
+          demo: "x402",
+          path: outDir,
+          files: Object.keys(files),
+          network: "testnet",
+          realFunds: false,
+          commands: [
+            `X402_DESTINATION=G... npm --prefix ${outDir} start`,
+            "stellar-agent pay x402 http://127.0.0.1:8787/paid-report --allow-localhost-demo --json",
+            "stellar-agent receipts latest --json"
+          ],
+          safety: [
+            "Uses Testnet payment requirements only.",
+            "The generated server verifies X-Payment proofs through Testnet Horizon.",
+            "Production facilitator-backed x402 remains future work."
+          ]
+        };
+      }, "x402 demo bundle created.")
+    );
+
+  demo
+    .command("approval-flow")
+    .description("Create a local Testnet approval-flow demo request.")
+    .option("--from <account>", "Local source wallet name", "agent")
+    .option("--to <address>", "Destination public key", "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF")
+    .option("--amount <amount>", "Payment amount", "1")
+    .option("--asset <asset>", "Payment asset", "XLM")
+    .action(
+      withContext(
+        async (context, options: { from: string; to: string; amount: string; asset: string }) => {
+          if (context.profileName !== "testnet") {
+            throw new StellarAgentError({
+              code: "MAINNET_NOT_ENABLED",
+              message: "Demo approval flow runs only on the Testnet profile.",
+              docs: "docs/mainnet-safety.md"
+            });
+          }
+          const { createPaymentApprovalRequest } = await import("@stellar-agent/freighter-bridge");
+          const source = await loadWalletPublic(context.config, options.from);
+          const payment = paymentRequestSchema.parse({
+            source: source.publicKey,
+            destination: options.to,
+            amount: options.amount,
+            asset: options.asset,
+            network: "testnet"
+          });
+          const approval = await createPaymentApprovalRequest({
+            approvalsDir: context.config.storage.approvalsDir,
+            payment,
+            summary: `Demo approval for ${payment.amount} ${payment.asset}`
+          });
+          await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
+            event: "approval_requested",
+            status: "pending",
+            command: "demo approval-flow",
+            profile: "testnet",
+            requestId: approval.id,
+            data: approval
+          });
+          return {
+            demo: "approval-flow",
+            network: "testnet",
+            realFunds: false,
+            approval,
+            commands: [
+              "stellar-agent approval serve",
+              `stellar-agent approval decide ${approval.id} --approve --json`,
+              `stellar-agent pay send --to ${payment.destination} --amount ${payment.amount} --asset ${payment.asset} --approval-id ${approval.id} --json`,
+              "stellar-agent receipts latest --json"
+            ],
+            safety: [
+              "Creates an approval request only; it does not sign or submit a transaction.",
+              "Payment submission still runs policy checks and requires the explicit approval id."
+            ]
+          };
+        },
+        "Approval-flow demo request created."
+      )
+    );
+
+  demo
+    .command("market-aquarius")
+    .description("Summarize a safe Testnet market and Aquarius preflight demo bundle.")
+    .action(
+      withContext(async (context) => {
+        const { aquariusDeployment } = await loadDefi();
+        const deployment = aquariusDeployment("testnet");
+        const policy = await loadPolicyForRequestNetwork(context, "testnet");
+        const policyPreview = evaluateDefiAquariusRequest(policy, {
+          network: "testnet",
+          pool: "*",
+          assets: ["XLM", "AQUA"],
+          assetGroups: [["XLM"], ["AQUA"]],
+          action: "swap",
+          nominalExposure: "0.01",
+          slippageBoundsProvided: true
+        });
+        return {
+          demo: "market-aquarius",
+          network: "testnet",
+          realFunds: false,
+          policyPreview,
+          aquarius: {
+            routerContractId: deployment.routerContractId,
+            apiBaseUrl: deployment.apiBaseUrl,
+            assets: deployment.assets.map((asset) => ({
+              symbol: asset.symbol,
+              contractId: asset.contractId
+            }))
+          },
+          commands: [
+            "stellar-agent market pools list --network testnet --limit 5 --json",
+            "stellar-agent market lp preflight --pool <pool-id> --action deposit --max-a 0.01 --max-b 0.01 --min-price 0.9 --max-price 1.1 --json",
+            "stellar-agent defi aquarius deployments --network testnet --pools --limit 5 --json",
+            "stellar-agent defi aquarius swap preflight --from XLM --to AQUA --amount 0.01 --slippage-bps 100 --json"
+          ],
+          safety: [
+            "The bundle is preflight-oriented and does not sign or submit liquidity or Aquarius transactions.",
+            "Re-run preflight immediately before any later human-approved mutation.",
+            "Aquarius commands remain read-only or preflight-only in this release."
+          ]
+        };
+      }, "Market and Aquarius demo bundle loaded.")
     );
 }
 
@@ -6176,6 +6316,27 @@ X402_AMOUNT=0.0000001 X402_ASSET=XLM X402_HORIZON_URL=https://horizon-testnet.st
 This is still a local Testnet example, not a production facilitator. Keep policy evaluation and receipt persistence on the buyer side with \`stellar-agent pay x402 ... --json\`.
 `
   };
+}
+
+async function writeNamedFiles(outDir: string, files: Record<string, string>, force: boolean): Promise<void> {
+  await mkdir(outDir, { recursive: true });
+  for (const [name, contents] of Object.entries(files)) {
+    const target = join(outDir, name);
+    if (!force) {
+      try {
+        await readFile(target, "utf8");
+        throw new StellarAgentError({
+          code: "INVALID_INPUT",
+          message: `Refusing to overwrite existing demo file '${target}'.`,
+          hint: "Use --force to replace demo files intentionally."
+        });
+      } catch (error: any) {
+        if (error instanceof StellarAgentError) throw error;
+        if (error?.code !== "ENOENT") throw error;
+      }
+    }
+    await writeFile(target, contents, { mode: name.endsWith(".mjs") ? 0o755 : 0o600 });
+  }
 }
 
 function enableX402ForUrl(policy: Policy, url: string): Policy {
