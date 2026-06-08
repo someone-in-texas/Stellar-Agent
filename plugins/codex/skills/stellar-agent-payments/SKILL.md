@@ -13,6 +13,7 @@ Rules:
 7. Never print or log secrets.
 8. Never use `--allow-real-funds` as a policy bypass.
 9. Mainnet agent-wallet spend is bounded, not safe; generic Mainnet auto-signing remains blocked.
+10. After any submitted payment or signed-XDR submission, inspect `stellar-agent receipts latest --json` and report the receipt path and transaction hash without printing secrets.
 
 Direct payments:
 
@@ -25,6 +26,7 @@ Direct payments:
 Approval and signing:
 
 - If policy requires approval, stop after showing the approval summary.
+- Submit with `--approval-id <id>` only after explicit authorization for the exact destination, amount, asset, profile, and memo/domain when present.
 - Use `stellar-agent approval create-transaction --xdr <base64> --summary <text> --network testnet --json` for prebuilt XDR approval requests.
 - Use the Freighter bridge only for explicit user-approved signing workflows.
 - Use WalletConnect/LOBSTR only for explicit user-approved external signing workflows.

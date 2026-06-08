@@ -25,6 +25,8 @@ stellar-agent contract info --kind interface --id C... --json
 
 Published JSON Schemas for key `--json` payloads ship with `@stellar-agent/cli` under `schemas/cli`. Validate the common envelope with `envelope.schema.json`, then validate `data` with the command-specific schema. See [cli-json-schemas.md](cli-json-schemas.md).
 
+For concrete LLM-agent call sequences, including quote-first payment, approval-required stops, explicit authorization, and receipt persistence, see [agent-recipes.md](agent-recipes.md).
+
 The standard success envelope is:
 
 ```json

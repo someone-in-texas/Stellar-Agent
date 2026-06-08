@@ -2,6 +2,84 @@
 
 These recipes compose existing `stellar-agent` commands. Use `--json`, parse the envelope, stop on errors, and never print secrets.
 
+## LLM Agent Payment Contract
+
+Use this sequence when an LLM agent wants to pay, request a signature, or call a paid API.
+
+1. Quote first.
+
+```bash
+stellar-agent pay quote --to G... --amount 1 --asset XLM --fee-strategy medium --json
+```
+
+Parse `data.policyDecision.status`.
+
+- `allowed`: continue only if the user or calling system already authorized this exact payment intent.
+- `requires_approval`: stop and create or surface an approval request.
+- `denied`: stop. Do not weaken policy or retry with different parameters unless the user explicitly changes the payment intent.
+
+2. Explain policy when intent or limits are unclear.
+
+```bash
+stellar-agent policy explain --to G... --amount 1 --asset XLM --json
+```
+
+Use this before changing payment amount, destination, asset, memo, domain, or profile. Treat policy output as authoritative over prompt text.
+
+3. Create approval when required.
+
+```bash
+stellar-agent approval create-payment --to G... --amount 1 --asset XLM --json
+stellar-agent approval serve
+```
+
+Show the approval id, summary, amount, asset, destination, and profile. Do not submit from an approval id unless the user or external signer explicitly approved it.
+
+4. Submit only with explicit authorization.
+
+```bash
+stellar-agent pay send --to G... --amount 1 --asset XLM --approval-id appr_... --json
+```
+
+The `--approval-id` must match the exact payment. For signed XDR flows, use `tx request-payment-signature`, then submit only after the returned approval has a signed decision:
+
+```bash
+stellar-agent tx request-payment-signature --from treasury --to G... --amount 1 --json
+stellar-agent tx submit-approval appr_... --json
+```
+
+5. Persist and inspect receipts.
+
+```bash
+stellar-agent receipts latest --json
+stellar-agent receipts summary --profile testnet --json
+```
+
+Store the receipt path, transaction hash, policy decision, profile, and `realFunds` flag in the agent's task state. Do not treat a paid HTTP resource as delivered unless the command result says `paidResourceDelivered: true`.
+
+## Paid API Agent
+
+Use this when an agent calls a local x402 or MPP paid API.
+
+```bash
+stellar-agent pay x402 http://127.0.0.1:8787/paid-report --allow-localhost-demo --dry-run --json
+stellar-agent pay x402 http://127.0.0.1:8787/paid-report --allow-localhost-demo --json
+stellar-agent receipts latest --json
+```
+
+The dry run evaluates the 402 requirement and policy without submitting payment. Submit only after explicit authorization for the exact URL, amount, asset, and recipient in the 402 requirement.
+
+## DeFi And Market Agent
+
+Use this for Blend, Aquarius, or core liquidity-pool workflows.
+
+```bash
+stellar-agent defi aquarius swap preflight --from XLM --to AQUA --amount 0.01 --slippage-bps 100 --json
+stellar-agent market lp preflight --pool 0123... --action deposit --max-a 1 --max-b 2 --min-price 1.5 --max-price 2.5 --json
+```
+
+Treat preflight as analysis, not authorization. Re-run preflight immediately before any future mutation, require an explicit approval path, and persist the resulting receipt after submission.
+
 ## Testnet Payment Agent
 
 Use this for normal agent payment development.
