@@ -1,7 +1,10 @@
 import { makeId, parseAmount } from "@stellar-agent/core";
 import { X402PaymentProof, X402PaymentRequirement } from "@stellar-agent/x402-client";
 import express, { type Express, type Request, type Response } from "express";
+import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export interface SellerServiceOptions {
   recipient: string;
@@ -224,7 +227,34 @@ function originForRequest(request: Request): string {
   return `${request.protocol}://${request.get("host")}`;
 }
 
+export function loadMarketEnv(filePath = resolve(dirname(fileURLToPath(import.meta.url)), "..", ".env")): void {
+  let source: string;
+  try {
+    source = readFileSync(filePath, "utf8");
+  } catch (error: any) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  for (const rawLine of source.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
+    if (!match) continue;
+    const [, key, rawValue] = match;
+    if (process.env[key] !== undefined) continue;
+    process.env[key] = unquoteEnvValue(rawValue.trim());
+  }
+}
+
+function unquoteEnvValue(value: string): string {
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
+  loadMarketEnv();
   const service = await startSellerService({
     recipient: process.env.SELLER_RECIPIENT ?? "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
     price: process.env.SERVICE_PRICE ?? "0.0000002",

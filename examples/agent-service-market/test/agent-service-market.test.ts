@@ -1,11 +1,11 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_TESTNET_POLICY } from "@stellar-agent/policy";
 import { parseX402Requirement } from "@stellar-agent/x402-client";
 import { buyDiscoveredService, buyerPolicyForService, discoverSellerServices } from "../src/buyer.js";
-import { startSellerService } from "../src/seller.js";
+import { loadMarketEnv, startSellerService } from "../src/seller.js";
 
 const recipient = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 
@@ -78,8 +78,9 @@ describe("examples/agent-service-market", () => {
         finalStatus: 200,
         policyDecision: { status: "allowed" },
         paidResourceDelivered: true,
-        transaction: { hash: "market".padEnd(64, "0"), successful: true }
+        transaction: { successful: true }
       });
+      expect(result.result.transaction?.hash).toMatch(/^[a-f0-9]{64}$/);
       expect(result.result.responseBody).toContain("Seller agent premium summary");
       expect(result.latestReceipt?.receipt).toMatchObject({
         command: "examples/agent-service-market buyer",
@@ -92,6 +93,20 @@ describe("examples/agent-service-market", () => {
         },
         policyDecision: { status: "allowed" }
       });
+    } finally {
+      await seller.close();
+    }
+  });
+
+  it("uses fresh mock transaction hashes for repeated buyer runs against one seller", async () => {
+    const seller = await startSellerService({ recipient });
+    const root = await mkdtemp(join(tmpdir(), "stellar-agent-market-repeat-"));
+    try {
+      const first = await buyDiscoveredService({ directoryUrl: seller.directoryUrl, rootDir: root });
+      const second = await buyDiscoveredService({ directoryUrl: seller.directoryUrl, rootDir: root });
+      expect(first.result.finalStatus).toBe(200);
+      expect(second.result.finalStatus).toBe(200);
+      expect(first.result.transaction?.hash).not.toBe(second.result.transaction?.hash);
     } finally {
       await seller.close();
     }
@@ -136,4 +151,45 @@ describe("examples/agent-service-market", () => {
       await seller.close();
     }
   });
+
+  it("loads copied .env values before seller or buyer scripts read settings", async () => {
+    const root = await mkdtemp(join(tmpdir(), "stellar-agent-market-env-"));
+    const envPath = join(root, ".env");
+    const previous = {
+      PORT: process.env.PORT,
+      SELLER_RECIPIENT: process.env.SELLER_RECIPIENT,
+      SERVICE_PRICE: process.env.SERVICE_PRICE,
+      SERVICE_ASSET: process.env.SERVICE_ASSET,
+      STELLAR_AGENT_MARKET_ROOT: process.env.STELLAR_AGENT_MARKET_ROOT
+    };
+    for (const key of Object.keys(previous)) delete process.env[key];
+    await writeFile(
+      envPath,
+      [
+        "PORT=8799",
+        `SELLER_RECIPIENT=${recipient}`,
+        "SERVICE_PRICE=0.0000004",
+        "SERVICE_ASSET=XLM",
+        "STELLAR_AGENT_MARKET_ROOT=.tmp-agent-market"
+      ].join("\n")
+    );
+
+    try {
+      loadMarketEnv(envPath);
+      expect(process.env.PORT).toBe("8799");
+      expect(process.env.SELLER_RECIPIENT).toBe(recipient);
+      expect(process.env.SERVICE_PRICE).toBe("0.0000004");
+      expect(process.env.SERVICE_ASSET).toBe("XLM");
+      expect(process.env.STELLAR_AGENT_MARKET_ROOT).toBe(".tmp-agent-market");
+    } finally {
+      restoreEnv(previous);
+    }
+  });
 });
+
+function restoreEnv(previous: Record<string, string | undefined>): void {
+  for (const [key, value] of Object.entries(previous)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+}

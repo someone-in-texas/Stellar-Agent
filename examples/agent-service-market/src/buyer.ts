@@ -3,9 +3,10 @@ import { latestReceipt } from "@stellar-agent/ledger-logger";
 import { DEFAULT_TESTNET_POLICY, Policy } from "@stellar-agent/policy";
 import { SpendHistory } from "@stellar-agent/policy";
 import { runX402Payment } from "@stellar-agent/x402-client";
+import { randomBytes } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { ServiceDirectory, ServiceListing } from "./seller.js";
+import { loadMarketEnv, ServiceDirectory, ServiceListing } from "./seller.js";
 
 export const buyerWallet: TestnetWallet = {
   schemaVersion: "stellar-agent.wallet.v1",
@@ -88,7 +89,7 @@ export async function buyDiscoveredService(args: {
     command: "examples/agent-service-market buyer",
     spendHistory: args.spendHistory,
     sendPaymentImpl: async () => ({
-      hash: "market".padEnd(64, "0"),
+      hash: randomBytes(32).toString("hex"),
       ledger: 54321,
       successful: true,
       feeCharged: "100"
@@ -103,7 +104,9 @@ export async function buyDiscoveredService(args: {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const directoryUrl = process.argv[2] ?? "http://127.0.0.1:8790/.well-known/agent-service.json";
+  loadMarketEnv();
+  const port = process.env.PORT ?? "8790";
+  const directoryUrl = process.argv[2] ?? process.env.SELLER_DIRECTORY_URL ?? `http://127.0.0.1:${port}/.well-known/agent-service.json`;
   try {
     console.log(JSON.stringify(ok(await buyDiscoveredService({ directoryUrl })), null, 2));
   } catch (error) {

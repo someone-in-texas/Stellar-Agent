@@ -6,7 +6,7 @@
   "scripts": {
     "seller": "tsx src/seller.ts",
     "buyer": "tsx src/buyer.ts",
-    "test": "vitest run examples/agent-service-market/test/agent-service-market.test.ts"
+    "test": "vitest run test/agent-service-market.test.ts"
   },
   "dependencies": {
     "@stellar-agent/core": "workspace:*",

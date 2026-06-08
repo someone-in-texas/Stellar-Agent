@@ -13,6 +13,8 @@ cp examples/agent-service-market/.env.example examples/agent-service-market/.env
 pnpm exec tsx examples/agent-service-market/src/seller.ts
 ```
 
+The seller and buyer scripts load `examples/agent-service-market/.env` automatically before reading `PORT`, `SELLER_RECIPIENT`, `SERVICE_PRICE`, `SERVICE_ASSET`, or `STELLAR_AGENT_MARKET_ROOT`.
+
 In another terminal:
 
 ```bash
@@ -66,7 +68,11 @@ Replace the toy JSON in `src/seller.ts` with your real paid service result. Keep
 
 The buyer uses `buyerPolicyForService` in `src/buyer.ts` to allow only the discovered seller domain. Tighten `maxPricePerRequest`, `dailyTotal`, and `monthlyTotal` for your agent budget.
 
-Use `latestReceipt` or `stellar-agent receipts latest --json` to inspect the payment record after a successful call.
+Use `latestReceipt` or the CLI with the example storage root to inspect the payment record after a successful call:
+
+```bash
+STELLAR_AGENT_HOME=.stellar-agent-service-market stellar-agent receipts latest --json
+```
 
 ## Policy And Receipts
 
