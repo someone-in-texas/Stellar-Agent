@@ -25,6 +25,8 @@ const decision = evaluatePaymentRequest(policy, {
 });
 ```
 
+`defaultPolicyForNetwork("local")` returns a local-network policy derived from the Testnet-safe limits so local payment evaluation does not reuse a Testnet-labeled policy.
+
 ## Policy Areas
 
 - Payment limits, allowed assets, recipients, and domains.

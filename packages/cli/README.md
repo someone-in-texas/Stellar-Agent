@@ -54,6 +54,8 @@ stellar-agent defi aquarius swap preflight --from XLM --to AQUA --amount 0.01 --
 | `ledger` and `receipts` | Inspect ledgers, effects, payments, reports, and local receipts. |
 | `policy` | Write, check, print, and explain policy decisions. |
 
+`stellar-agent policy init --network local` writes `default-local.yaml`; Testnet and Mainnet defaults use `default-testnet.yaml` and `default-mainnet.yaml`.
+
 ## Safety
 
 - Testnet is the default.

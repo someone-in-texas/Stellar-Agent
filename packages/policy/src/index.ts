@@ -360,6 +360,12 @@ export const DEFAULT_MAINNET_POLICY: Policy = {
   }
 };
 
+export const DEFAULT_LOCAL_POLICY: Policy = {
+  ...DEFAULT_TESTNET_POLICY,
+  name: "default-local-policy",
+  network: "local"
+};
+
 export function parsePolicyYaml(source: string): Policy {
   try {
     return policySchema.parse(parseYaml(source));
@@ -380,6 +386,7 @@ export function policyToYaml(policy: Policy): string {
 
 export function defaultPolicyForNetwork(network: "testnet" | "mainnet" | "local"): Policy {
   if (network === "mainnet") return DEFAULT_MAINNET_POLICY;
+  if (network === "local") return DEFAULT_LOCAL_POLICY;
   return DEFAULT_TESTNET_POLICY;
 }
 

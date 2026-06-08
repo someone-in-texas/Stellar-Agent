@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_LOCAL_POLICY,
   DEFAULT_MAINNET_POLICY,
   DEFAULT_TESTNET_POLICY,
+  defaultPolicyForNetwork,
   evaluateDefiAquariusRequest,
   evaluateDefiBlendRequest,
   evaluateMarketLiquidityRequest,
@@ -70,6 +72,24 @@ describe("policy evaluation", () => {
     expect(decision.status).toBe("denied");
     expect(decision.matchedRules).toContain("policy_network_mismatch");
     expect(decision.matchedRules).toContain("mainnet_requires_approval");
+  });
+
+  it("allows local payment evaluation under the default local policy", () => {
+    const policy = defaultPolicyForNetwork("local");
+    expect(policy).toMatchObject({ name: "default-local-policy", network: "local" });
+    expect(policy).toEqual(DEFAULT_LOCAL_POLICY);
+
+    const decision = evaluatePaymentRequest(policy, {
+      destination,
+      amount: "1",
+      asset: "XLM",
+      network: "local"
+    });
+
+    expect(decision.status).toBe("allowed");
+    expect(decision.network).toBe("local");
+    expect(decision.realFunds).toBe(false);
+    expect(decision.matchedRules).not.toContain("policy_network_mismatch");
   });
 
   it("fails closed when spend history is unreadable", () => {

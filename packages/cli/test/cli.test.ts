@@ -408,6 +408,60 @@ describe("CLI contract receipts", () => {
       }
     });
   });
+
+  it("uses the default local policy for local payment quotes", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { localProfile: true, testnetPolicy: true });
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--profile",
+      "local",
+      "--json",
+      "pay",
+      "quote",
+      "--to",
+      "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      "--amount",
+      "1"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        request: { network: "local" },
+        estimatedFee: { source: "base_fee_fallback" },
+        policyDecision: {
+          status: "allowed",
+          network: "local",
+          realFunds: false
+        }
+      }
+    });
+    expect(output.data.policyDecision.matchedRules).not.toContain("policy_network_mismatch");
+  });
+
+  it("initializes local policies under a local-specific filename", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { localProfile: true });
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "policy",
+      "init",
+      "--network",
+      "local"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        path: expect.stringContaining("default-local.yaml"),
+        policy: { name: "default-local-policy", network: "local" }
+      }
+    });
+  });
 });
 
 describe("CLI DeFi commands", () => {
@@ -949,12 +1003,31 @@ describe("CLI market liquidity commands", () => {
   });
 });
 
-async function createCliFixture(args: { stdout: string; stderr: string }, options: { mainnetEnabled?: boolean } = {}) {
+async function createCliFixture(
+  args: { stdout: string; stderr: string },
+  options: { mainnetEnabled?: boolean; localProfile?: boolean; testnetPolicy?: boolean } = {}
+) {
   const root = await mkdtemp(join(tmpdir(), "stellar-agent-cli-test-"));
   const config = createDefaultConfig(root);
   if (options.mainnetEnabled && config.profiles.mainnet) config.profiles.mainnet.enabled = true;
+  if (options.localProfile) {
+    config.profiles.local = {
+      name: "local",
+      network: "local",
+      networkPassphrase: "Standalone Network ; February 2017",
+      horizonUrl: null,
+      rpcUrl: null,
+      friendbotUrl: null,
+      defaultAsset: "XLM",
+      realFunds: false
+    };
+  }
   const configPath = join(root, "config.yaml");
   await mkdir(config.storage.walletsDir, { recursive: true });
+  if (options.testnetPolicy) {
+    await mkdir(config.storage.policiesDir, { recursive: true });
+    await writeFile(join(config.storage.policiesDir, "default-testnet.yaml"), policyToYaml(DEFAULT_TESTNET_POLICY), { mode: 0o600 });
+  }
   await ensureWallet(config, "agent");
   await writeFile(configPath, stringify(config), { mode: 0o600 });
 

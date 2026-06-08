@@ -3000,9 +3000,11 @@ function addPolicyCommands(program: Command): void {
         const target = defaultPolicyForNetwork(options.network);
         const path =
           options.output ??
-          join(context.config.storage.policiesDir, options.network === "mainnet" ? "default-mainnet.yaml" : "default-testnet.yaml");
-        await writeFile(resolvePath(path), policyToYaml(target), { mode: 0o600 });
-        return { path: resolvePath(path), policy: target };
+          join(context.config.storage.policiesDir, defaultPolicyFilename(options.network));
+        const resolvedPath = resolvePath(path);
+        await mkdir(dirname(resolvedPath), { recursive: true });
+        await writeFile(resolvedPath, policyToYaml(target), { mode: 0o600 });
+        return { path: resolvedPath, policy: target };
       }, "Policy initialized.")
     );
   policy
@@ -3303,10 +3305,7 @@ async function loadPolicy(context: CliContext, explicitPath?: string, network: N
     explicitPath ??
     context.options.policy ??
     process.env.STELLAR_AGENT_POLICY ??
-    join(
-      context.config.storage.policiesDir,
-      network === "mainnet" ? "default-mainnet.yaml" : "default-testnet.yaml"
-    );
+    join(context.config.storage.policiesDir, defaultPolicyFilename(network));
   try {
     return parsePolicyYaml(await readFile(resolvePath(policyPath), "utf8"));
   } catch (error: any) {
@@ -3327,6 +3326,12 @@ async function loadPolicyForRequestNetwork(context: CliContext, network: Aquariu
     });
   }
   return policy;
+}
+
+function defaultPolicyFilename(network: NetworkName): string {
+  if (network === "mainnet") return "default-mainnet.yaml";
+  if (network === "local") return "default-local.yaml";
+  return "default-testnet.yaml";
 }
 
 function resolveBlendNetworkOption(context: CliContext, network?: string): "testnet" | "mainnet" {
