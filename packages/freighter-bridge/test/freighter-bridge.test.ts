@@ -156,6 +156,7 @@ describe("freighter bridge approvals", () => {
       expect(html).not.toContain(bridge.authToken);
       expect(html).not.toContain("cdnjs.cloudflare.com");
       expect(bridge.uiUrl).toContain(encodeURIComponent(bridge.authToken));
+      expect(bridge.copyUrl).toBe(bridge.uiUrl);
     } finally {
       await bridge.close();
     }

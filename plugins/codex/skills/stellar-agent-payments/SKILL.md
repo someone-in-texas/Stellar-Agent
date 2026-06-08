@@ -27,6 +27,7 @@ Approval and signing:
 
 - If policy requires approval, stop after showing the approval summary.
 - Submit with `--approval-id <id>` only after explicit authorization for the exact destination, amount, asset, profile, and memo/domain when present.
+- Use `stellar-agent approval open --port <port> --token <session-token> --json` to reconstruct the browser `copyUrl` for a running approval bridge.
 - Use `stellar-agent approval create-transaction --xdr <base64> --summary <text> --network testnet --json` for prebuilt XDR approval requests.
 - Use the Freighter bridge only for explicit user-approved signing workflows.
 - Use WalletConnect/LOBSTR only for explicit user-approved external signing workflows.

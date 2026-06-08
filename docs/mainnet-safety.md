@@ -187,9 +187,12 @@ stellar-agent approval create-transaction --xdr AAAA... --summary "Sign contract
 stellar-agent approval list --json
 stellar-agent approval decide appr_... --approve --json
 stellar-agent approval serve
+stellar-agent approval open --port 8787 --token <session-token> --json
 ```
 
-The server prints a per-session API token and an approval UI URL with the token in the URL fragment. The unauthenticated HTML served at `/` does not embed the token. Browser requests from the printed UI URL include this token automatically. Non-browser API clients must send it as `Authorization: Bearer <token>`. The bridge also rejects cross-origin API writes and oversized request bodies.
+The server prints a per-session API token, an approval UI URL, and a `copyUrl` JSON field with the token in the URL fragment. The unauthenticated HTML served at `/` does not embed the token. Browser requests from the printed UI URL include this token automatically. Non-browser API clients must send it as `Authorization: Bearer <token>`. The bridge also rejects cross-origin API writes and oversized request bodies.
+
+Use `approval open --port <port> --token <session-token> --json` to reconstruct a browser URL for a bridge that is already running on a known localhost port.
 
 By default, `approval serve` binds to `127.0.0.1`. Binding to a non-loopback host such as `0.0.0.0` requires the explicit `--allow-remote-access` acknowledgement and should be used only on trusted networks.
 

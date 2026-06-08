@@ -1110,6 +1110,36 @@ describe("CLI contract receipts", () => {
     });
   });
 
+  it("prints a copyable approval bridge URL without starting the server", async () => {
+    const { configPath, config } = await createCliFixture({ stdout: "", stderr: "" });
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "approval",
+      "open",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "8787",
+      "--token",
+      "token with spaces"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        url: "http://127.0.0.1:8787",
+        uiUrl: "http://127.0.0.1:8787/#token=token%20with%20spaces",
+        copyUrl: "http://127.0.0.1:8787/#token=token%20with%20spaces",
+        sessionIncluded: true,
+        approvalsDir: config.storage.approvalsDir,
+        startServer: "stellar-agent approval serve --host 127.0.0.1 --port 8787"
+      }
+    });
+  });
+
   it("summarizes a Testnet market and Aquarius preflight demo bundle", async () => {
     const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { testnetPolicy: true });
 

@@ -1075,6 +1075,29 @@ function addApprovalCommands(program: Command): void {
       )
     );
   approval
+    .command("open")
+    .description("Print the local approval bridge UI URL to open in a browser.")
+    .option("--host <host>", "Host", "127.0.0.1")
+    .option("--port <port>", "Port", parsePortOption, 8787)
+    .option("--token <token>", "Session token printed by approval serve")
+    .action(
+      withContext(async (context, options: { host: string; port: number; token?: string }) => {
+        const url = `http://${options.host}:${options.port}`;
+        const uiUrl = approvalUiUrl(url, options.token);
+        return {
+          url,
+          uiUrl,
+          copyUrl: uiUrl,
+          sessionIncluded: Boolean(options.token),
+          approvalsDir: context.config.storage.approvalsDir,
+          startServer: `stellar-agent approval serve --host ${options.host} --port ${options.port}`,
+          note: options.token
+            ? "Open copyUrl in a browser with Freighter installed."
+            : "Run approval serve and pass its session token with --token to include browser API authorization."
+        };
+      }, "Approval bridge URL loaded.")
+    );
+  approval
     .command("serve")
     .description("Start the local approval bridge HTTP server.")
     .option("--host <host>", "Host", "127.0.0.1")
@@ -1094,11 +1117,12 @@ function addApprovalCommands(program: Command): void {
       });
       if (parent.json) {
         process.stdout.write(
-          `${JSON.stringify(ok({ url: bridge.url, uiUrl: bridge.uiUrl, authToken: bridge.authToken, approvalsDir: context.config.storage.approvalsDir }))}\n`
+          `${JSON.stringify(ok({ url: bridge.url, uiUrl: bridge.uiUrl, copyUrl: bridge.copyUrl, authToken: bridge.authToken, approvalsDir: context.config.storage.approvalsDir }))}\n`
         );
       } else {
         process.stdout.write(`Approval bridge listening at ${bridge.url}\n`);
-        process.stdout.write(`Open approval UI: ${bridge.uiUrl}\n`);
+        process.stdout.write(`Approval UI URL: ${bridge.uiUrl}\n`);
+        process.stdout.write(`Copy this URL: ${bridge.copyUrl}\n`);
         process.stdout.write("Approval bridge API requires the printed session token for non-browser requests.\n");
         process.stdout.write(`Session token: ${bridge.authToken}\n`);
       }
@@ -5708,6 +5732,10 @@ function parsePortOption(value: string): number {
     });
   }
   return parsed;
+}
+
+function approvalUiUrl(baseUrl: string, token?: string): string {
+  return token ? `${baseUrl}/#token=${encodeURIComponent(token)}` : `${baseUrl}/`;
 }
 
 function parsePositiveIntegerOption(value: string): number {

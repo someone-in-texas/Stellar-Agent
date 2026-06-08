@@ -18,6 +18,7 @@ stellar-agent approval create-transaction --xdr AAAA... --summary "Sign contract
 stellar-agent tx request-payment-signature --from treasury --to G... --amount 1 --json
 stellar-agent approval decide appr_... --approve --json
 stellar-agent approval serve
+stellar-agent approval open --port 8787 --token <session-token> --json
 stellar-agent pay send --to G... --amount 6 --approval-id appr_... --json
 stellar-agent tx submit-approval appr_... --json
 ```
@@ -35,7 +36,7 @@ stellar-agent tx submit-approval appr_... --json
 
 ## Safety
 
-The UI uses Freighter's browser API when available. It reads the bridge token from the printed `uiUrl` fragment, not from unauthenticated HTML, and posts `signedTransactionXdr` and `signerPublicKey` back to the bridge without exposing secrets to the CLI. The bridge accepts signed transaction XDR only when it has at least one signature and its transaction body matches the original approval request. Signed transaction approvals can then be submitted to Testnet with `tx submit-approval`. Mainnet submission is available only with Mainnet enabled, an active Mainnet profile, and `--allow-real-funds --i-understand-real-funds`; the CLI still never imports or stores Mainnet secret keys.
+The UI uses Freighter's browser API when available. It reads the bridge token from the printed `uiUrl` or `copyUrl` fragment, not from unauthenticated HTML, and posts `signedTransactionXdr` and `signerPublicKey` back to the bridge without exposing secrets to the CLI. The bridge accepts signed transaction XDR only when it has at least one signature and its transaction body matches the original approval request. Signed transaction approvals can then be submitted to Testnet with `tx submit-approval`. Mainnet submission is available only with Mainnet enabled, an active Mainnet profile, and `--allow-real-funds --i-understand-real-funds`; the CLI still never imports or stores Mainnet secret keys.
 
 ## Links
 

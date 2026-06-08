@@ -31,6 +31,7 @@ Use this before changing payment amount, destination, asset, memo, domain, or pr
 ```bash
 stellar-agent approval create-payment --to G... --amount 1 --asset XLM --json
 stellar-agent approval serve
+stellar-agent approval open --port 8787 --token <session-token> --json
 ```
 
 Show the approval id, summary, amount, asset, destination, and profile. Do not submit from an approval id unless the user or external signer explicitly approved it.

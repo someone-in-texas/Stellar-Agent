@@ -49,6 +49,7 @@ export interface ApprovalStore {
 export interface ApprovalBridge {
   url: string;
   uiUrl: string;
+  copyUrl: string;
   authToken: string;
   close(): Promise<void>;
 }
@@ -257,9 +258,11 @@ export async function startApprovalBridge(args: {
   const address = server.address();
   const port = typeof address === "object" && address ? address.port : args.port;
   const url = `http://${host}:${port}`;
+  const uiUrl = `${url}/#token=${encodeURIComponent(authToken)}`;
   return {
     url,
-    uiUrl: `${url}/#token=${encodeURIComponent(authToken)}`,
+    uiUrl,
+    copyUrl: uiUrl,
     authToken,
     close: () => closeServer(server)
   };

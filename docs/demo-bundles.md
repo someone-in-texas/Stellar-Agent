@@ -17,6 +17,7 @@ The generated server verifies `X-Payment` proofs through Testnet Horizon before 
 ```bash
 stellar-agent demo approval-flow --json
 stellar-agent approval serve
+stellar-agent approval open --port 8787 --token <session-token> --json
 stellar-agent approval decide appr_... --approve --json
 stellar-agent pay send --to G... --amount 1 --asset XLM --approval-id appr_... --json
 ```

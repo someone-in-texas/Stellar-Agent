@@ -36,6 +36,7 @@ stellar-agent wallet create-testnet agent --fund --json
 stellar-agent pay quote --to G... --amount 1 --asset XLM --json
 stellar-agent pay send --to G... --amount 1 --asset XLM --json
 stellar-agent approval create-payment --to G... --amount 6 --json
+stellar-agent approval open --port 8787 --token <session-token> --json
 stellar-agent tx request-payment-signature --from treasury --to G... --amount 1 --json
 stellar-agent approval sign-walletconnect appr_... --wallet lobstr --project-id "$WALLETCONNECT_PROJECT_ID" --json
 stellar-agent tx submit-approval appr_... --json
