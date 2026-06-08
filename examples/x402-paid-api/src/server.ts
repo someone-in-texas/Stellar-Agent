@@ -2,6 +2,9 @@ import { makeId, parseAmount } from "@stellar-agent/core";
 import { X402PaymentProof, X402PaymentRequirement } from "@stellar-agent/x402-client";
 import express, { type Express, type Request, type Response } from "express";
 import { createServer, type Server } from "node:http";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export interface X402PaidApiOptions {
   recipient: string;
@@ -28,6 +31,7 @@ export function createX402PaidApi(options: X402PaidApiOptions): Express {
   const app = express();
   app.use(express.json());
   const acceptedTransactions = new Set<string>();
+  const issuedRequirements = new Map<string, X402PaymentRequirement>();
 
   app.get("/free", (_request, response) => {
     response.json({
@@ -42,7 +46,9 @@ export function createX402PaidApi(options: X402PaidApiOptions): Express {
     const proofHeader = request.header("x-payment");
     const proof = parsePaymentProof(proofHeader);
     if (!proofHeader) {
-      writePaymentRequired(response, paymentRequirement({ amount, asset, recipient: options.recipient, resource }));
+      const issued = paymentRequirement({ amount, asset, recipient: options.recipient, resource });
+      issuedRequirements.set(issued.nonce, issued);
+      writePaymentRequired(response, issued);
       return;
     }
     if (!proof) {
@@ -50,9 +56,15 @@ export function createX402PaidApi(options: X402PaidApiOptions): Express {
       return;
     }
 
+    const issuedRequirement = proof.nonce ? issuedRequirements.get(proof.nonce) : undefined;
+    if (!issuedRequirement) {
+      response.status(402).json({ ok: false, error: "payment_nonce_not_issued" });
+      return;
+    }
+
     const verification = await verifyPaymentProof({
       proof,
-      requirement: paymentRequirement({ amount, asset, recipient: options.recipient, resource }),
+      requirement: issuedRequirement,
       acceptedTransactions,
       verificationMode,
       facilitatorUrl: options.facilitatorUrl
@@ -61,6 +73,7 @@ export function createX402PaidApi(options: X402PaidApiOptions): Express {
       response.status(402).json({ ok: false, error: verification.error });
       return;
     }
+    issuedRequirements.delete(issuedRequirement.nonce);
 
     response.json({
       ok: true,
@@ -146,7 +159,8 @@ async function verifyPaymentProof(args: {
     args.proof.recipient !== args.requirement.recipient ||
     args.proof.asset !== args.requirement.asset ||
     args.proof.amount !== parseAmount(args.requirement.amount, args.requirement.asset).value ||
-    args.proof.resource !== args.requirement.resource
+    args.proof.resource !== args.requirement.resource ||
+    args.proof.nonce !== args.requirement.nonce
   ) {
     return { ok: false, error: "invalid_payment_proof" };
   }
@@ -154,7 +168,9 @@ async function verifyPaymentProof(args: {
     return { ok: false, error: "payment_proof_replayed" };
   }
   if (args.verificationMode === "facilitator") {
-    return verifyWithFacilitator(args.facilitatorUrl, args.proof);
+    const facilitator = await verifyWithFacilitator(args.facilitatorUrl, args.proof);
+    if (facilitator.ok) args.acceptedTransactions.add(args.proof.transactionHash);
+    return facilitator;
   }
   args.acceptedTransactions.add(args.proof.transactionHash);
   return {
@@ -207,7 +223,34 @@ function originForRequest(request: Request): string {
   return `${request.protocol}://${request.get("host")}`;
 }
 
+export function loadExampleEnv(filePath = resolve(dirname(fileURLToPath(import.meta.url)), "..", ".env")): void {
+  let source: string;
+  try {
+    source = readFileSync(filePath, "utf8");
+  } catch (error: any) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  for (const rawLine of source.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
+    if (!match) continue;
+    const [, key, rawValue] = match;
+    if (process.env[key] !== undefined) continue;
+    process.env[key] = unquoteEnvValue(rawValue.trim());
+  }
+}
+
+function unquoteEnvValue(value: string): string {
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
+  loadExampleEnv();
   const server = await startX402PaidApi({
     recipient: process.env.X402_RECIPIENT ?? "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
     amount: process.env.X402_PRICE ?? "0.0000001",

@@ -11,6 +11,8 @@ cp examples/x402-paid-api/.env.example examples/x402-paid-api/.env
 pnpm exec tsx examples/x402-paid-api/src/server.ts
 ```
 
+The server script loads `examples/x402-paid-api/.env` automatically before reading `PORT`, `X402_PRICE`, `X402_ASSET`, `X402_RECIPIENT`, `X402_VERIFICATION_MODE`, or `X402_FACILITATOR_URL`.
+
 In another terminal:
 
 ```bash

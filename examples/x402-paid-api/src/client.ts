@@ -2,6 +2,7 @@ import { StellarAgentError, TestnetWallet, fail, ok } from "@stellar-agent/core"
 import { latestReceipt } from "@stellar-agent/ledger-logger";
 import { DEFAULT_TESTNET_POLICY, Policy } from "@stellar-agent/policy";
 import { runX402Payment } from "@stellar-agent/x402-client";
+import { randomBytes } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
@@ -59,7 +60,7 @@ export async function payForResource(args: {
     command: "examples/x402-paid-api client",
     dryRun: args.dryRun,
     sendPaymentImpl: async () => ({
-      hash: "x402".padEnd(64, "0"),
+      hash: randomBytes(32).toString("hex"),
       ledger: 12345,
       successful: true,
       feeCharged: "100"
