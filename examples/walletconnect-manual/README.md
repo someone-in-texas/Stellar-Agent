@@ -74,7 +74,7 @@ stellar-agent --json tx request-payment-signature \
   --summary "Manual WalletConnect Testnet signing check"
 ```
 
-Copy the `data.id` value from the JSON output:
+Copy the `data.approval.id` value from the JSON output:
 
 ```bash
 export APPROVAL_ID="appr_..."

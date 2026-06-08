@@ -10,6 +10,7 @@ describe("manual wallet examples", () => {
     expect(readme).toContain("not part of the default automated test suite");
     expect(readme).toContain("browser with the Freighter extension");
     expect(readme).toContain("stellar-agent --json tx request-payment-signature");
+    expect(readme).toContain("Copy the `data.approval.id` value");
     expect(readme).toContain("stellar-agent approval serve --json");
     expect(readme).toContain("Sign With Freighter");
     expect(readme).toContain("stellar-agent --json approval show");
@@ -25,6 +26,7 @@ describe("manual wallet examples", () => {
     expect(readme).toContain("stellar-agent --json wallet walletconnect pair");
     expect(readme).toContain("stellar-agent --json wallet walletconnect status");
     expect(readme).toContain("stellar-agent --json tx request-payment-signature");
+    expect(readme).toContain("Copy the `data.approval.id` value");
     expect(readme).toContain("stellar-agent --json approval sign-walletconnect");
     expect(readme).toContain("stellar_signXDR");
     expect(readme).toContain("stellar-agent --json wallet walletconnect disconnect");
