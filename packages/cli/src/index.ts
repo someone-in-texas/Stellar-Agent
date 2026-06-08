@@ -649,7 +649,8 @@ function addWalletCommands(program: Command): void {
           } = await import("@stellar-agent/walletconnect-bridge");
           const client = await createWalletConnectSignClient({
             projectId: options.projectId,
-            metadata: walletConnectMetadata(options.wallet)
+            metadata: walletConnectMetadata(options.wallet),
+            storagePath: walletConnectStoragePath(context)
           });
           const session = await pairWalletConnectSession({
             client,
@@ -674,13 +675,14 @@ function addWalletCommands(program: Command): void {
     .option("--wallet <wallet>", "Wallet label: lobstr or walletconnect", parseWalletConnectWalletOption, "lobstr")
     .option("--project-id <id>", "WalletConnect project id; defaults to WALLETCONNECT_PROJECT_ID")
     .action(
-      withContext(async (_context, options: { wallet: "lobstr" | "walletconnect"; projectId?: string }) => {
+      withContext(async (context, options: { wallet: "lobstr" | "walletconnect"; projectId?: string }) => {
         const { createWalletConnectSignClient, listWalletConnectSessions, walletConnectMetadata } = await import(
           "@stellar-agent/walletconnect-bridge"
         );
         const client = await createWalletConnectSignClient({
           projectId: options.projectId,
-          metadata: walletConnectMetadata(options.wallet)
+          metadata: walletConnectMetadata(options.wallet),
+          storagePath: walletConnectStoragePath(context)
         });
         return { wallet: options.wallet, sessions: listWalletConnectSessions(client), custody: "external_wallet" };
       }, "WalletConnect status loaded.")
@@ -692,13 +694,14 @@ function addWalletCommands(program: Command): void {
     .option("--wallet <wallet>", "Wallet label: lobstr or walletconnect", parseWalletConnectWalletOption, "lobstr")
     .option("--project-id <id>", "WalletConnect project id; defaults to WALLETCONNECT_PROJECT_ID")
     .action(
-      withContext(async (_context, options: { topic: string; wallet: "lobstr" | "walletconnect"; projectId?: string }) => {
+      withContext(async (context, options: { topic: string; wallet: "lobstr" | "walletconnect"; projectId?: string }) => {
         const { createWalletConnectSignClient, disconnectWalletConnectSession, walletConnectMetadata } = await import(
           "@stellar-agent/walletconnect-bridge"
         );
         const client = await createWalletConnectSignClient({
           projectId: options.projectId,
-          metadata: walletConnectMetadata(options.wallet)
+          metadata: walletConnectMetadata(options.wallet),
+          storagePath: walletConnectStoragePath(context)
         });
         return {
           wallet: options.wallet,
@@ -983,7 +986,8 @@ function addApprovalCommands(program: Command): void {
           });
           const client = await createWalletConnectSignClient({
             projectId: options.projectId,
-            metadata: walletConnectMetadata(options.wallet)
+            metadata: walletConnectMetadata(options.wallet),
+            storagePath: walletConnectStoragePath(context)
           });
           const signed = await signTransactionXdrWithWalletConnect({
             client,
@@ -5382,6 +5386,10 @@ function printWalletConnectPairingUri(options: CliOptions, uri: string): void {
     ? JSON.stringify({ event: "walletconnect_pairing_uri", uri })
     : `WalletConnect pairing URI:\n${uri}\nScan this URI or QR payload with your WalletConnect wallet.`;
   process.stderr.write(`${message}\n`);
+}
+
+function walletConnectStoragePath(context: CliContext): string {
+  return join(resolvePath(context.config.storage.rootDir), "walletconnect", "sessions.db");
 }
 
 function printVersion(options: CliOptions): void {

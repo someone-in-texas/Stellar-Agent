@@ -224,6 +224,7 @@ Controls:
 - The active profile must match the approval request network.
 - WalletConnect accounts must be on `stellar:testnet` for Testnet approvals or `stellar:pubnet` for Mainnet approvals.
 - If the approval request includes payment metadata, the connected WalletConnect account must match the payment source account.
+- WalletConnect session metadata is stored locally under the agent storage root so `pair`, `status`, and `disconnect` work across CLI invocations. This storage does not contain Stellar secret keys.
 - Mainnet WalletConnect signing requires Mainnet enablement plus `--allow-real-funds --i-understand-real-funds`.
 - The signed XDR is recorded on the approval request only after the signed envelope matches the original approval XDR body.
 - Submission remains a separate `tx submit-approval` step so policy re-checks, Mainnet acknowledgements, Horizon submission, and receipt logging still run through `stellar-agent`.

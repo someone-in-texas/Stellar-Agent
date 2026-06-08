@@ -22,6 +22,7 @@ stellar-agent tx submit-approval appr_... --json
 - Requires a WalletConnect project id from `--project-id` or `WALLETCONNECT_PROJECT_ID`.
 - Keeps LOBSTR and other WalletConnect wallets as external signers, not custody providers.
 - Never stores or prints secret keys.
+- Stores WalletConnect session metadata in the local agent storage root so pair/status/disconnect can run across separate CLI invocations.
 - Refuses `local` network signing because WalletConnect Stellar chains are `stellar:testnet` and `stellar:pubnet`.
 - Validates WalletConnect account chains against the active approval network.
 - Lets `@stellar-agent/freighter-bridge` verify that signed XDR matches the original approval XDR before recording it.

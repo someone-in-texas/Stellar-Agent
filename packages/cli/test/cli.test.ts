@@ -465,7 +465,11 @@ describe("CLI contract receipts", () => {
       }
     });
     expect(walletConnectMockState.createClientCalls).toEqual([
-      expect.objectContaining({ projectId: "project-test", metadata: expect.objectContaining({ description: "lobstr" }) })
+      expect.objectContaining({
+        projectId: "project-test",
+        metadata: expect.objectContaining({ description: "lobstr" }),
+        storagePath: join(config.storage.rootDir, "walletconnect", "sessions.db")
+      })
     ]);
     expect(walletConnectMockState.signCalls).toEqual([
       expect.objectContaining({
@@ -487,6 +491,58 @@ describe("CLI contract receipts", () => {
     const eventLog = await readFile(join(config.storage.logsDir, "events.jsonl"), "utf8");
     expect(eventLog).toContain("approval sign-walletconnect");
     expect(eventLog).not.toContain("wc:test-pairing-uri");
+  });
+
+  it("uses stable WalletConnect storage for session CLI commands", async () => {
+    const { configPath, config } = await createCliFixture({ stdout: "", stderr: "" });
+    walletConnectMockState.createClientCalls = [];
+
+    await expect(
+      runCli(["--config", configPath, "--json", "wallet", "walletconnect", "status", "--project-id", "project-test"])
+    ).resolves.toMatchObject({
+      ok: true,
+      data: { wallet: "lobstr", sessions: [], custody: "external_wallet" }
+    });
+    await expect(
+      runCli([
+        "--config",
+        configPath,
+        "--json",
+        "wallet",
+        "walletconnect",
+        "disconnect",
+        "--topic",
+        "topic-test",
+        "--project-id",
+        "project-test"
+      ])
+    ).resolves.toMatchObject({
+      ok: true,
+      data: { wallet: "lobstr", topic: "topic-test", disconnected: true, custody: "external_wallet" }
+    });
+    await expect(
+      runCli([
+        "--config",
+        configPath,
+        "--json",
+        "wallet",
+        "walletconnect",
+        "pair",
+        "--project-id",
+        "project-test",
+        "--timeout-ms",
+        "10"
+      ])
+    ).resolves.toMatchObject({
+      ok: true,
+      data: { wallet: "lobstr", network: "testnet", pairingUriPrinted: true, custody: "external_wallet" }
+    });
+
+    expect(walletConnectMockState.createClientCalls).toEqual([
+      expect.objectContaining({ storagePath: join(config.storage.rootDir, "walletconnect", "sessions.db") }),
+      expect.objectContaining({ storagePath: join(config.storage.rootDir, "walletconnect", "sessions.db") }),
+      expect.objectContaining({ storagePath: join(config.storage.rootDir, "walletconnect", "sessions.db") })
+    ]);
   });
 
   it("refuses Mainnet WalletConnect signing without real-funds acknowledgements", async () => {

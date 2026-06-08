@@ -1,4 +1,6 @@
-import { EXIT_CODES, NetworkName, StellarAgentError, redactSensitive } from "@stellar-agent/core";
+import { EXIT_CODES, NetworkName, StellarAgentError, redactSensitive, resolvePath } from "@stellar-agent/core";
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 
 export type WalletConnectStellarChain = "stellar:testnet" | "stellar:pubnet";
 export type WalletConnectStellarMethod = "stellar_signXDR";
@@ -50,6 +52,18 @@ export interface WalletConnectSignClient {
     getAll(): WalletConnectSession[];
   };
   disconnect?(args: { topic: string; reason: { code: number; message: string } }): Promise<void>;
+}
+
+export interface WalletConnectSignClientInitOptions {
+  projectId: string;
+  metadata: WalletConnectMetadata;
+  storageOptions?: {
+    database: string;
+  };
+}
+
+interface WalletConnectSignClientClass {
+  init(options: WalletConnectSignClientInitOptions): Promise<WalletConnectSignClient>;
 }
 
 export interface WalletConnectSignResult {
@@ -122,14 +136,45 @@ export function requireWalletConnectProjectId(projectId?: string): string {
 export async function createWalletConnectSignClient(args: {
   projectId?: string | undefined;
   metadata?: WalletConnectMetadata | undefined;
+  storagePath?: string | undefined;
 }): Promise<WalletConnectSignClient> {
-  const projectId = requireWalletConnectProjectId(args.projectId);
   const module = await import("@walletconnect/sign-client");
-  const SignClient = module.default;
-  return (await SignClient.init({
+  const SignClient = resolveWalletConnectSignClientExport(module);
+  return (await SignClient.init(await walletConnectSignClientInitOptions(args))) as WalletConnectSignClient;
+}
+
+export async function walletConnectSignClientInitOptions(args: {
+  projectId?: string | undefined;
+  metadata?: WalletConnectMetadata | undefined;
+  storagePath?: string | undefined;
+}): Promise<WalletConnectSignClientInitOptions> {
+  const projectId = requireWalletConnectProjectId(args.projectId);
+  const metadata = args.metadata ?? walletConnectMetadata();
+  if (!args.storagePath) return { projectId, metadata };
+
+  const database = resolvePath(args.storagePath);
+  await mkdir(dirname(database), { recursive: true });
+  return {
     projectId,
-    metadata: args.metadata ?? walletConnectMetadata()
-  })) as WalletConnectSignClient;
+    metadata,
+    storageOptions: { database }
+  };
+}
+
+export function resolveWalletConnectSignClientExport(module: unknown): WalletConnectSignClientClass {
+  const moduleRecord = asRecord(module);
+  const defaultRecord = asRecord(moduleRecord?.default);
+  const candidates = [moduleRecord?.SignClient, moduleRecord?.default, defaultRecord?.SignClient];
+  const SignClient = candidates.find((candidate) => typeof asRecord(candidate)?.init === "function");
+  if (!SignClient) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "WalletConnect SignClient SDK export could not be initialized.",
+      hint: "Install a compatible @walletconnect/sign-client version.",
+      docs: "docs/mainnet-safety.md#walletconnect-signing"
+    });
+  }
+  return SignClient as WalletConnectSignClientClass;
 }
 
 export async function pairWalletConnectSession(args: {
@@ -295,6 +340,10 @@ function invalidWalletConnectResult(): StellarAgentError {
     message: "WalletConnect signing response did not include signed transaction XDR.",
     docs: "docs/mainnet-safety.md#walletconnect-signing"
   });
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {

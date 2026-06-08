@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
 import {
   assertWalletConnectSessionSupportsNetwork,
   disconnectWalletConnectSession,
@@ -6,10 +9,12 @@ import {
   listWalletConnectSessions,
   pairWalletConnectSession,
   parseWalletConnectSessionAccounts,
+  resolveWalletConnectSignClientExport,
   signTransactionXdrWithWalletConnect,
   walletConnectChainForNetwork,
   walletConnectMetadata,
   walletConnectRequiredNamespaces,
+  walletConnectSignClientInitOptions,
   walletConnectSessionView,
   type WalletConnectSession,
   type WalletConnectSignClient
@@ -40,6 +45,36 @@ describe("walletconnect bridge", () => {
       name: "Stellar Agent",
       description: expect.stringContaining("LOBSTR")
     });
+  });
+
+  it("uses the named SignClient export when the default export is a namespace object", () => {
+    const namedInit = vi.fn();
+    const defaultInit = vi.fn();
+    const resolved = resolveWalletConnectSignClientExport({
+      SignClient: { init: namedInit },
+      default: { SignClient: { init: defaultInit } }
+    });
+
+    expect(resolved.init).toBe(namedInit);
+  });
+
+  it("builds durable WalletConnect storage options", async () => {
+    const root = await mkdtemp(join(tmpdir(), "stellar-agent-walletconnect-"));
+    const storagePath = join(root, "walletconnect", "sessions.db");
+
+    await expect(
+      walletConnectSignClientInitOptions({
+        projectId: "project-test",
+        metadata: walletConnectMetadata("lobstr"),
+        storagePath
+      })
+    ).resolves.toEqual({
+      projectId: "project-test",
+      metadata: walletConnectMetadata("lobstr"),
+      storageOptions: { database: storagePath }
+    });
+    const storageDir = await stat(join(root, "walletconnect"));
+    expect(storageDir.isDirectory()).toBe(true);
   });
 
   it("parses and views WalletConnect Stellar session accounts", () => {

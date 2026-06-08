@@ -46,7 +46,7 @@
 - Third-party protocol SDK compromise: protocol SDKs are isolated to adapter packages, loaded lazily, prohibited from core package and CLI startup paths by protocol SDK boundary checks, and cannot bypass policy evaluation, Soroban simulation, Mainnet auto-signing blocks, or receipt logging.
 - Malicious paid API: domain allowlists and policy checks gate payment.
 - Local approval bridge abuse: the localhost bridge requires a per-session API token for request and decision APIs, rejects cross-origin writes, and bounds request body size.
-- WalletConnect signing misuse: WalletConnect support is limited to external `stellar_signXDR` signing, validates account chain/source account expectations, refuses wallet-side submission, and records signed XDR only through the existing approval request checks.
+- WalletConnect signing misuse: WalletConnect support is limited to external `stellar_signXDR` signing, validates account chain/source account expectations, refuses wallet-side submission, persists only local session metadata across CLI invocations, and records signed XDR only through the existing approval request checks.
 - Malicious contributor: tests and docs are required for safety-sensitive changes.
 
 ## Out of Scope
