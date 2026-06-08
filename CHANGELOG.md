@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.4
+
+- Hardened payment policy evaluation so Mainnet requests remain marked as real-funds and fail closed when evaluated with a mismatched policy network.
+- Added a local default policy and local policy filename so local-profile payment quotes do not reuse a Testnet-labeled policy.
+- Tightened local x402 and MPP resource binding to include URL query strings.
+- Hardened the local approval bridge by keeping bearer tokens out of unauthenticated HTML, removing remote Freighter script loading, and requiring explicit acknowledgement for non-loopback binds.
+- Updated Mainnet safety, x402/MPP, approval bridge, CLI, and policy docs for the tightened behavior.
+- Updated Aquarius Mainnet AQUA metadata, client-side pool limiting, and JSON parse-error handling for Aquarius CLI preflight.
+
 ## 0.4.3
 
 - Added npm-facing README files for every public `@stellar-agent/*` package and package-specific npm homepage links.

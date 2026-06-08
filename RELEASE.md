@@ -10,11 +10,16 @@ The release process is still intentionally conservative: GitHub releases are aut
 - **npm package publication:** supported through the protected `Publish npm` workflow after npm trusted publishing is configured. The same generated tarballs can still be published locally with `pnpm release:publish:npm` as a recovery path.
 - **Live Testnet verification:** strongly recommended before public release tags and required before releases that advertise new payment behavior.
 
-## 0.4.3 Scope
+## 0.4.4 Scope
 
-`0.4.3` is a DeFi-expanded, npm-polished Testnet-first release:
+`0.4.4` is a safety-hardening Testnet-first release:
 
 - CLI command surface, JSON envelopes, policy checks, receipt logging, Testnet wallets, Friendbot funding, direct payments, fee-stat-aware transaction submission, bundled Testnet payments, issued assets, claimable balances, approval requests, guarded signed-XDR flows, MCP tools, local x402/MPP demos, Blend DeFi inspection and guarded Testnet mutation, Aquarius AMM inspection and policy-gated preflight, core Stellar liquidity-pool inspection/preflight/Testnet mutation, market listeners, strategy investigation, cache controls, package-local npm READMEs, JSON version output, and Codex plugin validation are included.
+- Mainnet payment policy decisions stay real-funds-aware and fail closed when the request network and policy network do not match.
+- Local profile payment evaluation uses a local default policy instead of a Testnet-labeled policy.
+- Local x402 and MPP resource binding includes URL query strings.
+- Local approval bridge tokens are not embedded in unauthenticated HTML, and non-loopback binds require explicit acknowledgement.
+- Aquarius Mainnet AQUA metadata, pool limiting, and JSON parse-error behavior are tightened.
 - Mainnet local auto-signing remains blocked.
 - Raw Mainnet secret-key storage remains blocked.
 - Mainnet usage is limited to guarded externally signed XDR or explicitly acknowledged contract operations.
@@ -120,7 +125,7 @@ The examples use isolated temp configs. The Blend example runs deployment and pr
 
 ```text
 .release/artifacts/npm/*.tgz
-.release/artifacts/codex/stellar-agent-codex-plugin-v0.4.3.tgz
+.release/artifacts/codex/stellar-agent-codex-plugin-v0.4.4.tgz
 .release/artifacts/release-manifest.json
 ```
 
@@ -138,7 +143,7 @@ Release packaging:
 2. `pnpm smoke` validates the bundled plugin.
 3. `pnpm release:pack` copies `plugins/codex` into a release staging directory.
 4. `stellar-agent-codex-plugin manifest` writes `plugin-manifest.json` into the staged plugin.
-5. The staged plugin is archived as `stellar-agent-codex-plugin-v0.4.3.tgz`.
+5. The staged plugin is archived as `stellar-agent-codex-plugin-v0.4.4.tgz`.
 6. `pnpm release:verify-artifacts` extracts that archive and validates it through the installed `stellar-agent-codex-plugin` binary from the packed npm artifact.
 
 This keeps Codex plugin packaging aligned with GitHub releases: the GitHub release contains the npm package that validates plugin manifests and the matching plugin artifact that Codex can install.
@@ -148,8 +153,8 @@ This keeps Codex plugin packaging aligned with GitHub releases: the GitHub relea
 Create and verify the tag locally:
 
 ```bash
-git tag -a v0.4.3 -m "Stellar Agent v0.4.3"
-git push origin v0.4.3
+git tag -a v0.4.4 -m "Stellar Agent v0.4.4"
+git push origin v0.4.4
 ```
 
 The `Release` workflow runs on `v*` tags. It runs `pnpm release:preflight`, uploads generated artifacts, creates the GitHub release, and queues the protected `Publish npm` workflow from:
@@ -168,11 +173,11 @@ Manual local fallback:
 
 ```bash
 pnpm release:preflight
-gh release create v0.4.3 \
+gh release create v0.4.4 \
   .release/artifacts/npm/*.tgz \
   .release/artifacts/codex/*.tgz \
   .release/artifacts/release-manifest.json \
-  --title "Stellar Agent v0.4.3" \
+  --title "Stellar Agent v0.4.4" \
   --notes-file .release/github-release-notes.md \
   --verify-tag
 ```

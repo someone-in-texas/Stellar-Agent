@@ -1,6 +1,6 @@
 {
   "name": "@stellar-agent/testnet-suite",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Reusable Testnet wallet, Friendbot, policy, receipt, and smoke-test workflows for Stellar Agent Bridge.",
   "type": "module",
   "license": "MIT",
