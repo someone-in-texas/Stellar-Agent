@@ -42,8 +42,10 @@
   "license": "MIT",
   "devDependencies": {
     "@eslint/js": "^9.28.0",
+    "@types/express": "^5.0.6",
     "@types/node": "^22.15.24",
     "eslint": "^9.28.0",
+    "express": "^5.2.1",
     "prettier": "^3.5.3",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",

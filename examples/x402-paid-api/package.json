@@ -1,0 +1,22 @@
+{
+  "name": "stellar-agent-example-x402-paid-api",
+  "version": "0.5.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/server.ts",
+    "client": "tsx src/client.ts",
+    "test": "vitest run examples/x402-paid-api/test/x402-paid-api.test.ts"
+  },
+  "dependencies": {
+    "@stellar-agent/core": "workspace:*",
+    "@stellar-agent/ledger-logger": "workspace:*",
+    "@stellar-agent/policy": "workspace:*",
+    "@stellar-agent/x402-client": "workspace:*",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.4",
+    "vitest": "^3.1.4"
+  }
+}
