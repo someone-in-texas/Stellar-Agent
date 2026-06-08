@@ -30,6 +30,16 @@ describe("CLI package entrypoint", () => {
     await expect(runCli(["--json", "--version"])).resolves.toEqual({ ok: true, data: { version: cliVersion } });
   });
 
+  it("stops before dispatching subcommands when the root version flag is present", async () => {
+    const mutatingPaymentArgs = ["pay", "send", "--to", "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "--amount", "1"];
+
+    await expect(runCliText(["--version", ...mutatingPaymentArgs])).resolves.toBe(`${cliVersion}\n`);
+    await expect(runCli(["--version", "--json", ...mutatingPaymentArgs])).resolves.toEqual({
+      ok: true,
+      data: { version: cliVersion }
+    });
+  });
+
   it("keeps Blend pool version options separate from the root version flag", () => {
     const program = buildProgram();
     const rootVersionOption = program.options.find((option) => option.long === "--version");
@@ -824,12 +834,28 @@ async function runCliText(args: string[]) {
   const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
   try {
     const program = buildProgram();
-    await program.parseAsync(args, { from: "user" });
+    program.exitOverride();
+    try {
+      await program.parseAsync(args, { from: "user" });
+    } catch (error) {
+      if (!isCommanderVersionExit(error)) throw error;
+    }
   } finally {
     stdoutSpy.mockRestore();
     stderrSpy.mockRestore();
   }
   return stdout;
+}
+
+function isCommanderVersionExit(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    "exitCode" in error &&
+    error.code === "commander.version" &&
+    error.exitCode === 0
+  );
 }
 
 function escapeSingleQuotedShell(value: string): string {

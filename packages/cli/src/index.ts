@@ -82,6 +82,12 @@ interface CliContext {
   profileName: NetworkName;
 }
 
+type CommandParseArgs = Parameters<Command["parseAsync"]>[0];
+type CommandParseOptions = Parameters<Command["parseAsync"]>[1];
+type CommandWithExit = Command & {
+  _exit(exitCode: number, code: string, message: string): never;
+};
+
 export function buildProgram(): Command {
   const program = new Command();
   program
@@ -139,16 +145,63 @@ Common commands:
   addCacheCommands(program);
   addMainnetCommands(program);
 
+  installVersionPrecheck(program);
+
   program.action(() => {
-    const options = program.opts() as CliOptions;
-    if (options.version) {
-      printVersion(options);
-      return;
-    }
     program.outputHelp();
   });
 
   return program;
+}
+
+function installVersionPrecheck(program: Command): void {
+  const originalParseAsync = program.parseAsync.bind(program);
+  program.parseAsync = (async (argv?: CommandParseArgs, parseOptions?: CommandParseOptions) => {
+    const versionOptions = rootVersionOptions(program, argv, parseOptions);
+    if (versionOptions) {
+      printVersion(versionOptions);
+      (program as CommandWithExit)._exit(EXIT_CODES.success, "commander.version", VERSION);
+    }
+    return await originalParseAsync(argv, parseOptions);
+  }) as Command["parseAsync"];
+}
+
+function rootVersionOptions(
+  program: Command,
+  argv: CommandParseArgs = process.argv,
+  parseOptions?: CommandParseOptions
+): CliOptions | null {
+  const args = userArgs(argv, parseOptions);
+  const commandNames = new Set(program.commands.map((command) => command.name()));
+  const rootOptions = new Map(program.options.flatMap((option) => [option.long, option.short].filter(Boolean).map((flag) => [flag, option])));
+  let sawVersion = false;
+  let sawJson = false;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (!token || token === "--") break;
+    if (commandNames.has(token)) break;
+    if (token === "--version") {
+      sawVersion = true;
+      continue;
+    }
+    if (token === "--json") {
+      sawJson = true;
+      continue;
+    }
+    const optionName = token.includes("=") ? token.slice(0, token.indexOf("=")) : token;
+    const option = rootOptions.get(optionName);
+    if (option?.required && !token.includes("=")) index += 1;
+  }
+
+  return sawVersion ? { json: sawJson, version: true } : null;
+}
+
+function userArgs(argv: CommandParseArgs, parseOptions?: CommandParseOptions): string[] {
+  const args = [...(argv ?? process.argv)];
+  if (parseOptions?.from === "user") return args;
+  if (parseOptions?.from === "electron") return args.slice(1);
+  return args.slice(2);
 }
 
 function addCacheCommands(program: Command): void {
