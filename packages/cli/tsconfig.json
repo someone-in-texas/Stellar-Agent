@@ -13,7 +13,8 @@
     { "path": "../defi" },
     { "path": "../testnet-suite" },
     { "path": "../ledger-logger" },
-    { "path": "../freighter-bridge" }
+    { "path": "../freighter-bridge" },
+    { "path": "../walletconnect-bridge" }
   ],
   "include": ["src/**/*.ts"]
 }

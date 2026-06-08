@@ -1,6 +1,6 @@
 # Stellar Agent Payments
 
-Use this skill when asked to quote, explain, or send payments with `stellar-agent`, including direct payments, issued assets, signed-XDR approval flows, risk-budgeted Mainnet agent-wallet workflows, local x402, and local MPP demos.
+Use this skill when asked to quote, explain, or send payments with `stellar-agent`, including direct payments, issued assets, signed-XDR approval flows, WalletConnect/LOBSTR signing, risk-budgeted Mainnet agent-wallet workflows, local x402, and local MPP demos.
 
 Rules:
 
@@ -27,6 +27,10 @@ Approval and signing:
 - If policy requires approval, stop after showing the approval summary.
 - Use `stellar-agent approval create-transaction --xdr <base64> --summary <text> --network testnet --json` for prebuilt XDR approval requests.
 - Use the Freighter bridge only for explicit user-approved signing workflows.
+- Use WalletConnect/LOBSTR only for explicit user-approved external signing workflows.
+- For WalletConnect, create or load a transaction-XDR approval request, then run `stellar-agent approval sign-walletconnect <approval-id> --wallet lobstr --project-id <project-id> --json`. The project id can come from `WALLETCONNECT_PROJECT_ID`.
+- WalletConnect signing records signed XDR with `stellar_signXDR`; it must not use wallet-side submission. Submit only afterward with `stellar-agent tx submit-approval <approval-id> --json`.
+- For Mainnet WalletConnect signing, require Mainnet enablement and include `--allow-real-funds --i-understand-real-funds`; for Mainnet submission, include those flags again on `tx submit-approval`.
 - For Mainnet payment-signature workflows, use only externally signed XDR paths with `--allow-real-funds --i-understand-real-funds`.
 
 Risk-budgeted Mainnet agent wallet:

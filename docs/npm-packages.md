@@ -24,6 +24,7 @@ The other scoped packages are public so applications and agent runtimes can embe
 | [`@stellar-agent/defi`](https://www.npmjs.com/package/@stellar-agent/defi) | `npm install @stellar-agent/defi` | You need Blend or Aquarius inspection and preflight helpers. |
 | [`@stellar-agent/ledger-logger`](https://www.npmjs.com/package/@stellar-agent/ledger-logger) | `npm install @stellar-agent/ledger-logger` | You need receipts, event logs, or spend-history helpers. |
 | [`@stellar-agent/freighter-bridge`](https://www.npmjs.com/package/@stellar-agent/freighter-bridge) | `npm install @stellar-agent/freighter-bridge` | You need local approval request or Freighter bridge primitives. |
+| [`@stellar-agent/walletconnect-bridge`](https://www.npmjs.com/package/@stellar-agent/walletconnect-bridge) | `npm install @stellar-agent/walletconnect-bridge` | You need WalletConnect external-signing helpers for LOBSTR or compatible Stellar wallets. |
 | [`@stellar-agent/mcp-server`](https://www.npmjs.com/package/@stellar-agent/mcp-server) | `npm install @stellar-agent/mcp-server` | You want an MCP stdio server that delegates to the CLI. |
 | [`@stellar-agent/testnet-suite`](https://www.npmjs.com/package/@stellar-agent/testnet-suite) | `npm install @stellar-agent/testnet-suite` | You need reusable Testnet workspace and scenario helpers. |
 | [`@stellar-agent/x402-client`](https://www.npmjs.com/package/@stellar-agent/x402-client) | `npm install @stellar-agent/x402-client` | You need local Testnet x402-style demo helpers. |

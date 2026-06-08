@@ -1,5 +1,5 @@
 import { createDefaultConfig } from "@stellar-agent/core";
-import { createTransactionXdrApprovalRequest, decideApprovalRequest } from "@stellar-agent/freighter-bridge";
+import { createTransactionXdrApprovalRequest, decideApprovalRequest, readApprovalRequest } from "@stellar-agent/freighter-bridge";
 import { writeReceipt } from "@stellar-agent/ledger-logger";
 import { DEFAULT_MAINNET_POLICY, DEFAULT_TESTNET_POLICY, policyToYaml } from "@stellar-agent/policy";
 import { ensureWallet } from "@stellar-agent/testnet-suite";
@@ -17,6 +17,54 @@ const contractId = "CB7Y2XA3ULT62HEH6DPAUGVGUTSVL7JO5T5VOYUW6UVZI6SG72UOKSYR";
 const require = createRequire(import.meta.url);
 const { version: cliVersion } = require("../package.json");
 const { Account, Asset, BASE_FEE, Keypair, Networks, Operation, TransactionBuilder } = require("../../stellar/node_modules/@stellar/stellar-sdk");
+
+const walletConnectMockState = vi.hoisted(() => ({
+  signedTransactionXdr: "",
+  signerPublicKey: "",
+  signCalls: [] as any[],
+  createClientCalls: [] as any[]
+}));
+
+vi.mock("@stellar-agent/walletconnect-bridge", () => ({
+  createWalletConnectSignClient: vi.fn(async (args: any) => {
+    walletConnectMockState.createClientCalls.push(args);
+    return { mockWalletConnectClient: true };
+  }),
+  disconnectWalletConnectSession: vi.fn(async (_args: any) => ({ topic: _args.topic, disconnected: true })),
+  listWalletConnectSessions: vi.fn(() => []),
+  pairWalletConnectSession: vi.fn(async (args: any) => {
+    args.onPairingUri?.("wc:test-pairing-uri");
+    return { topic: "topic-test", namespaces: { stellar: { accounts: [], methods: ["stellar_signXDR"] } } };
+  }),
+  signTransactionXdrWithWalletConnect: vi.fn(async (args: any) => {
+    walletConnectMockState.signCalls.push(args);
+    args.onPairingUri?.("wc:test-pairing-uri");
+    return {
+      signedTransactionXdr: walletConnectMockState.signedTransactionXdr,
+      signerPublicKey: walletConnectMockState.signerPublicKey,
+      session: {
+        topic: "topic-test",
+        peer: { metadata: { name: "LOBSTR", url: "https://lobstr.co" } },
+        namespaces: {
+          stellar: {
+            accounts: [`stellar:testnet:${walletConnectMockState.signerPublicKey}`],
+            methods: ["stellar_signXDR"],
+            events: []
+          }
+        }
+      },
+      chainId: "stellar:testnet",
+      method: "stellar_signXDR"
+    };
+  }),
+  walletConnectMetadata: vi.fn((wallet: string) => ({ name: "Stellar Agent", description: wallet, url: "https://example.test", icons: [] })),
+  walletConnectSessionView: vi.fn((session: any) => ({
+    topic: session.topic,
+    peerName: session.peer?.metadata?.name,
+    peerUrl: session.peer?.metadata?.url,
+    accounts: [{ namespace: "stellar", chain: "testnet", address: walletConnectMockState.signerPublicKey, raw: `stellar:testnet:${walletConnectMockState.signerPublicKey}` }]
+  }))
+}));
 
 describe("CLI package entrypoint", () => {
   it("treats npm .bin symlinks as executable entrypoints", async () => {
@@ -364,6 +412,122 @@ describe("CLI contract receipts", () => {
       }
     });
     expect(JSON.stringify(receipt)).not.toContain("\"S");
+  });
+
+  it("records WalletConnect signed XDR on an approval without submitting it", async () => {
+    const { configPath, config } = await createCliFixture({ stdout: "", stderr: "" });
+    const { signerPublicKey, unsignedXdr, signedXdr } = signedTestnetPaymentXdrPair("1");
+    walletConnectMockState.signerPublicKey = signerPublicKey;
+    walletConnectMockState.signedTransactionXdr = signedXdr;
+    walletConnectMockState.signCalls = [];
+    walletConnectMockState.createClientCalls = [];
+    const payment = {
+      source: signerPublicKey,
+      destination: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      amount: "1",
+      asset: "XLM",
+      network: "testnet" as const
+    };
+    const approval = await createTransactionXdrApprovalRequest({
+      approvalsDir: config.storage.approvalsDir,
+      network: "testnet",
+      transactionXdr: unsignedXdr,
+      summary: "Sign testnet payment with LOBSTR",
+      payment
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "approval",
+      "sign-walletconnect",
+      approval.id,
+      "--wallet",
+      "lobstr",
+      "--project-id",
+      "project-test",
+      "--timeout-ms",
+      "10"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        approval: { id: approval.id, status: "signed" },
+        walletConnect: {
+          wallet: "lobstr",
+          method: "stellar_signXDR",
+          submitted: false,
+          custody: "external_wallet"
+        }
+      }
+    });
+    expect(walletConnectMockState.createClientCalls).toEqual([
+      expect.objectContaining({ projectId: "project-test", metadata: expect.objectContaining({ description: "lobstr" }) })
+    ]);
+    expect(walletConnectMockState.signCalls).toEqual([
+      expect.objectContaining({
+        network: "testnet",
+        transactionXdr: unsignedXdr,
+        expectedSignerPublicKey: signerPublicKey,
+        timeoutMs: 10
+      })
+    ]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    await expect(readApprovalRequest(config.storage.approvalsDir, approval.id)).resolves.toMatchObject({
+      id: approval.id,
+      status: "signed",
+      decision: {
+        signerPublicKey,
+        signedTransactionXdr: signedXdr
+      }
+    });
+    const eventLog = await readFile(join(config.storage.logsDir, "events.jsonl"), "utf8");
+    expect(eventLog).toContain("approval sign-walletconnect");
+    expect(eventLog).not.toContain("wc:test-pairing-uri");
+  });
+
+  it("refuses Mainnet WalletConnect signing without real-funds acknowledgements", async () => {
+    const { configPath, config } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
+    const { signerPublicKey, unsignedXdr } = signedPaymentXdrPair("0.01");
+    const approval = await createTransactionXdrApprovalRequest({
+      approvalsDir: config.storage.approvalsDir,
+      network: "mainnet",
+      transactionXdr: unsignedXdr,
+      summary: "Sign small Mainnet payment",
+      payment: {
+        source: signerPublicKey,
+        destination: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        amount: "0.01",
+        asset: "XLM",
+        network: "mainnet"
+      }
+    });
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--profile",
+      "mainnet",
+      "--json",
+      "approval",
+      "sign-walletconnect",
+      approval.id,
+      "--wallet",
+      "lobstr",
+      "--project-id",
+      "project-test"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: false,
+      error: {
+        code: "MAINNET_NOT_ENABLED",
+        message: "Mainnet WalletConnect signing requires --allow-real-funds and --i-understand-real-funds."
+      }
+    });
   });
 
   it("quotes payments with fee stats metadata", async () => {
@@ -1900,6 +2064,28 @@ function signedPaymentXdrPair(amount: string): { signerPublicKey: string; unsign
   const transaction = new TransactionBuilder(account, {
     fee: BASE_FEE,
     networkPassphrase: Networks.PUBLIC
+  })
+    .addOperation(
+      Operation.payment({
+        destination,
+        asset: Asset.native(),
+        amount
+      })
+    )
+    .setTimeout(60)
+    .build();
+  const unsignedXdr = transaction.toXDR();
+  transaction.sign(signer);
+  return { signerPublicKey: signer.publicKey(), unsignedXdr, signedXdr: transaction.toXDR() };
+}
+
+function signedTestnetPaymentXdrPair(amount: string): { signerPublicKey: string; unsignedXdr: string; signedXdr: string } {
+  const signer = Keypair.random();
+  const destination = Keypair.random().publicKey();
+  const account = new Account(signer.publicKey(), "1");
+  const transaction = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.TESTNET
   })
     .addOperation(
       Operation.payment({

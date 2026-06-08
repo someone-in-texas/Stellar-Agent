@@ -1,6 +1,6 @@
 # Stellar Agent Bridge Codex Plugin
 
-This plugin teaches Codex to use `stellar-agent` safely for Testnet wallets, payments, issued assets, trustlines, claimable balances, local HTTP payment demos, receipts, guarded Mainnet agent-wallet workflows, Stellar CLI contract workflows, Blend and Aquarius DeFi workflows, and market-liquidity investigation.
+This plugin teaches Codex to use `stellar-agent` safely for Testnet wallets, payments, issued assets, trustlines, claimable balances, local HTTP payment demos, receipts, WalletConnect/LOBSTR external signing, guarded Mainnet agent-wallet workflows, Stellar CLI contract workflows, Blend and Aquarius DeFi workflows, and market-liquidity investigation.
 
 Validate the plugin before packaging:
 
@@ -25,6 +25,7 @@ Rules:
 - Never print secrets.
 - Never enable Mainnet unless the user explicitly asks.
 - For Mainnet agent-wallet work, require explicit Mainnet enablement, a dedicated wallet, strict caps, a destination allowlist, and `agent-wallet arm --i-understand-real-funds`. External signing is preferred; autosigning is allowed only when the user explicitly asks for `agent-wallet autosign enable` and the command includes all real-funds/autosign acknowledgements.
+- For WalletConnect/LOBSTR, use `approval sign-walletconnect` only to record signed XDR; submit separately with `tx submit-approval` so policy, Mainnet acknowledgements, and receipts still run.
 - Never treat `--allow-real-funds` as a policy bypass.
 - Treat x402 and MPP as local Testnet demos unless production facilitator support is explicitly added.
 - Run `contract doctor` before Stellar CLI-backed contract commands.

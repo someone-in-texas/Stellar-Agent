@@ -30,6 +30,7 @@ The public package set is:
 @stellar-agent/stellar
 @stellar-agent/defi
 @stellar-agent/freighter-bridge
+@stellar-agent/walletconnect-bridge
 @stellar-agent/mcp-server
 @stellar-agent/testnet-suite
 @stellar-agent/x402-client

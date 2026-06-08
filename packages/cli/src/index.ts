@@ -631,6 +631,83 @@ function addWalletCommands(program: Command): void {
       }, "Freighter approval bridge details loaded.")
     );
 
+  const walletconnect = wallet.command("walletconnect").description("Pair, inspect, and disconnect WalletConnect external signer sessions.");
+  walletconnect
+    .command("pair")
+    .description("Pair a WalletConnect external signer such as LOBSTR.")
+    .option("--wallet <wallet>", "Wallet label: lobstr or walletconnect", parseWalletConnectWalletOption, "lobstr")
+    .option("--project-id <id>", "WalletConnect project id; defaults to WALLETCONNECT_PROJECT_ID")
+    .option("--timeout-ms <ms>", "Pairing timeout in milliseconds", parsePositiveIntegerOption, 120_000)
+    .action(
+      withContext(
+        async (context, options: { wallet: "lobstr" | "walletconnect"; projectId?: string; timeoutMs: number }) => {
+          const {
+            createWalletConnectSignClient,
+            pairWalletConnectSession,
+            walletConnectMetadata,
+            walletConnectSessionView
+          } = await import("@stellar-agent/walletconnect-bridge");
+          const client = await createWalletConnectSignClient({
+            projectId: options.projectId,
+            metadata: walletConnectMetadata(options.wallet)
+          });
+          const session = await pairWalletConnectSession({
+            client,
+            network: context.profileName,
+            timeoutMs: options.timeoutMs,
+            onPairingUri: (uri) => printWalletConnectPairingUri(context.options, uri)
+          });
+          return {
+            wallet: options.wallet,
+            network: context.profileName,
+            session: walletConnectSessionView(session),
+            pairingUriPrinted: true,
+            custody: "external_wallet"
+          };
+        },
+        "WalletConnect session paired."
+      )
+    );
+  walletconnect
+    .command("status")
+    .description("List WalletConnect sessions known to the local WalletConnect client.")
+    .option("--wallet <wallet>", "Wallet label: lobstr or walletconnect", parseWalletConnectWalletOption, "lobstr")
+    .option("--project-id <id>", "WalletConnect project id; defaults to WALLETCONNECT_PROJECT_ID")
+    .action(
+      withContext(async (_context, options: { wallet: "lobstr" | "walletconnect"; projectId?: string }) => {
+        const { createWalletConnectSignClient, listWalletConnectSessions, walletConnectMetadata } = await import(
+          "@stellar-agent/walletconnect-bridge"
+        );
+        const client = await createWalletConnectSignClient({
+          projectId: options.projectId,
+          metadata: walletConnectMetadata(options.wallet)
+        });
+        return { wallet: options.wallet, sessions: listWalletConnectSessions(client), custody: "external_wallet" };
+      }, "WalletConnect status loaded.")
+    );
+  walletconnect
+    .command("disconnect")
+    .description("Disconnect a WalletConnect session by topic.")
+    .requiredOption("--topic <topic>", "WalletConnect session topic")
+    .option("--wallet <wallet>", "Wallet label: lobstr or walletconnect", parseWalletConnectWalletOption, "lobstr")
+    .option("--project-id <id>", "WalletConnect project id; defaults to WALLETCONNECT_PROJECT_ID")
+    .action(
+      withContext(async (_context, options: { topic: string; wallet: "lobstr" | "walletconnect"; projectId?: string }) => {
+        const { createWalletConnectSignClient, disconnectWalletConnectSession, walletConnectMetadata } = await import(
+          "@stellar-agent/walletconnect-bridge"
+        );
+        const client = await createWalletConnectSignClient({
+          projectId: options.projectId,
+          metadata: walletConnectMetadata(options.wallet)
+        });
+        return {
+          wallet: options.wallet,
+          ...(await disconnectWalletConnectSession({ client, topic: options.topic })),
+          custody: "external_wallet"
+        };
+      }, "WalletConnect session disconnected.")
+    );
+
   const trustline = wallet.command("trustline").description("List, add, or remove issued-asset trustlines.");
   trustline
     .command("list")
@@ -846,6 +923,114 @@ function addApprovalCommands(program: Command): void {
         });
         return decided;
       }, "Approval request decided.")
+    );
+  approval
+    .command("sign-walletconnect")
+    .description("Sign a transaction-XDR approval request through WalletConnect external signing.")
+    .argument("<id>", "Approval request id")
+    .option("--wallet <wallet>", "Wallet label: lobstr or walletconnect", parseWalletConnectWalletOption, "lobstr")
+    .option("--project-id <id>", "WalletConnect project id; defaults to WALLETCONNECT_PROJECT_ID")
+    .option("--timeout-ms <ms>", "Pairing and signing timeout in milliseconds", parsePositiveIntegerOption, 120_000)
+    .option("--allow-real-funds", "Permit guarded Mainnet WalletConnect signing")
+    .option("--i-understand-real-funds", "Acknowledge this signing request uses real funds")
+    .action(
+      withContext(
+        async (
+          context,
+          id: string,
+          options: {
+            wallet: "lobstr" | "walletconnect";
+            projectId?: string;
+            timeoutMs: number;
+            allowRealFunds?: boolean;
+            iUnderstandRealFunds?: boolean;
+          }
+        ) => {
+          const { decideApprovalRequest, readApprovalRequest } = await import("@stellar-agent/freighter-bridge");
+          const {
+            createWalletConnectSignClient,
+            signTransactionXdrWithWalletConnect,
+            walletConnectMetadata,
+            walletConnectSessionView
+          } = await import("@stellar-agent/walletconnect-bridge");
+          const approval = await readApprovalRequest(context.config.storage.approvalsDir, id);
+          if (approval.kind !== "transaction_xdr" || !approval.transactionXdr) {
+            throw new StellarAgentError({
+              code: "INVALID_INPUT",
+              message: "WalletConnect signing requires a transaction-XDR approval request.",
+              docs: "docs/mainnet-safety.md#walletconnect-signing"
+            });
+          }
+          if (approval.status !== "pending") {
+            throw new StellarAgentError({
+              code: "INVALID_INPUT",
+              message: `Approval request '${approval.id}' is already ${approval.status}.`,
+              docs: "docs/mainnet-safety.md#walletconnect-signing"
+            });
+          }
+          if (approval.network !== context.profileName) {
+            throw new StellarAgentError({
+              code: "MAINNET_NOT_ENABLED",
+              message: "The active profile must match the WalletConnect approval request network.",
+              docs: "docs/mainnet-safety.md#walletconnect-signing"
+            });
+          }
+          const profile = resolveNetworkProfile(approval.network, context.config.profiles);
+          assertGuardedRealFundsProfile(context, profile, {
+            allowRealFunds: Boolean(options.allowRealFunds),
+            acknowledgeRealFunds: Boolean(options.iUnderstandRealFunds),
+            action: "WalletConnect signing"
+          });
+          const client = await createWalletConnectSignClient({
+            projectId: options.projectId,
+            metadata: walletConnectMetadata(options.wallet)
+          });
+          const signed = await signTransactionXdrWithWalletConnect({
+            client,
+            network: approval.network,
+            transactionXdr: approval.transactionXdr,
+            expectedSignerPublicKey: approval.payment?.source,
+            timeoutMs: options.timeoutMs,
+            onPairingUri: (uri) => printWalletConnectPairingUri(context.options, uri)
+          });
+          const decided = await decideApprovalRequest({
+            approvalsDir: context.config.storage.approvalsDir,
+            id: approval.id,
+            approved: true,
+            ...(signed.signerPublicKey === undefined ? {} : { signerPublicKey: signed.signerPublicKey }),
+            signedTransactionXdr: signed.signedTransactionXdr
+          });
+          await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
+            event: "approval_granted",
+            status: "signed",
+            command: "approval sign-walletconnect",
+            profile: approval.network,
+            requestId: decided.id,
+            data: {
+              approvalId: decided.id,
+              wallet: options.wallet,
+              method: signed.method,
+              chainId: signed.chainId,
+              signerPublicKey: signed.signerPublicKey,
+              session: walletConnectSessionView(signed.session)
+            }
+          });
+          return {
+            approval: decided,
+            walletConnect: {
+              wallet: options.wallet,
+              method: signed.method,
+              chainId: signed.chainId,
+              signerPublicKey: signed.signerPublicKey,
+              session: walletConnectSessionView(signed.session),
+              pairingUriPrinted: true,
+              custody: "external_wallet",
+              submitted: false
+            }
+          };
+        },
+        "Approval request signed with WalletConnect."
+      )
     );
   approval
     .command("serve")
@@ -5192,6 +5377,13 @@ function printSuccess(options: CliOptions, data: unknown, humanMessage: string):
   }
 }
 
+function printWalletConnectPairingUri(options: CliOptions, uri: string): void {
+  const message = options.json
+    ? JSON.stringify({ event: "walletconnect_pairing_uri", uri })
+    : `WalletConnect pairing URI:\n${uri}\nScan this URI or QR payload with your WalletConnect wallet.`;
+  process.stderr.write(`${message}\n`);
+}
+
 function printVersion(options: CliOptions): void {
   process.exitCode = EXIT_CODES.success;
   if (options.json) {
@@ -5342,6 +5534,15 @@ function parsePositiveIntegerOption(value: string): number {
     });
   }
   return parsed;
+}
+
+function parseWalletConnectWalletOption(value: string): "lobstr" | "walletconnect" {
+  if (value === "lobstr" || value === "walletconnect") return value;
+  throw new StellarAgentError({
+    code: "INVALID_INPUT",
+    message: "WalletConnect wallet must be lobstr or walletconnect.",
+    docs: "docs/mainnet-safety.md#walletconnect-signing"
+  });
 }
 
 function parseLedgersToExtendOption(value: string): number {

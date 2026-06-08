@@ -68,6 +68,7 @@ stellar-agent mainnet agent-wallet autosign enable --secret-key-env STELLAR_AGEN
 stellar-agent --profile mainnet pay send --from mainnet-agent --to G... --amount 0.01 --allow-real-funds --i-understand-real-funds --i-understand-agent-wallet-autosign --json
 stellar-agent mainnet agent-wallet disarm --json
 stellar-agent wallet connect-freighter --json
+stellar-agent wallet walletconnect pair --wallet lobstr --project-id "$WALLETCONNECT_PROJECT_ID" --json
 stellar-agent wallet trustline list --account merchant --json
 stellar-agent wallet trustline add --account merchant --asset USD:G... --json
 stellar-agent testnet scenario issued-asset-payment --json
@@ -77,6 +78,7 @@ stellar-agent approval create-payment --to G... --amount 6 --json
 stellar-agent approval create-transaction --xdr AAAA... --summary "Sign contract transaction" --network testnet --json
 stellar-agent approval decide appr_... --approve --json
 stellar-agent tx request-payment-signature --from treasury --to G... --amount 1 --json
+stellar-agent approval sign-walletconnect appr_... --wallet lobstr --project-id "$WALLETCONNECT_PROJECT_ID" --json
 stellar-agent tx submit-approval appr_... --json
 stellar-agent pay send --to G... --amount 1 --asset XLM --profile testnet
 stellar-agent pay batch --file ./payments.json --from agent --json
@@ -152,6 +154,7 @@ The public npm packages are:
 | [`@stellar-agent/defi`](https://www.npmjs.com/package/@stellar-agent/defi) | Blend and Aquarius DeFi inspection and preflight helpers. |
 | [`@stellar-agent/ledger-logger`](https://www.npmjs.com/package/@stellar-agent/ledger-logger) | Receipts, JSONL event logs, and spend-history helpers. |
 | [`@stellar-agent/freighter-bridge`](https://www.npmjs.com/package/@stellar-agent/freighter-bridge) | Local approval and Freighter-compatible signing bridge primitives. |
+| [`@stellar-agent/walletconnect-bridge`](https://www.npmjs.com/package/@stellar-agent/walletconnect-bridge) | WalletConnect external-signing adapter for LOBSTR and compatible Stellar wallets. |
 | [`@stellar-agent/mcp-server`](https://www.npmjs.com/package/@stellar-agent/mcp-server) | MCP stdio server that delegates to `stellar-agent --json`. |
 | [`@stellar-agent/testnet-suite`](https://www.npmjs.com/package/@stellar-agent/testnet-suite) | Reusable Testnet wallet, Friendbot, and smoke-test workflows. |
 | [`@stellar-agent/x402-client`](https://www.npmjs.com/package/@stellar-agent/x402-client) | Local Testnet x402-style demo client and server helpers. |

@@ -199,9 +199,35 @@ For Testnet payments that policy marks `requires_approval`, rerun the payment wi
 stellar-agent pay send --to G... --amount 6 --approval-id appr_... --json
 ```
 
-The bridge does not handle raw secret keys. Browser-extension signing through Freighter can post signed transaction XDR back to the bridge. Testnet submission is available by default; Mainnet submission is available only through the guarded signed-XDR rules below.
+The bridge does not handle raw secret keys. Browser-extension signing through Freighter can post signed transaction XDR back to the bridge. WalletConnect signing through LOBSTR or another compatible Stellar wallet can also attach signed XDR to an approval request. Testnet submission is available by default; Mainnet submission is available only through the guarded signed-XDR rules below.
 
 When `stellar-agent approval serve` is opened in a browser with Freighter installed, transaction-XDR approval requests include a `Sign With Freighter` action. The UI calls Freighter's `signTransaction` API and records the returned signed XDR plus signer address in the approval request. The bridge verifies that the signed envelope has at least one signature and that its transaction body exactly matches the original approval XDR before storing it.
+
+## WalletConnect Signing
+
+WalletConnect support is an external signing flow for wallets such as LOBSTR. It does not use local custody and it does not submit transactions through WalletConnect.
+
+Commands:
+
+```bash
+stellar-agent wallet walletconnect pair --wallet lobstr --project-id "$WALLETCONNECT_PROJECT_ID" --json
+stellar-agent wallet walletconnect status --project-id "$WALLETCONNECT_PROJECT_ID" --json
+stellar-agent wallet walletconnect disconnect --topic <topic> --project-id "$WALLETCONNECT_PROJECT_ID" --json
+stellar-agent approval sign-walletconnect appr_... --wallet lobstr --project-id "$WALLETCONNECT_PROJECT_ID" --json
+stellar-agent tx submit-approval appr_... --json
+```
+
+Controls:
+
+- WalletConnect requires a project id from `--project-id` or `WALLETCONNECT_PROJECT_ID`.
+- `approval sign-walletconnect` uses `stellar_signXDR` only. It does not call `stellar_signAndSubmitXDR`.
+- The active profile must match the approval request network.
+- WalletConnect accounts must be on `stellar:testnet` for Testnet approvals or `stellar:pubnet` for Mainnet approvals.
+- If the approval request includes payment metadata, the connected WalletConnect account must match the payment source account.
+- Mainnet WalletConnect signing requires Mainnet enablement plus `--allow-real-funds --i-understand-real-funds`.
+- The signed XDR is recorded on the approval request only after the signed envelope matches the original approval XDR body.
+- Submission remains a separate `tx submit-approval` step so policy re-checks, Mainnet acknowledgements, Horizon submission, and receipt logging still run through `stellar-agent`.
+- Pairing URIs are printed for the active command but are not written to receipts or event logs.
 
 ## Signed XDR Submission
 
@@ -215,6 +241,8 @@ stellar-agent tx submit-approval appr_... --json
 ```
 
 `tx build-payment` creates unsigned payment XDR for a local, watch-only, or raw public-key source account. `tx request-payment-signature` builds that XDR and creates a local transaction approval request for Freighter signing. `tx submit-approval` loads the signed XDR recorded by the local approval bridge and submits it to Horizon. It requires a `transaction_xdr` approval with status `signed` whose signed envelope matches the requested transaction.
+
+For WalletConnect wallets such as LOBSTR, use `approval sign-walletconnect appr_... --wallet lobstr` after creating the transaction approval request. This records signed XDR but does not submit it.
 
 Mainnet signed-XDR workflows are allowed only when all of these are true:
 

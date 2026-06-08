@@ -10,6 +10,7 @@
     { "path": "packages/x402-client" },
     { "path": "packages/mpp-client" },
     { "path": "packages/freighter-bridge" },
+    { "path": "packages/walletconnect-bridge" },
     { "path": "packages/mcp-server" },
     { "path": "packages/codex-plugin" },
     { "path": "packages/cli" }

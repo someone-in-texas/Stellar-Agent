@@ -15,6 +15,7 @@ stellar-agent testnet scenario x402-payment --json
 stellar-agent pay x402 http://127.0.0.1:PORT/paid-report --allow-localhost-demo --json
 stellar-agent pay mpp http://127.0.0.1:PORT/mpp-report --allow-localhost-demo --json
 stellar-agent pay mpp-session http://127.0.0.1:PORT/mpp-session --requests 2 --allow-localhost-demo --json
+stellar-agent approval sign-walletconnect appr_... --wallet lobstr --project-id "$WALLETCONNECT_PROJECT_ID" --json
 stellar-agent tx submit-approval appr_... --json
 stellar-agent testnet scenario contract-asset-smoke --dry-run --json
 stellar-agent contract deploy --source agent --wasm ./contract.wasm --json
@@ -51,6 +52,7 @@ Mainnet agent rule:
 - Treat `MAINNET_NOT_ENABLED`, `APPROVAL_REQUIRED`, and `POLICY_DENIED` as stop conditions.
 - Do not add `--allow-real-funds` or `--i-understand-real-funds` unless the user explicitly asks for that exact Mainnet action.
 - Do not ask for or pass Mainnet secret keys. Use watch-only public wallets, browser-wallet approvals, Stellar CLI identities, or signed XDR.
+- Use WalletConnect/LOBSTR only as a human external signer. Run `approval sign-walletconnect` to record signed XDR, then submit separately with `tx submit-approval`.
 - For Mainnet signed-XDR submission, include the real-funds flags only after confirming the signed XDR came from a human-controlled Mainnet wallet.
 
 Receipts are JSON files under `~/.stellar-agent/receipts`.

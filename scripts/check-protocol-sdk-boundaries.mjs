@@ -11,12 +11,24 @@ const protocolSdks = [
     allowedPackageDirs: ["packages/defi"],
     allowedImportDirs: ["packages/defi/src"],
     requireDynamicImport: true
+  },
+  {
+    name: "@walletconnect/sign-client",
+    allowedPackageDirs: ["packages/walletconnect-bridge"],
+    allowedImportDirs: ["packages/walletconnect-bridge/src"],
+    requireDynamicImport: true
   }
 ];
 
 const adapterPackages = [
   {
     name: "@stellar-agent/defi",
+    allowedPackageDirs: ["packages/cli"],
+    allowedDynamicImportDirs: ["packages/cli/src"],
+    allowedTypeImportDirs: ["packages/cli/src"]
+  },
+  {
+    name: "@stellar-agent/walletconnect-bridge",
     allowedPackageDirs: ["packages/cli"],
     allowedDynamicImportDirs: ["packages/cli/src"],
     allowedTypeImportDirs: ["packages/cli/src"]

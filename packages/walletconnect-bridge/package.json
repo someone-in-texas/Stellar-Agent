@@ -1,0 +1,41 @@
+{
+  "name": "@stellar-agent/walletconnect-bridge",
+  "version": "0.5.0",
+  "description": "WalletConnect external signing adapter for Stellar Agent Bridge approval workflows.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/someone-in-texas/Stellar-Agent.git",
+    "directory": "packages/walletconnect-bridge"
+  },
+  "bugs": {
+    "url": "https://github.com/someone-in-texas/Stellar-Agent/issues"
+  },
+  "homepage": "https://github.com/someone-in-texas/Stellar-Agent/tree/main/packages/walletconnect-bridge#readme",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@stellar-agent/core": "workspace:*",
+    "@walletconnect/sign-client": "^2.23.9"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.24"
+  }
+}

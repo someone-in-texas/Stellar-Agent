@@ -18,6 +18,7 @@ export const publishablePackageDirs = [
   "packages/stellar",
   "packages/defi",
   "packages/freighter-bridge",
+  "packages/walletconnect-bridge",
   "packages/mcp-server",
   "packages/testnet-suite",
   "packages/x402-client",

@@ -37,6 +37,7 @@ requireText("docs/threat-model.md", threatModel, [
   "Secret key leakage",
   "Spend-history bypass",
   "Mainnet/Testnet confusion",
+  "WalletConnect signing misuse",
   "Aquarius AMM route risk",
   "Third-party protocol SDK compromise",
   "protocol SDK boundary checks",
@@ -59,6 +60,7 @@ requireText("docs/mainnet-safety.md", mainnetSafety, [
   "Mainnet Aquarius mutation must not use local generated wallet secrets",
   "--allow-real-funds",
   "--i-understand-real-funds",
+  "stellar_signXDR",
   "Receipts are enabled."
 ]);
 requireText("README.md", readme, [
@@ -90,6 +92,7 @@ requireText("plugins/codex/plugin.yaml", codexPluginYaml, [
 ]);
 requireText("plugins/codex/README.md", codexPluginReadme, [
   "Blend and Aquarius DeFi workflows",
+  "WalletConnect/LOBSTR external signing",
   "Treat Aquarius commands in this release as read-only or preflight-only",
   "market-liquidity investigation",
   "For liquidity-pool mutation, run `market lp preflight` first",
@@ -104,6 +107,7 @@ requireText("plugins/codex/skills/stellar-agent-testnet/SKILL.md", codexTestnetS
 requireText("plugins/codex/skills/stellar-agent-payments/SKILL.md", codexPaymentsSkill, [
   "pay quote",
   "approval create-transaction",
+  "approval sign-walletconnect",
   "pay x402",
   "pay mpp-session"
 ]);
@@ -125,13 +129,16 @@ requireText("packages/cli/src/index.ts", cliSource, [
   "resolveContractSource",
   "SECRET_KEY_BLOCKED",
   "writeSubmittedXdrReceipt",
-  "writeOperationReceipt"
+  "writeOperationReceipt",
+  "sign-walletconnect"
 ]);
 requireText("packages/core/test/core.test.ts", coreTests, ["redacts secret keys", "mainnet.enabled).toBe(false)"]);
 requireText("packages/policy/test/policy.test.ts", policyTests, ["mainnet_requires_approval"]);
 requireText("packages/cli/test/cli.test.ts", cliTests, [
   "blocks Mainnet contract submissions unless guarded Mainnet mode is enabled",
   "submits externally signed Mainnet XDR only with explicit real-funds flags and writes a receipt",
+  "records WalletConnect signed XDR on an approval without submitting it",
+  "refuses Mainnet WalletConnect signing without real-funds acknowledgements",
   "autosigns only the armed Mainnet agent-wallet payment path with explicit acknowledgements",
   "refuses Mainnet agent-wallet autosign payments over the per-transaction cap",
   "prints known Aquarius deployments without network access",

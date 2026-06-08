@@ -35,6 +35,8 @@ stellar-agent pay quote --to G... --amount 1 --asset XLM --json
 stellar-agent pay send --to G... --amount 1 --asset XLM --json
 stellar-agent approval create-payment --to G... --amount 6 --json
 stellar-agent tx request-payment-signature --from treasury --to G... --amount 1 --json
+stellar-agent approval sign-walletconnect appr_... --wallet lobstr --project-id "$WALLETCONNECT_PROJECT_ID" --json
+stellar-agent tx submit-approval appr_... --json
 stellar-agent defi blend preflight --pool TestnetV2 --account agent --request supply_collateral:USDC:1 --json
 stellar-agent defi aquarius swap preflight --from XLM --to AQUA --amount 0.01 --slippage-bps 100 --json
 ```
@@ -44,9 +46,9 @@ stellar-agent defi aquarius swap preflight --from XLM --to AQUA --amount 0.01 --
 | Command Group | Use For |
 | --- | --- |
 | `testnet` | Initialize, diagnose, fund, smoke-test, and run Testnet scenarios. |
-| `wallet` | Create Testnet wallets, import watch-only wallets, inspect balances, and manage trustlines. |
+| `wallet` | Create Testnet wallets, import watch-only wallets, inspect balances, manage trustlines, and inspect WalletConnect signer sessions. |
 | `pay` | Quote, send, batch, x402-demo, and MPP-demo payments. |
-| `approval` | Create, list, decide, serve, and inspect local approval requests. |
+| `approval` | Create, list, decide, serve, inspect, and externally sign local approval requests. |
 | `tx` | Build, request signatures for, and submit signed XDR. |
 | `defi` | Inspect and preflight Blend and Aquarius workflows. |
 | `market` | Inspect core Stellar liquidity pools, preflight LP actions, and run finite listeners. |
@@ -62,6 +64,7 @@ stellar-agent defi aquarius swap preflight --from XLM --to AQUA --amount 0.01 --
 - Mainnet requires explicit enablement and real-funds flags.
 - Secret keys are redacted from CLI output, logs, and receipts.
 - Policy checks run before submitted payment and protocol workflows.
+- WalletConnect and Freighter flows are external signing only; `tx submit-approval` remains the submission and receipt path.
 - Aquarius commands in this release are read-only or preflight-only.
 
 ## Links
