@@ -39,7 +39,7 @@ npm renders the `README.md` included in each package tarball. To preview what np
 
 ```bash
 pnpm release:pack
-tar -xOf .release/artifacts/npm/stellar-agent-cli-0.5.0.tgz package/README.md
+tar -xOf .release/artifacts/npm/stellar-agent-cli-0.5.1.tgz package/README.md
 pnpm release:verify-readmes
 ```
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.1
+
+- Hardened Horizon-backed x402 verification so settled transactions must include a challenge memo bound to the issued resource and nonce, preventing reuse of older matching payments for fresh challenges.
+- Normalized malformed x402 proof amounts to `invalid_payment_proof` responses so local paid API demos return HTTP 402 JSON errors instead of surfacing unhandled parser failures.
+- Added safe demo bundle commands, typed SDK examples, agent payment recipes, approval bridge URL helpers, and config-file market alerts from the post-0.5.0 feature set.
+- Published programmatic CLI JSON schemas for agent/tool integrations.
+- Wrapped missing or malformed market alert config files as structured `INVALID_INPUT` responses with market-listener docs.
+
 ## 0.5.0
 
 - Added a guarded Mainnet agent-wallet workflow for dedicated, risk-budgeted wallets, including external-funding guidance, arming fingerprints, receipt-backed spend caps, balance checks, and an explicit autosign exception that still requires policy status `allowed`.

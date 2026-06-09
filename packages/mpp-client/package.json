@@ -1,6 +1,6 @@
 {
   "name": "@stellar-agent/mpp-client",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Local Testnet MPP one-time and session-budget demo client and server helpers for Stellar Agent Bridge.",
   "type": "module",
   "license": "MIT",

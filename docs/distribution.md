@@ -18,7 +18,7 @@ The release preflight builds, lints, tests, smoke-tests, checks release metadata
 Generated artifacts:
 
 - `.release/artifacts/npm/*.tgz` for scoped npm packages.
-- `.release/artifacts/codex/stellar-agent-codex-plugin-v0.5.0.tgz` for Codex plugin installation.
+- `.release/artifacts/codex/stellar-agent-codex-plugin-v0.5.1.tgz` for Codex plugin installation.
 - `.release/artifacts/release-manifest.json` for checksums and source commit evidence.
 
 The public package set is:
@@ -47,7 +47,7 @@ Preview npm README content before publishing:
 
 ```bash
 pnpm release:pack
-tar -xOf .release/artifacts/npm/stellar-agent-cli-0.5.0.tgz package/README.md
+tar -xOf .release/artifacts/npm/stellar-agent-cli-0.5.1.tgz package/README.md
 pnpm release:verify-readmes
 ```
 
