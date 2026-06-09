@@ -2320,6 +2320,46 @@ describe("CLI market liquidity commands", () => {
       }
     });
 
+    const missingConfig = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "market",
+      "listen",
+      "config",
+      "--file",
+      join(tmpdir(), "stellar-agent-missing-alerts.yaml")
+    ]);
+    expect(missingConfig).toMatchObject({
+      ok: false,
+      error: {
+        code: "INVALID_INPUT",
+        message: "Market alert config file could not be read.",
+        docs: "docs/market-liquidity.md#market-listeners"
+      }
+    });
+
+    const malformedAlertsPath = join(await mkdtemp(join(tmpdir(), "stellar-agent-alerts-malformed-")), "alerts.yaml");
+    await writeFile(malformedAlertsPath, "alerts:\n  - pool: [");
+    const malformedConfig = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "market",
+      "listen",
+      "config",
+      "--file",
+      malformedAlertsPath
+    ]);
+    expect(malformedConfig).toMatchObject({
+      ok: false,
+      error: {
+        code: "INVALID_INPUT",
+        message: "Market alert config file is not valid YAML or JSON.",
+        docs: "docs/market-liquidity.md#market-listeners"
+      }
+    });
+
     const preflight = await runCli([
       "--config",
       configPath,

@@ -4517,8 +4517,28 @@ async function listenForMarketAlertConfig(
 }
 
 async function readMarketAlertConfig(path: string): Promise<MarketAlertConfigFile> {
-  const raw = await readFile(resolvePath(path), "utf8");
-  const parsed = parseYaml(raw) as Partial<MarketAlertConfigFile> | null;
+  let raw: string;
+  try {
+    raw = await readFile(resolvePath(path), "utf8");
+  } catch (error) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Market alert config file could not be read.",
+      details: error,
+      docs: "docs/market-liquidity.md#market-listeners"
+    });
+  }
+  let parsed: Partial<MarketAlertConfigFile> | null;
+  try {
+    parsed = parseYaml(raw) as Partial<MarketAlertConfigFile> | null;
+  } catch (error) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Market alert config file is not valid YAML or JSON.",
+      details: error,
+      docs: "docs/market-liquidity.md#market-listeners"
+    });
+  }
   if (!parsed || !Array.isArray(parsed.alerts) || parsed.alerts.length === 0) {
     throw new StellarAgentError({
       code: "INVALID_INPUT",
