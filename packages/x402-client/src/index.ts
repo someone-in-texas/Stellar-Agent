@@ -513,7 +513,6 @@ export async function startPaidApiDemo(args: {
       return;
     }
     const proof = parseProofHeader(proofHeader);
-    const resource = paidResource(host, server);
     if (!proof) {
       writeJson(response, 402, { ok: false, error: "invalid_payment_proof" });
       return;
