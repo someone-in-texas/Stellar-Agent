@@ -48,7 +48,7 @@ Expected output shape:
 
 Pricing is configured with `X402_PRICE`, `X402_ASSET`, and `X402_RECIPIENT` in `.env`. The default price is `0.0000001 XLM` on Testnet.
 
-`src/server.ts` generates an HTTP `402` response for `/paid` with a `Payment-Required` header and JSON body. The requirement includes the Testnet recipient, amount, asset, resource URL, nonce, issue time, and expiry time.
+`src/server.ts` generates an HTTP `402` response for `/paid` with a `Payment-Required` header and JSON body. The requirement includes the Testnet recipient, amount, asset, resource URL, nonce, challenge memo, issue time, and expiry time.
 
 `src/client.ts` uses `runX402Payment` from `@stellar-agent/x402-client`. The client builds a Testnet policy that allows only the paid API domain, enforces the x402 price cap, performs mocked local settlement, retries the API with an `X-Payment` proof, and writes a normal `stellar-agent` receipt.
 
@@ -79,7 +79,7 @@ X402_VERIFICATION_MODE=horizon
 X402_HORIZON_URL=https://horizon-testnet.stellar.org
 ```
 
-Horizon mode verifies that the submitted transaction succeeded and contains a payment operation matching the payer, destination, amount, and asset in the x402 requirement.
+Horizon mode verifies that the submitted transaction succeeded, contains the challenge memo from the x402 requirement, and includes a payment operation matching the payer, destination, amount, and asset.
 
 To experiment with a facilitator, set `X402_VERIFICATION_MODE=facilitator` and `X402_FACILITATOR_URL=<url>`, then replace `verifyWithFacilitator` with your facilitator's verification contract. Keep policy evaluation and receipt writing on the client side.
 

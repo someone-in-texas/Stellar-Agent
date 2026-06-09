@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { mkdtemp } from "node:fs/promises";
 import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
-import { parseX402Requirement } from "@stellar-agent/x402-client";
+import { parseX402Requirement, x402ChallengeMemo } from "@stellar-agent/x402-client";
 import { DEFAULT_TESTNET_POLICY } from "@stellar-agent/policy";
 import { payForResource } from "../src/client.js";
 import { loadExampleEnv, startX402PaidApi } from "../src/server.js";
@@ -45,6 +45,20 @@ describe("examples/x402-paid-api", () => {
     const server = await startX402PaidApi({ recipient });
     try {
       const response = await fetch(server.paidUrl, { headers: { "X-Payment": "{" } });
+      expect(response.status).toBe(402);
+      await expect(response.json()).resolves.toEqual({ ok: false, error: "invalid_payment_proof" });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("returns JSON errors for issued proofs with malformed amounts", async () => {
+    const server = await startX402PaidApi({ recipient });
+    try {
+      const challenge = await fetch(server.paidUrl);
+      const requirement = await parseX402Requirement(challenge);
+      const proof = { ...proofForRequirement(requirement, "1".repeat(64)), amount: "bad-amount" };
+      const response = await fetch(server.paidUrl, { headers: { "X-Payment": JSON.stringify(proof) } });
       expect(response.status).toBe(402);
       await expect(response.json()).resolves.toEqual({ ok: false, error: "invalid_payment_proof" });
     } finally {
@@ -194,6 +208,7 @@ describe("examples/x402-paid-api", () => {
         transactionHash: proof.transactionHash,
         successful: true,
         ledger: 456,
+        memo: x402ChallengeMemo(proof),
         operations: [
           {
             source: proof.payer,

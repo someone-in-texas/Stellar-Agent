@@ -53,7 +53,7 @@ Flow:
 
 The local demo binds proofs to the advertised resource and nonce, requires payer metadata, and rejects replay of a previously accepted transaction hash. Resource binding includes the URL origin, path, and query string, so a payment requirement for `?item=cheap` does not satisfy a request for `?item=expensive`.
 
-The reusable verifier in `@stellar-agent/x402-client` can validate a proof against Horizon transaction evidence. It checks the transaction hash, one-use replay state, requirement freshness, payment success, payer, recipient, amount, asset, resource, and nonce. CI-safe examples can still use mocked settlement, but Horizon verification is the real Testnet path for merchant server examples.
+The reusable verifier in `@stellar-agent/x402-client` can validate a proof against Horizon transaction evidence. It checks the transaction hash, one-use replay state, requirement freshness, payment success, payer, recipient, amount, asset, resource, nonce, and the challenge memo committed to the settled transaction. CI-safe examples can still use mocked settlement, but Horizon verification is the real Testnet path for merchant server examples.
 
 The demo paid API is available under `examples/paid-api-demo`:
 

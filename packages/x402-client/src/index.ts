@@ -10,6 +10,7 @@ import {
 import { appendEvent, writeReceipt } from "@stellar-agent/ledger-logger";
 import { Policy, SpendHistory, evaluatePaymentRequest } from "@stellar-agent/policy";
 import { sendPayment } from "@stellar-agent/stellar";
+import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
 export interface X402PaymentRequirement {
@@ -278,6 +279,17 @@ export function validateRequirement(value: unknown): X402PaymentRequirement {
     });
   }
   parseAmount(candidate.amount, candidate.asset);
+  const expectedMemo = x402ChallengeMemo({
+    resource: candidate.resource,
+    nonce: candidate.nonce
+  });
+  if (candidate.memo !== undefined && candidate.memo !== expectedMemo) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "HTTP 402 response included an x402 memo that was not bound to the challenge.",
+      docs: "docs/x402-and-mpp.md#local-x402-demo"
+    });
+  }
   return {
     protocol: "stellar-agent-local-x402",
     version: 1,
@@ -289,7 +301,7 @@ export function validateRequirement(value: unknown): X402PaymentRequirement {
     nonce: candidate.nonce,
     ...(candidate.issuedAt === undefined ? {} : { issuedAt: candidate.issuedAt }),
     ...(candidate.expiresAt === undefined ? {} : { expiresAt: candidate.expiresAt }),
-    ...(candidate.memo === undefined ? {} : { memo: candidate.memo })
+    memo: expectedMemo
   };
 }
 
@@ -305,6 +317,12 @@ export async function verifyX402PaymentProof(args: {
   loadPayment?: X402PaymentLoader;
 }): Promise<X402PaymentVerification> {
   const expectedAmount = parseAmount(args.requirement.amount, args.requirement.asset).value;
+  let proofAmount: string;
+  try {
+    proofAmount = parseAmount(args.proof.amount, args.proof.asset).value;
+  } catch {
+    return { ok: false, error: "invalid_payment_proof" };
+  }
   if (
     args.proof.protocol !== args.requirement.protocol ||
     args.proof.version !== args.requirement.version ||
@@ -313,7 +331,7 @@ export async function verifyX402PaymentProof(args: {
     args.requirement.network !== "testnet" ||
     args.proof.recipient !== args.requirement.recipient ||
     args.proof.asset !== args.requirement.asset ||
-    parseAmount(args.proof.amount, args.proof.asset).value !== expectedAmount ||
+    proofAmount !== expectedAmount ||
     args.proof.resource !== args.requirement.resource ||
     args.proof.nonce !== args.requirement.nonce
   ) {
@@ -347,6 +365,9 @@ export async function verifyX402PaymentProof(args: {
       parseAmount(candidate.amount, candidate.asset).value === expectedAmount
   );
   if (!operation) return { ok: false, error: "payment_operation_mismatch" };
+  if (payment.memo !== x402ChallengeMemo(args.requirement)) {
+    return { ok: false, error: "payment_operation_mismatch" };
+  }
 
   args.acceptedTransactions?.add(args.proof.transactionHash);
   return {
@@ -359,6 +380,10 @@ export async function verifyX402PaymentProof(args: {
       operation
     }
   };
+}
+
+export function x402ChallengeMemo(requirement: Pick<X402PaymentRequirement, "nonce" | "resource">): string {
+  return `x402:${createHash("sha256").update(`${requirement.nonce}\0${requirement.resource}`).digest("hex").slice(0, 22)}`;
 }
 
 export async function loadX402PaymentFromHorizon(args: {
@@ -422,6 +447,7 @@ function mockVerifiedPayment(proof: X402PaymentProof): X402VerifiedPayment {
     successful: true,
     ...(proof.ledger === undefined ? {} : { ledger: proof.ledger }),
     ...(proof.submittedAt === undefined ? {} : { createdAt: proof.submittedAt }),
+    memo: x402ChallengeMemo(proof),
     operations: [
       {
         source: proof.payer,
@@ -476,9 +502,9 @@ export async function startPaidApiDemo(args: {
         resource,
         nonce: makeId("x402_req"),
         issuedAt: issuedAt.toISOString(),
-        expiresAt: new Date(issuedAt.getTime() + maxChallengeAgeMs).toISOString(),
-        memo: "x402-demo"
+        expiresAt: new Date(issuedAt.getTime() + maxChallengeAgeMs).toISOString()
       };
+      requirement.memo = x402ChallengeMemo(requirement);
       issuedRequirements.set(requirement.nonce, requirement);
       const encoded = JSON.stringify(requirement);
       response.setHeader("Payment-Required", encoded);

@@ -6249,7 +6249,7 @@ function x402ServerScaffoldFiles(): Record<string, string> {
       null,
       2
     )}\n`,
-    "server.mjs": `import { randomUUID } from "node:crypto";
+    "server.mjs": `import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 
 const port = Number(process.env.PORT ?? 8787);
@@ -6326,7 +6326,7 @@ server.listen(port, () => {
 function paymentRequirement(request) {
   const issuedAt = new Date();
   const resource = new URL(request.url, \`http://\${request.headers.host}\`);
-  return {
+  const requirement = {
     protocol: "stellar-agent-local-x402",
     version: 1,
     network: "testnet",
@@ -6336,12 +6336,18 @@ function paymentRequirement(request) {
     resource: resource.toString(),
     nonce: \`x402_req_\${randomUUID()}\`,
     issuedAt: issuedAt.toISOString(),
-    expiresAt: new Date(issuedAt.getTime() + maxAgeMs).toISOString(),
-    memo: "x402-scaffold"
+    expiresAt: new Date(issuedAt.getTime() + maxAgeMs).toISOString()
   };
+  return { ...requirement, memo: challengeMemo(requirement) };
 }
 
 async function verifyPaymentProof(proof, requirement) {
+  let proofAmount;
+  try {
+    proofAmount = normalizeAmount(proof.amount);
+  } catch {
+    return { ok: false, error: "invalid_payment_proof" };
+  }
   if (
     proof.protocol !== requirement.protocol ||
     proof.version !== requirement.version ||
@@ -6349,7 +6355,7 @@ async function verifyPaymentProof(proof, requirement) {
     !proof.payer ||
     proof.recipient !== requirement.recipient ||
     proof.asset !== requirement.asset ||
-    normalizeAmount(proof.amount) !== normalizeAmount(requirement.amount) ||
+    proofAmount !== normalizeAmount(requirement.amount) ||
     proof.resource !== requirement.resource ||
     proof.nonce !== requirement.nonce
   ) {
@@ -6377,6 +6383,7 @@ async function verifyPaymentProof(proof, requirement) {
     );
   });
   if (!paymentOp) return { ok: false, error: "payment_operation_mismatch" };
+  if (transaction.memo !== challengeMemo(requirement)) return { ok: false, error: "payment_operation_mismatch" };
   return {
     ok: true,
     settlement: {
@@ -6407,6 +6414,10 @@ function parsePaymentProof(header) {
   } catch {
     return null;
   }
+}
+
+function challengeMemo(requirement) {
+  return \`x402:\${createHash("sha256").update(\`\${requirement.nonce}\\0\${requirement.resource}\`).digest("hex").slice(0, 22)}\`;
 }
 
 function normalizeAmount(value) {
@@ -6443,7 +6454,7 @@ The server issues nonce-bound \`stellar-agent-local-x402\` requirements and veri
 - requirement freshness
 - Testnet payment success
 - payment source, destination, amount, and asset
-- exact paid resource and nonce binding
+- exact paid resource and nonce binding through the transaction memo
 
 Optional settings:
 

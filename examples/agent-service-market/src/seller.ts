@@ -1,5 +1,5 @@
 import { makeId, parseAmount } from "@stellar-agent/core";
-import { X402PaymentProof, X402PaymentRequirement } from "@stellar-agent/x402-client";
+import { X402PaymentProof, X402PaymentRequirement, x402ChallengeMemo } from "@stellar-agent/x402-client";
 import express, { type Express, type Request, type Response } from "express";
 import { createServer, type Server } from "node:http";
 import { loadMarketEnv } from "./env.js";
@@ -185,7 +185,7 @@ function requirement(args: {
   resource: string;
   nonce?: string;
 }): X402PaymentRequirement {
-  return {
+  const paymentRequirement: X402PaymentRequirement = {
     protocol: "stellar-agent-local-x402",
     version: 1,
     network: "testnet",
@@ -193,9 +193,9 @@ function requirement(args: {
     amount: args.price,
     asset: args.asset,
     resource: args.resource,
-    nonce: args.nonce ?? makeId("market_x402"),
-    memo: "agent-market"
+    nonce: args.nonce ?? makeId("market_x402")
   };
+  return { ...paymentRequirement, memo: x402ChallengeMemo(paymentRequirement) };
 }
 
 function validateProof(

@@ -3,7 +3,8 @@ import {
   X402PaymentLoader,
   X402PaymentProof,
   X402PaymentRequirement,
-  verifyX402PaymentProof
+  verifyX402PaymentProof,
+  x402ChallengeMemo
 } from "@stellar-agent/x402-client";
 import express, { type Express, type Request, type Response } from "express";
 import { createServer, type Server } from "node:http";
@@ -144,7 +145,7 @@ export function paymentRequirement(args: {
   nonce?: string;
 }): X402PaymentRequirement {
   const issuedAt = new Date();
-  return {
+  const requirement: X402PaymentRequirement = {
     protocol: "stellar-agent-local-x402",
     version: 1,
     network: "testnet",
@@ -154,9 +155,9 @@ export function paymentRequirement(args: {
     resource: args.resource,
     nonce: args.nonce ?? makeId("x402_req"),
     issuedAt: issuedAt.toISOString(),
-    expiresAt: new Date(issuedAt.getTime() + 5 * 60 * 1000).toISOString(),
-    memo: "x402-example"
+    expiresAt: new Date(issuedAt.getTime() + 5 * 60 * 1000).toISOString()
   };
+  return { ...requirement, memo: x402ChallengeMemo(requirement) };
 }
 
 async function verifyPaymentProof(args: {

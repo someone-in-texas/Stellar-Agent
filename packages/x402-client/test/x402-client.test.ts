@@ -7,7 +7,8 @@ import {
   parseX402Requirement,
   runX402Payment,
   startPaidApiDemo,
-  verifyX402PaymentProof
+  verifyX402PaymentProof,
+  x402ChallengeMemo
 } from "../src/index.js";
 import { DEFAULT_TESTNET_POLICY } from "@stellar-agent/policy";
 
@@ -38,7 +39,10 @@ describe("x402 client", () => {
       status: 402,
       headers: { "Payment-Required": JSON.stringify(requirement) }
     });
-    await expect(parseX402Requirement(response)).resolves.toEqual(requirement);
+    await expect(parseX402Requirement(response)).resolves.toEqual({
+      ...requirement,
+      memo: x402ChallengeMemo(requirement)
+    });
   });
 
   it("runs a dry-run policy evaluation against the demo server", async () => {
@@ -137,6 +141,7 @@ describe("x402 client", () => {
         successful: true,
         ledger: 123,
         createdAt: "2026-06-08T12:00:20.000Z",
+        memo: x402ChallengeMemo(requirement),
         operations: [
           {
             source: proof.payer,
@@ -172,6 +177,72 @@ describe("x402 client", () => {
         loadPayment: async () => null
       })
     ).resolves.toEqual({ ok: false, error: "payment_proof_replayed" });
+  });
+
+  it("rejects Stellar payment evidence bound to an older x402 challenge", async () => {
+    const oldRequirement = {
+      protocol: "stellar-agent-local-x402" as const,
+      version: 1 as const,
+      network: "testnet" as const,
+      asset: "XLM",
+      amount: "0.0000001",
+      recipient,
+      resource: "http://127.0.0.1/paid-report",
+      nonce: "x402_req_old",
+      issuedAt: new Date("2026-06-08T12:00:00.000Z").toISOString()
+    };
+    const freshRequirement = {
+      ...oldRequirement,
+      nonce: "x402_req_fresh",
+      issuedAt: new Date("2026-06-08T12:01:00.000Z").toISOString()
+    };
+    const proof = proofForRequirement(freshRequirement, "f".repeat(64));
+
+    await expect(
+      verifyX402PaymentProof({
+        proof,
+        requirement: freshRequirement,
+        now: new Date("2026-06-08T12:01:30.000Z"),
+        loadPayment: async () => ({
+          transactionHash: proof.transactionHash,
+          successful: true,
+          ledger: 124,
+          memo: x402ChallengeMemo(oldRequirement),
+          operations: [
+            {
+              source: proof.payer,
+              destination: freshRequirement.recipient,
+              asset: freshRequirement.asset,
+              amount: freshRequirement.amount
+            }
+          ]
+        })
+      })
+    ).resolves.toEqual({ ok: false, error: "payment_operation_mismatch" });
+  });
+
+  it("treats malformed proof amounts as invalid x402 proofs", async () => {
+    const requirement = {
+      protocol: "stellar-agent-local-x402" as const,
+      version: 1 as const,
+      network: "testnet" as const,
+      asset: "XLM",
+      amount: "0.0000001",
+      recipient,
+      resource: "http://127.0.0.1/paid-report",
+      nonce: "x402_req_1",
+      issuedAt: new Date("2026-06-08T12:00:00.000Z").toISOString()
+    };
+    const proof = { ...proofForRequirement(requirement, "9".repeat(64)), amount: "not-an-amount" };
+
+    await expect(
+      verifyX402PaymentProof({
+        proof,
+        requirement,
+        now: new Date("2026-06-08T12:01:00.000Z"),
+        loadPayment: async () => null
+      })
+    ).resolves.toEqual({ ok: false, error: "invalid_payment_proof" });
   });
 
   it("rejects x402 proofs when Stellar payment evidence does not match", async () => {
@@ -239,7 +310,13 @@ describe("x402 client", () => {
       const href = String(url);
       if (href.endsWith(`/transactions/${transactionHash}`)) {
         return new Response(
-          JSON.stringify({ hash: transactionHash, successful: true, ledger: 321, created_at: "2026-06-08T12:00:00Z" })
+          JSON.stringify({
+            hash: transactionHash,
+            successful: true,
+            ledger: 321,
+            created_at: "2026-06-08T12:00:00Z",
+            memo: "x402:test-memo"
+          })
         );
       }
       if (href.endsWith(`/transactions/${transactionHash}/operations?limit=200`)) {
@@ -272,6 +349,7 @@ describe("x402 client", () => {
       transactionHash,
       successful: true,
       ledger: 321,
+      memo: "x402:test-memo",
       operations: [{ source: source.publicKey, destination: recipient, asset: "XLM", amount: "0.0000001" }]
     });
   });
@@ -316,6 +394,21 @@ describe("x402 client", () => {
         headers: { "X-Payment": JSON.stringify(proofForRequirement(secondRequirement, "e".repeat(64))) }
       });
       expect(second.status).toBe(200);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("returns a 402 JSON error for issued proofs with malformed amounts", async () => {
+    const server = await startPaidApiDemo({ recipient });
+    try {
+      const challenge = await fetch(server.url);
+      const requirement = await parseX402Requirement(challenge);
+      const proof = { ...proofForRequirement(requirement, "1".repeat(64)), amount: "bad-amount" };
+
+      const response = await fetch(server.url, { headers: { "X-Payment": JSON.stringify(proof) } });
+      expect(response.status).toBe(402);
+      await expect(response.json()).resolves.toEqual({ ok: false, error: "invalid_payment_proof" });
     } finally {
       await server.close();
     }
