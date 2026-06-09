@@ -37,6 +37,7 @@ Before starting a release:
 - The working tree is clean or contains only intentional release changes.
 - `origin` points to `git@github.com:someone-in-texas/Stellar-Agent.git`.
 - `package.json`, every publishable package manifest, `plugins/codex/plugin.yaml`, and `CHANGELOG.md` agree on the target version.
+- Any newly added publishable npm package already exists on npm and has trusted publishing configured for `npm-publish.yml` and `npm-production`; `npm trust` cannot configure a package before the package record exists.
 - Mainnet safety defaults remain intact:
   - no Mainnet auto-signing
   - no local Mainnet secret-key storage
@@ -205,6 +206,8 @@ Before enabling trusted publishing:
 npm access list packages @stellar-agent --json
 npm view @stellar-agent/cli version
 ```
+
+If a release adds a new publishable package, create that package before the release by publishing the verified generated tarball once with `npm publish .release/artifacts/npm/<package>-<version>.tgz --access public --tag latest`, then run `npm trust github <package> ...`. The npm trust endpoint returns `E404` for packages that do not exist yet, and the protected workflow will fail at that package until this bootstrap step is done.
 
 Configure npm trusted publishing for every package:
 
