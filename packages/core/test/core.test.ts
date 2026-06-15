@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   assertMainnetAgentWalletPaymentPreflight,
   compareAmount,
@@ -97,6 +98,18 @@ describe("error serialization", () => {
     ).toMatchObject({
       code: "INVALID_INPUT",
       message: "Bad input.",
+      hint: "Run the command with --help and correct the input.",
+      docs: "docs/troubleshooting.md"
+    });
+  });
+
+  it("serializes schema validation failures as invalid input", () => {
+    const result = z.object({ destination: z.string() }).safeParse({ to: "G..." });
+    if (result.success) throw new Error("expected schema validation to fail");
+
+    expect(serializeError(result.error)).toMatchObject({
+      code: "INVALID_INPUT",
+      message: expect.stringContaining("destination"),
       hint: "Run the command with --help and correct the input.",
       docs: "docs/troubleshooting.md"
     });

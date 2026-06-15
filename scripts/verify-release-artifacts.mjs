@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   readJson,
   releaseManifestPath,
@@ -62,7 +62,7 @@ if (!doctor.ok || doctor.data?.ok !== true) {
 
 const extractRoot = await mkdtemp(join(tmpdir(), "stellar-agent-codex-artifact-"));
 run("tar", ["-xzf", resolve(rootDir, manifest.codexPlugin.tarball), "-C", extractRoot]);
-const pluginRoot = join(extractRoot, `stellar-agent-codex-plugin-${manifest.version}`);
+const pluginRoot = join(extractRoot, dirname(manifest.codexPlugin.manifestPath));
 const codexValidation = JSON.parse(run(codexCli, ["validate", pluginRoot], { cwd: installRoot }).stdout);
 if (!codexValidation.valid) {
   throw new Error(`Codex plugin artifact failed validation: ${JSON.stringify(codexValidation)}`);
@@ -70,6 +70,16 @@ if (!codexValidation.valid) {
 const pluginManifest = JSON.parse(await readFile(join(pluginRoot, "plugin-manifest.json"), "utf8"));
 if (pluginManifest.version !== manifest.version) {
   throw new Error(`Codex plugin manifest version ${pluginManifest.version} does not match ${manifest.version}.`);
+}
+const nativePluginManifest = JSON.parse(await readFile(join(pluginRoot, ".codex-plugin", "plugin.json"), "utf8"));
+if (nativePluginManifest.name !== codexValidation.manifest.name) {
+  throw new Error(`Codex native plugin name ${nativePluginManifest.name} does not match ${codexValidation.manifest.name}.`);
+}
+if (nativePluginManifest.version !== manifest.version) {
+  throw new Error(`Codex native plugin version ${nativePluginManifest.version} does not match ${manifest.version}.`);
+}
+if (nativePluginManifest.skills !== "./skills/") {
+  throw new Error("Codex native plugin manifest must point skills to ./skills/.");
 }
 
 console.log(`Release artifacts install and validate cleanly for ${manifest.version}.`);

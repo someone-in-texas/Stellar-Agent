@@ -23,10 +23,14 @@ const walletConnectMockState = vi.hoisted(() => ({
   signedTransactionXdr: "",
   signerPublicKey: "",
   signCalls: [] as any[],
-  createClientCalls: [] as any[]
+  createClientCalls: [] as any[],
+  closeClientCalls: [] as any[]
 }));
 
 vi.mock("@stellar-agent/walletconnect-bridge", () => ({
+  closeWalletConnectSignClient: vi.fn(async (client: any) => {
+    walletConnectMockState.closeClientCalls.push(client);
+  }),
   createWalletConnectSignClient: vi.fn(async (args: any) => {
     walletConnectMockState.createClientCalls.push(args);
     return { mockWalletConnectClient: true };
@@ -716,6 +720,7 @@ describe("CLI contract receipts", () => {
   it("uses stable WalletConnect storage for session CLI commands", async () => {
     const { configPath, config } = await createCliFixture({ stdout: "", stderr: "" });
     walletConnectMockState.createClientCalls = [];
+    walletConnectMockState.closeClientCalls = [];
 
     await expect(
       runCli(["--config", configPath, "--json", "wallet", "walletconnect", "status", "--project-id", "project-test"])
@@ -763,6 +768,7 @@ describe("CLI contract receipts", () => {
       expect.objectContaining({ storagePath: join(config.storage.rootDir, "walletconnect", "sessions.db") }),
       expect.objectContaining({ storagePath: join(config.storage.rootDir, "walletconnect", "sessions.db") })
     ]);
+    expect(walletConnectMockState.closeClientCalls).toHaveLength(3);
   });
 
   it("refuses Mainnet WalletConnect signing without real-funds acknowledgements", async () => {
@@ -973,6 +979,55 @@ describe("CLI contract receipts", () => {
       }
     });
     expect(output.data.policyDecision.matchedRules).not.toContain("policy_network_mismatch");
+  });
+
+  it("documents the policy explain request-file destination field in CLI behavior", async () => {
+    const { configPath, config } = await createCliFixture({ stdout: "", stderr: "" });
+    const requestPath = join(config.storage.rootDir, "payment-request.json");
+    await writeFile(
+      requestPath,
+      JSON.stringify({
+        destination: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        amount: "1",
+        asset: "XLM",
+        network: "testnet"
+      })
+    );
+
+    const output = await runCli(["--config", configPath, "--json", "policy", "explain", "--request", requestPath]);
+
+    expect(output).toMatchObject({
+      ok: true,
+      data: {
+        status: "allowed",
+        network: "testnet",
+        realFunds: false
+      }
+    });
+  });
+
+  it("rejects policy explain request files that use to instead of destination", async () => {
+    const { configPath, config } = await createCliFixture({ stdout: "", stderr: "" });
+    const requestPath = join(config.storage.rootDir, "payment-request-to.json");
+    await writeFile(
+      requestPath,
+      JSON.stringify({
+        to: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        amount: "1",
+        asset: "XLM",
+        network: "testnet"
+      })
+    );
+
+    const output = await runCli(["--config", configPath, "--json", "policy", "explain", "--request", requestPath]);
+
+    expect(output).toMatchObject({
+      ok: false,
+      error: {
+        code: "INVALID_INPUT",
+        message: expect.stringContaining("destination")
+      }
+    });
   });
 
   it("initializes local policies under a local-specific filename", async () => {

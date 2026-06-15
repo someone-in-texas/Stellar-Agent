@@ -680,6 +680,7 @@ function addWalletCommands(program: Command): void {
       withContext(
         async (context, options: { wallet: "lobstr" | "walletconnect"; projectId?: string; timeoutMs: number }) => {
           const {
+            closeWalletConnectSignClient,
             createWalletConnectSignClient,
             pairWalletConnectSession,
             walletConnectMetadata,
@@ -690,19 +691,23 @@ function addWalletCommands(program: Command): void {
             metadata: walletConnectMetadata(options.wallet),
             storagePath: walletConnectStoragePath(context)
           });
-          const session = await pairWalletConnectSession({
-            client,
-            network: context.profileName,
-            timeoutMs: options.timeoutMs,
-            onPairingUri: (uri) => printWalletConnectPairingUri(context.options, uri)
-          });
-          return {
-            wallet: options.wallet,
-            network: context.profileName,
-            session: walletConnectSessionView(session),
-            pairingUriPrinted: true,
-            custody: "external_wallet"
-          };
+          try {
+            const session = await pairWalletConnectSession({
+              client,
+              network: context.profileName,
+              timeoutMs: options.timeoutMs,
+              onPairingUri: (uri) => printWalletConnectPairingUri(context.options, uri)
+            });
+            return {
+              wallet: options.wallet,
+              network: context.profileName,
+              session: walletConnectSessionView(session),
+              pairingUriPrinted: true,
+              custody: "external_wallet"
+            };
+          } finally {
+            await closeWalletConnectSignClient(client);
+          }
         },
         "WalletConnect session paired."
       )
@@ -714,7 +719,7 @@ function addWalletCommands(program: Command): void {
     .option("--project-id <id>", "WalletConnect project id; defaults to WALLETCONNECT_PROJECT_ID")
     .action(
       withContext(async (context, options: { wallet: "lobstr" | "walletconnect"; projectId?: string }) => {
-        const { createWalletConnectSignClient, listWalletConnectSessions, walletConnectMetadata } = await import(
+        const { closeWalletConnectSignClient, createWalletConnectSignClient, listWalletConnectSessions, walletConnectMetadata } = await import(
           "@stellar-agent/walletconnect-bridge"
         );
         const client = await createWalletConnectSignClient({
@@ -722,7 +727,11 @@ function addWalletCommands(program: Command): void {
           metadata: walletConnectMetadata(options.wallet),
           storagePath: walletConnectStoragePath(context)
         });
-        return { wallet: options.wallet, sessions: listWalletConnectSessions(client), custody: "external_wallet" };
+        try {
+          return { wallet: options.wallet, sessions: listWalletConnectSessions(client), custody: "external_wallet" };
+        } finally {
+          await closeWalletConnectSignClient(client);
+        }
       }, "WalletConnect status loaded.")
     );
   walletconnect
@@ -733,7 +742,7 @@ function addWalletCommands(program: Command): void {
     .option("--project-id <id>", "WalletConnect project id; defaults to WALLETCONNECT_PROJECT_ID")
     .action(
       withContext(async (context, options: { topic: string; wallet: "lobstr" | "walletconnect"; projectId?: string }) => {
-        const { createWalletConnectSignClient, disconnectWalletConnectSession, walletConnectMetadata } = await import(
+        const { closeWalletConnectSignClient, createWalletConnectSignClient, disconnectWalletConnectSession, walletConnectMetadata } = await import(
           "@stellar-agent/walletconnect-bridge"
         );
         const client = await createWalletConnectSignClient({
@@ -741,11 +750,15 @@ function addWalletCommands(program: Command): void {
           metadata: walletConnectMetadata(options.wallet),
           storagePath: walletConnectStoragePath(context)
         });
-        return {
-          wallet: options.wallet,
-          ...(await disconnectWalletConnectSession({ client, topic: options.topic })),
-          custody: "external_wallet"
-        };
+        try {
+          return {
+            wallet: options.wallet,
+            ...(await disconnectWalletConnectSession({ client, topic: options.topic })),
+            custody: "external_wallet"
+          };
+        } finally {
+          await closeWalletConnectSignClient(client);
+        }
       }, "WalletConnect session disconnected.")
     );
 
@@ -989,6 +1002,7 @@ function addApprovalCommands(program: Command): void {
         ) => {
           const { decideApprovalRequest, readApprovalRequest } = await import("@stellar-agent/freighter-bridge");
           const {
+            closeWalletConnectSignClient,
             createWalletConnectSignClient,
             signTransactionXdrWithWalletConnect,
             walletConnectMetadata,
@@ -1027,49 +1041,53 @@ function addApprovalCommands(program: Command): void {
             metadata: walletConnectMetadata(options.wallet),
             storagePath: walletConnectStoragePath(context)
           });
-          const signed = await signTransactionXdrWithWalletConnect({
-            client,
-            network: approval.network,
-            transactionXdr: approval.transactionXdr,
-            expectedSignerPublicKey: approval.payment?.source,
-            timeoutMs: options.timeoutMs,
-            onPairingUri: (uri) => printWalletConnectPairingUri(context.options, uri)
-          });
-          const decided = await decideApprovalRequest({
-            approvalsDir: context.config.storage.approvalsDir,
-            id: approval.id,
-            approved: true,
-            ...(signed.signerPublicKey === undefined ? {} : { signerPublicKey: signed.signerPublicKey }),
-            signedTransactionXdr: signed.signedTransactionXdr
-          });
-          await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
-            event: "approval_granted",
-            status: "signed",
-            command: "approval sign-walletconnect",
-            profile: approval.network,
-            requestId: decided.id,
-            data: {
-              approvalId: decided.id,
-              wallet: options.wallet,
-              method: signed.method,
-              chainId: signed.chainId,
-              signerPublicKey: signed.signerPublicKey,
-              session: walletConnectSessionView(signed.session)
-            }
-          });
-          return {
-            approval: decided,
-            walletConnect: {
-              wallet: options.wallet,
-              method: signed.method,
-              chainId: signed.chainId,
-              signerPublicKey: signed.signerPublicKey,
-              session: walletConnectSessionView(signed.session),
-              pairingUriPrinted: true,
-              custody: "external_wallet",
-              submitted: false
-            }
-          };
+          try {
+            const signed = await signTransactionXdrWithWalletConnect({
+              client,
+              network: approval.network,
+              transactionXdr: approval.transactionXdr,
+              expectedSignerPublicKey: approval.payment?.source,
+              timeoutMs: options.timeoutMs,
+              onPairingUri: (uri) => printWalletConnectPairingUri(context.options, uri)
+            });
+            const decided = await decideApprovalRequest({
+              approvalsDir: context.config.storage.approvalsDir,
+              id: approval.id,
+              approved: true,
+              ...(signed.signerPublicKey === undefined ? {} : { signerPublicKey: signed.signerPublicKey }),
+              signedTransactionXdr: signed.signedTransactionXdr
+            });
+            await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
+              event: "approval_granted",
+              status: "signed",
+              command: "approval sign-walletconnect",
+              profile: approval.network,
+              requestId: decided.id,
+              data: {
+                approvalId: decided.id,
+                wallet: options.wallet,
+                method: signed.method,
+                chainId: signed.chainId,
+                signerPublicKey: signed.signerPublicKey,
+                session: walletConnectSessionView(signed.session)
+              }
+            });
+            return {
+              approval: decided,
+              walletConnect: {
+                wallet: options.wallet,
+                method: signed.method,
+                chainId: signed.chainId,
+                signerPublicKey: signed.signerPublicKey,
+                session: walletConnectSessionView(signed.session),
+                pairingUriPrinted: true,
+                custody: "external_wallet",
+                submitted: false
+              }
+            };
+          } finally {
+            await closeWalletConnectSignClient(client);
+          }
         },
         "Approval request signed with WalletConnect."
       )
@@ -5736,7 +5754,12 @@ function printVersion(options: CliOptions): void {
 
 function printError(options: CliOptions, error: unknown): void {
   const serialized = serializeError(error);
-  process.exitCode = error instanceof StellarAgentError ? error.exitCode : EXIT_CODES.general;
+  process.exitCode =
+    error instanceof StellarAgentError
+      ? error.exitCode
+      : serialized.code === "INVALID_INPUT"
+        ? EXIT_CODES.usage
+        : EXIT_CODES.general;
   if (options.json) {
     process.stdout.write(`${JSON.stringify(fail(serialized))}\n`);
     return;

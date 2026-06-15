@@ -1,9 +1,10 @@
+import { spawnSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { validateCodexPlugin, writeCodexPluginManifest } from "../src/index.js";
+import { validateCodexPlugin, writeCodexNativePluginJson, writeCodexPluginManifest } from "../src/index.js";
 
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const pluginRoot = join(repoRoot, "plugins", "codex");
@@ -24,6 +25,21 @@ describe("codex plugin tooling", () => {
       }
     });
     expect(validation.errors).toEqual([]);
+  });
+
+  it("requires the Codex-native plugin manifest", async () => {
+    const root = join(tmpdir(), `stellar-agent-codex-plugin-native-${Date.now()}`);
+    await mkdir(join(root, "skills", "present"), { recursive: true });
+    await writeFile(
+      join(root, "plugin.yaml"),
+      "name: broken\nversion: 0.0.0\ndescription: broken plugin\nskills:\n  - skills/present\n"
+    );
+    await writeFile(join(root, "skills", "present", "SKILL.md"), "# Present\n\nA present skill.\n");
+
+    await expect(validateCodexPlugin(root)).resolves.toMatchObject({
+      valid: false,
+      errors: ["Missing .codex-plugin/plugin.json."]
+    });
   });
 
   it("keeps bundled skills aligned with implemented workflow families", async () => {
@@ -54,6 +70,7 @@ describe("codex plugin tooling", () => {
       join(root, "plugin.yaml"),
       "name: broken\nversion: 0.0.0\ndescription: broken plugin\nskills:\n  - skills/missing\n"
     );
+    await writeCodexNativePluginJson(root);
     await expect(validateCodexPlugin(root)).resolves.toMatchObject({
       valid: false,
       errors: ["Missing or empty skill file: skills/missing/SKILL.md"]
@@ -66,5 +83,39 @@ describe("codex plugin tooling", () => {
       schemaVersion: "stellar-agent.codex-plugin.v1",
       name: "stellar-agent-bridge"
     });
+  });
+
+  it("writes a Codex-native plugin manifest", async () => {
+    const root = join(tmpdir(), `stellar-agent-codex-plugin-json-${Date.now()}`);
+    await mkdir(root, { recursive: true });
+    await writeFile(
+      join(root, "plugin.yaml"),
+      "name: stellar-agent-bridge\nversion: 0.5.1\ndescription: Codex skills for safe Stellar Agent Bridge Testnet, payment, and market workflows.\nskills:\n  - skills/example\n"
+    );
+
+    await expect(writeCodexNativePluginJson(root)).resolves.toMatchObject({
+      name: "stellar-agent-bridge",
+      version: "0.5.1",
+      skills: "./skills/",
+      interface: {
+        displayName: "Stellar Agent Bridge"
+      }
+    });
+    const raw = JSON.parse(await readFile(join(root, ".codex-plugin", "plugin.json"), "utf8"));
+    expect(raw).toMatchObject({ name: "stellar-agent-bridge", skills: "./skills/" });
+  });
+
+  it("prints helpful CLI help with a successful exit code", () => {
+    const result = spawnSync(process.execPath, ["--import", "tsx", join(repoRoot, "packages", "codex-plugin", "src", "cli.ts"), "--help"], {
+      cwd: repoRoot,
+      encoding: "utf8"
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Usage: stellar-agent-codex-plugin");
+    expect(result.stdout).toContain("validate");
+    expect(result.stdout).toContain("manifest");
+    expect(result.stdout).toContain("plugin-json");
+    expect(result.stderr).toBe("");
   });
 });

@@ -1,0 +1,37 @@
+{
+  "name": "stellar-agent-bridge",
+  "version": "0.5.1",
+  "description": "Codex skills for safe Stellar Agent Bridge Testnet, payment, and market workflows.",
+  "author": {
+    "name": "Stellar Agent Bridge maintainers",
+    "url": "https://github.com/someone-in-texas/Stellar-Agent"
+  },
+  "homepage": "https://github.com/someone-in-texas/Stellar-Agent/tree/main/plugins/codex#readme",
+  "repository": "https://github.com/someone-in-texas/Stellar-Agent",
+  "license": "MIT",
+  "keywords": [
+    "stellar",
+    "payments",
+    "testnet",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Stellar Agent Bridge",
+    "shortDescription": "Safe Stellar Agent Bridge workflows for Codex.",
+    "longDescription": "Codex skills for Testnet-first Stellar wallets, payments, receipts, guarded Mainnet workflows, DeFi preflight, and market-liquidity investigation.",
+    "developerName": "Stellar Agent Bridge maintainers",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Write",
+      "Interactive"
+    ],
+    "websiteURL": "https://github.com/someone-in-texas/Stellar-Agent",
+    "defaultPrompt": [
+      "Run a safe Stellar Testnet smoke test.",
+      "Explain this payment policy before sending.",
+      "Prepare a guarded Stellar payment workflow."
+    ],
+    "brandColor": "#1D4ED8"
+  }
+}

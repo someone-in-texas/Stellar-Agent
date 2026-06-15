@@ -66,6 +66,12 @@ stellar-agent market listen config --file ./alerts.yaml --json
 
 `stellar-agent policy init --network local` writes `default-local.yaml`; Testnet and Mainnet defaults use `default-testnet.yaml` and `default-mainnet.yaml`.
 
+For `stellar-agent policy explain --request ./payment-request.json`, use the core request field `destination`, not the CLI flag name `to`:
+
+```json
+{"destination":"G...","amount":"1","asset":"XLM","network":"testnet"}
+```
+
 ## Safety
 
 - Testnet is the default.

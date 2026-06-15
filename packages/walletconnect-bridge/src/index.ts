@@ -51,6 +51,21 @@ export interface WalletConnectSignClient {
   session?: {
     getAll(): WalletConnectSession[];
   };
+  core?: {
+    heartbeat?: {
+      stop?: () => void;
+    };
+    relayer?: {
+      transportClose?: () => Promise<void> | void;
+      subscriber?: {
+        stop?: () => Promise<void> | void;
+      };
+      provider?: {
+        disconnect?: () => Promise<void> | void;
+        close?: () => Promise<void> | void;
+      };
+    };
+  };
   disconnect?(args: { topic: string; reason: { code: number; message: string } }): Promise<void>;
 }
 
@@ -165,7 +180,7 @@ export function resolveWalletConnectSignClientExport(module: unknown): WalletCon
   const moduleRecord = asRecord(module);
   const defaultRecord = asRecord(moduleRecord?.default);
   const candidates = [moduleRecord?.SignClient, moduleRecord?.default, defaultRecord?.SignClient];
-  const SignClient = candidates.find((candidate) => typeof asRecord(candidate)?.init === "function");
+  const SignClient = candidates.find(hasWalletConnectSignClientInit);
   if (!SignClient) {
     throw new StellarAgentError({
       code: "INVALID_INPUT",
@@ -175,6 +190,11 @@ export function resolveWalletConnectSignClientExport(module: unknown): WalletCon
     });
   }
   return SignClient as WalletConnectSignClientClass;
+}
+
+function hasWalletConnectSignClientInit(candidate: unknown): candidate is WalletConnectSignClientClass {
+  if (candidate === null || (typeof candidate !== "object" && typeof candidate !== "function")) return false;
+  return typeof (candidate as { init?: unknown }).init === "function";
 }
 
 export async function pairWalletConnectSession(args: {
@@ -250,6 +270,23 @@ export async function disconnectWalletConnectSession(args: {
     reason: { code: 6000, message: "User disconnected." }
   });
   return { topic: args.topic, disconnected: true };
+}
+
+export async function closeWalletConnectSignClient(client: WalletConnectSignClient): Promise<void> {
+  for (const [owner, close] of [
+    [client.core?.relayer, client.core?.relayer?.transportClose],
+    [client.core?.relayer?.provider, client.core?.relayer?.provider?.disconnect],
+    [client.core?.relayer?.provider, client.core?.relayer?.provider?.close],
+    [client.core?.relayer?.subscriber, client.core?.relayer?.subscriber?.stop],
+    [client.core?.heartbeat, client.core?.heartbeat?.stop]
+  ] as const) {
+    if (typeof close !== "function") continue;
+    try {
+      await close.call(owner);
+    } catch {
+      // Best-effort cleanup should not turn a completed signing/status command into a failure.
+    }
+  }
 }
 
 export function walletConnectSessionView(session: WalletConnectSession): WalletConnectSessionView {

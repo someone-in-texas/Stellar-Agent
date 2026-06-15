@@ -12,11 +12,13 @@ npm install @stellar-agent/codex-plugin
 
 ```bash
 pnpm build
+node packages/codex-plugin/dist/cli.js --help
 node packages/codex-plugin/dist/cli.js validate plugins/codex
 node packages/codex-plugin/dist/cli.js manifest plugins/codex plugins/codex/plugin-manifest.json
+node packages/codex-plugin/dist/cli.js plugin-json plugins/codex plugins/codex/.codex-plugin/plugin.json
 ```
 
-The validator checks `plugin.yaml`, referenced skill directories, `SKILL.md` files, and agent routing YAML. The manifest command writes a normalized JSON manifest that packaging or installation scripts can consume.
+The validator checks `plugin.yaml`, `.codex-plugin/plugin.json`, referenced skill directories, `SKILL.md` files, and agent routing YAML. The `manifest` command writes the repository release manifest consumed by release checks. The `plugin-json` command writes the Codex-native install manifest required by `codex plugin add`.
 
 Release packaging is handled by the repository-level release gate:
 
@@ -24,7 +26,9 @@ Release packaging is handled by the repository-level release gate:
 pnpm release:preflight
 ```
 
-That command builds this package, stages `plugins/codex`, writes `plugin-manifest.json`, creates the versioned `stellar-agent-codex-plugin-v*.tgz` artifact, then verifies the artifact through the installed `stellar-agent-codex-plugin` binary from the generated npm tarball.
+That command builds this package, stages `plugins/codex`, writes `.codex-plugin/plugin.json` and `plugin-manifest.json`, creates the versioned `stellar-agent-codex-plugin-v*.tgz` artifact, then verifies the artifact through the installed `stellar-agent-codex-plugin` binary from the generated npm tarball.
+
+Do not confuse the release artifacts: `stellar-agent-codex-plugin-*.tgz` under the npm artifact directory is this tooling package, while `stellar-agent-codex-plugin-v*.tgz` under the Codex artifact directory is the installable Codex plugin bundle.
 
 ## Links
 

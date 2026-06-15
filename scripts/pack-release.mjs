@@ -87,9 +87,15 @@ async function packCodexPlugin(version) {
     throw new Error(`Codex plugin version ${pluginYaml.version} does not match release version ${version}.`);
   }
 
-  const packageName = `stellar-agent-codex-plugin-${version}`;
+  const packageName = pluginYaml.name;
   const stagingRoot = join(workDir, "codex", packageName);
   await cp(pluginRoot, stagingRoot, { recursive: true });
+  run(process.execPath, [
+    join(rootDir, "packages", "codex-plugin", "dist", "cli.js"),
+    "plugin-json",
+    stagingRoot,
+    join(stagingRoot, ".codex-plugin", "plugin.json")
+  ]);
   run(process.execPath, [
     join(rootDir, "packages", "codex-plugin", "dist", "cli.js"),
     "manifest",
@@ -105,7 +111,8 @@ async function packCodexPlugin(version) {
     version,
     tarball: posixRelative(rootDir, tarball),
     sha256: await sha256(tarball),
-    manifestPath: `${packageName}/plugin-manifest.json`
+    manifestPath: `${packageName}/plugin-manifest.json`,
+    nativeManifestPath: `${packageName}/.codex-plugin/plugin.json`
   };
 }
 

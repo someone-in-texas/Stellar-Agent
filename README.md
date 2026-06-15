@@ -73,6 +73,10 @@ stellar-agent wallet trustline list --account merchant --json
 stellar-agent wallet trustline add --account merchant --asset USD:G... --json
 stellar-agent testnet scenario issued-asset-payment --json
 stellar-agent policy explain --to G... --amount 1 --asset XLM --json
+cat > payment-request.json <<'JSON'
+{"destination":"G...","amount":"1","asset":"XLM","network":"testnet"}
+JSON
+stellar-agent policy explain --request ./payment-request.json --json
 stellar-agent pay quote --to G... --amount 1 --asset XLM --fee-strategy medium --json
 stellar-agent approval create-payment --to G... --amount 6 --json
 stellar-agent approval create-transaction --xdr AAAA... --summary "Sign contract transaction" --network testnet --json
@@ -142,7 +146,8 @@ For composable workflow examples, see [docs/agent-recipes.md](docs/agent-recipes
 `v0.5.1` GitHub releases contain:
 
 - npm tarballs for the scoped `@stellar-agent/*` packages.
-- `stellar-agent-codex-plugin-v0.5.1.tgz` for the bundled Codex plugin.
+- `stellar-agent-codex-plugin-0.5.1.tgz`, the npm package tarball for `@stellar-agent/codex-plugin` validation tooling.
+- `stellar-agent-codex-plugin-v0.5.1.tgz`, the installable Codex plugin bundle. This tarball includes `.codex-plugin/plugin.json`, `plugin.yaml`, `plugin-manifest.json`, and the bundled skills.
 - `release-manifest.json` with artifact SHA-256 checksums and source commit metadata.
 
 The generated tarballs are verified by `pnpm release:preflight` through a fresh temporary install before release.

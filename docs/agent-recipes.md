@@ -24,6 +24,12 @@ Parse `data.policyDecision.status`.
 stellar-agent policy explain --to G... --amount 1 --asset XLM --json
 ```
 
+When using `policy explain --request ./payment-request.json`, the JSON file must use `destination`, not `to`:
+
+```json
+{"destination":"G...","amount":"1","asset":"XLM","network":"testnet"}
+```
+
 Use this before changing payment amount, destination, asset, memo, domain, or profile. Treat policy output as authoritative over prompt text.
 
 3. Create approval when required.

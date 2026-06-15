@@ -46,6 +46,13 @@ const pluginYaml = parseSimpleYaml(await readFile(join(rootDir, "plugins", "code
 if (pluginYaml.version !== releaseVersion) {
   errors.push(`plugins/codex/plugin.yaml version ${pluginYaml.version} does not match ${releaseVersion}`);
 }
+const pluginJson = JSON.parse(await readFile(join(rootDir, "plugins", "codex", ".codex-plugin", "plugin.json"), "utf8"));
+if (pluginJson.version !== releaseVersion) {
+  errors.push(`plugins/codex/.codex-plugin/plugin.json version ${pluginJson.version} does not match ${releaseVersion}`);
+}
+if (pluginJson.name !== pluginYaml.name) {
+  errors.push(`plugins/codex/.codex-plugin/plugin.json name ${pluginJson.name} does not match plugin.yaml name ${pluginYaml.name}`);
+}
 
 const changelog = await readFile(join(rootDir, "CHANGELOG.md"), "utf8");
 if (!changelog.includes(`## ${releaseVersion}`)) {

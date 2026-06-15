@@ -30,6 +30,17 @@ Run `stellar-agent mainnet agent-wallet status --json`. The risk-budgeted Mainne
 
 Run `stellar-agent policy explain --request ./payment-request.json`.
 
+`payment-request.json` must use the internal request field names. Use `destination`, not the CLI convenience flag name `to`:
+
+```json
+{
+  "destination": "G...",
+  "amount": "1",
+  "asset": "XLM",
+  "network": "testnet"
+}
+```
+
 ## Approval Denied
 
 No transaction is signed or submitted. Inspect event logs under `~/.stellar-agent/logs`.

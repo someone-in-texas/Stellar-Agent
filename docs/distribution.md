@@ -21,6 +21,8 @@ Generated artifacts:
 - `.release/artifacts/codex/stellar-agent-codex-plugin-v0.5.1.tgz` for Codex plugin installation.
 - `.release/artifacts/release-manifest.json` for checksums and source commit evidence.
 
+The npm artifact `stellar-agent-codex-plugin-0.5.1.tgz` is only the `@stellar-agent/codex-plugin` validator/tooling package. Install the Codex plugin from the versioned bundle under `.release/artifacts/codex/`, which contains `.codex-plugin/plugin.json` plus the bundled skills.
+
 The public package set is:
 
 ```text

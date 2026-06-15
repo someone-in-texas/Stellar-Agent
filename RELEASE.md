@@ -129,6 +129,8 @@ The examples use isolated temp configs. The Blend example runs deployment and pr
 .release/artifacts/release-manifest.json
 ```
 
+The npm tarball named `stellar-agent-codex-plugin-0.5.1.tgz` is the `@stellar-agent/codex-plugin` validator/tooling package. The similarly named `stellar-agent-codex-plugin-v0.5.1.tgz` under `.release/artifacts/codex/` is the installable Codex plugin bundle.
+
 `release-manifest.json` records the release version, source commit, artifact paths, package names, and SHA-256 checksums. `.release/` is local output and is not committed.
 
 ## Codex Plugin Release
@@ -142,9 +144,10 @@ Release packaging:
 1. `pnpm build` builds `@stellar-agent/codex-plugin`.
 2. `pnpm smoke` validates the bundled plugin.
 3. `pnpm release:pack` copies `plugins/codex` into a release staging directory.
-4. `stellar-agent-codex-plugin manifest` writes `plugin-manifest.json` into the staged plugin.
-5. The staged plugin is archived as `stellar-agent-codex-plugin-v0.5.1.tgz`.
-6. `pnpm release:verify-artifacts` extracts that archive and validates it through the installed `stellar-agent-codex-plugin` binary from the packed npm artifact.
+4. `stellar-agent-codex-plugin plugin-json` writes the Codex-native `.codex-plugin/plugin.json` into the staged plugin.
+5. `stellar-agent-codex-plugin manifest` writes `plugin-manifest.json` into the staged plugin.
+6. The staged plugin is archived as `stellar-agent-codex-plugin-v0.5.1.tgz`.
+7. `pnpm release:verify-artifacts` extracts that archive and validates it through the installed `stellar-agent-codex-plugin` binary from the packed npm artifact.
 
 This keeps Codex plugin packaging aligned with GitHub releases: the GitHub release contains the npm package that validates plugin manifests and the matching plugin artifact that Codex can install.
 

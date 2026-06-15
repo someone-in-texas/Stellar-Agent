@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   assertWalletConnectSessionSupportsNetwork,
+  closeWalletConnectSignClient,
   disconnectWalletConnectSession,
   extractSignedTransactionXdr,
   listWalletConnectSessions,
@@ -56,6 +57,18 @@ describe("walletconnect bridge", () => {
     });
 
     expect(resolved.init).toBe(namedInit);
+  });
+
+  it("accepts SignClient function exports with static init", () => {
+    const namedInit = vi.fn();
+    const defaultInit = vi.fn();
+    function NamedSignClient() {}
+    function DefaultSignClient() {}
+    Object.assign(NamedSignClient, { init: namedInit });
+    Object.assign(DefaultSignClient, { init: defaultInit });
+
+    expect(resolveWalletConnectSignClientExport({ SignClient: NamedSignClient }).init).toBe(namedInit);
+    expect(resolveWalletConnectSignClientExport({ default: DefaultSignClient }).init).toBe(defaultInit);
   });
 
   it("builds durable WalletConnect storage options", async () => {
@@ -174,12 +187,28 @@ describe("walletconnect bridge", () => {
     });
     expect(client.disconnectedTopic).toBe(session.topic);
   });
+
+  it("closes WalletConnect transport handles without disconnecting sessions", async () => {
+    const transportClose = vi.fn();
+    const subscriberStop = vi.fn();
+    const heartbeatStop = vi.fn();
+    const client = new FakeWalletConnectClient({ session: sessionFixture({ chain: "testnet", address: source }) });
+    client.core = { relayer: { transportClose, subscriber: { stop: subscriberStop } }, heartbeat: { stop: heartbeatStop } };
+
+    await closeWalletConnectSignClient(client);
+
+    expect(transportClose).toHaveBeenCalledTimes(1);
+    expect(subscriberStop).toHaveBeenCalledTimes(1);
+    expect(heartbeatStop).toHaveBeenCalledTimes(1);
+    expect(client.disconnectedTopic).toBeUndefined();
+  });
 });
 
 class FakeWalletConnectClient implements WalletConnectSignClient {
   connectedNamespaces: unknown;
   requested: unknown;
   disconnectedTopic: string | undefined;
+  core: WalletConnectSignClient["core"] = undefined;
   readonly session: { getAll: () => WalletConnectSession[] };
   private readonly approvalSession: WalletConnectSession;
   private readonly signingResult: unknown;

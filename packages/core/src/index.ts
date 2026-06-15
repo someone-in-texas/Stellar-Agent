@@ -228,6 +228,19 @@ export function serializeError(error: unknown): SerializedError {
       ...(error.details !== undefined ? { details: redactSensitive(error.details) } : {})
     };
   }
+  const zodIssues = zodErrorIssues(error);
+  if (zodIssues) {
+    const issues = zodIssues.map((issue) => {
+      const path = issue.path.length > 0 ? `${issue.path.join(".")}: ` : "";
+      return `${path}${issue.message}`;
+    });
+    return {
+      code: "INVALID_INPUT",
+      message: issues.length > 0 ? `Invalid input: ${issues.join("; ")}` : "Invalid input.",
+      hint: defaultHintForError("INVALID_INPUT"),
+      docs: defaultDocsForError("INVALID_INPUT")
+    };
+  }
   if (error instanceof Error) {
     return {
       code: "UNKNOWN_ERROR",
@@ -243,6 +256,25 @@ export function serializeError(error: unknown): SerializedError {
     docs: defaultDocsForError("UNKNOWN_ERROR"),
     details: redactSensitive(error)
   };
+}
+
+function zodErrorIssues(error: unknown): z.ZodIssue[] | undefined {
+  if (error instanceof z.ZodError) return error.issues;
+  if (
+    error &&
+    typeof error === "object" &&
+    Array.isArray((error as { issues?: unknown }).issues) &&
+    (error as { issues: unknown[] }).issues.every(
+      (issue) =>
+        issue &&
+        typeof issue === "object" &&
+        Array.isArray((issue as { path?: unknown }).path) &&
+        typeof (issue as { message?: unknown }).message === "string"
+    )
+  ) {
+    return (error as { issues: z.ZodIssue[] }).issues;
+  }
+  return undefined;
 }
 
 function defaultHintForError(code: ErrorCode): string {
