@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.2
+
+- Fixed WalletConnect SignClient resolution for the npm-installed `@walletconnect/sign-client` export shape, including function exports with static `init`.
+- Closed WalletConnect SDK transport, subscriber, and heartbeat handles after pair/status/disconnect/sign commands so installed CLI commands return cleanly after printing JSON.
+- Added the Codex-native `.codex-plugin/plugin.json` manifest to the bundled plugin and made release packaging and artifact verification require it.
+- Clarified the difference between the `@stellar-agent/codex-plugin` npm tooling tarball and the installable `stellar-agent-codex-plugin-v*.tgz` plugin bundle.
+- Improved `stellar-agent-codex-plugin --help` and documented `validate`, `manifest`, and `plugin-json`.
+- Documented that `policy explain --request` files use `destination`, not `to`, and mapped schema validation failures to structured `INVALID_INPUT` responses.
+
 ## 0.5.1
 
 - Hardened Horizon-backed x402 verification so settled transactions must include a challenge memo bound to the issued resource and nonce, preventing reuse of older matching payments for fresh challenges.

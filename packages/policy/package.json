@@ -1,6 +1,6 @@
 {
   "name": "@stellar-agent/policy",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Deterministic policy parsing and payment, DeFi, and market decision logic for Stellar Agent Bridge.",
   "type": "module",
   "license": "MIT",
