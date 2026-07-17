@@ -7,9 +7,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to publish, for example v0.5.1"
+        description: "Release tag to publish, for example vX.Y.Z"
         required: true
-        default: "v0.4.0"
       dry_run:
         description: "Run npm publish dry-run only"
         required: true

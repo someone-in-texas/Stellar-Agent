@@ -4,9 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to create or verify, for example v0.3.0"
+        description: "Release tag to create or verify, for example vX.Y.Z"
         required: true
-        default: "v0.3.0"
       create_github_release:
         description: "Create the GitHub release from generated artifacts"
         required: true
@@ -23,10 +22,13 @@ permissions:
 jobs:
   github-release:
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
       - uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -35,10 +37,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm release:preflight
       - name: Create GitHub release
-        if: startsWith(github.ref, 'refs/tags/') || inputs.create_github_release == true
+        if: github.event_name == 'push' || inputs.create_github_release == true
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag }}
         run: |
           gh release create "$RELEASE_TAG" \
             .release/artifacts/npm/*.tgz \
@@ -49,10 +50,9 @@ jobs:
             --target "$GITHUB_SHA" \
             --verify-tag
       - name: Queue protected npm publish workflow
-        if: startsWith(github.ref, 'refs/tags/') || inputs.create_github_release == true
+        if: github.event_name == 'push' || inputs.create_github_release == true
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag }}
         run: |
           gh workflow run npm-publish.yml \
             --ref main \

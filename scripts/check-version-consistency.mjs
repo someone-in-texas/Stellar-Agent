@@ -1,14 +1,17 @@
 import { readFile, readdir } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { publishablePackageDirs, readJson, rootDir } from "./release-utils.mjs";
 
 const rootPackage = await readJson(join(rootDir, "package.json"));
 const releaseVersion = process.env.RELEASE_VERSION ?? rootPackage.version;
+const releaseTag = process.env.RELEASE_TAG;
 const errors = [];
 
 if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(releaseVersion)) {
   errors.push(`Root version is not a semver release version: ${releaseVersion}`);
 }
+if (releaseTag) checkReleaseTag(releaseTag, releaseVersion);
 for (const packageDir of publishablePackageDirs) {
   const packageJsonPath = join(rootDir, packageDir, "package.json");
   const packageJson = await readJson(packageJsonPath);
@@ -70,6 +73,7 @@ for (const expected of [
 }
 
 await checkUserFacingDocsForStaleReleaseLines(releaseVersion);
+await checkWorkflowTagDefaults();
 
 if (errors.length > 0) {
   for (const error of errors) console.error(`release version check: ${error}`);
@@ -77,6 +81,25 @@ if (errors.length > 0) {
 }
 
 console.log(`Release version metadata is consistent for ${releaseVersion}.`);
+
+function checkReleaseTag(tag, version) {
+  const expectedTag = `v${version}`;
+  if (tag !== expectedTag) {
+    errors.push(`Release tag ${tag} does not match package version ${version}; expected ${expectedTag}`);
+    return;
+  }
+  const taggedCommit = gitRevParse(`${tag}^{commit}`);
+  const headCommit = gitRevParse("HEAD^{commit}");
+  if (!taggedCommit) errors.push(`Release tag ${tag} does not resolve to a commit`);
+  if (taggedCommit && headCommit && taggedCommit !== headCommit) {
+    errors.push(`Release tag ${tag} resolves to ${taggedCommit}, but checked-out HEAD is ${headCommit}`);
+  }
+}
+
+function gitRevParse(revision) {
+  const result = spawnSync("git", ["rev-parse", "--verify", revision], { cwd: rootDir, encoding: "utf8" });
+  return result.status === 0 ? result.stdout.trim() : undefined;
+}
 
 function parseSimpleYaml(raw) {
   const parsed = {};
@@ -107,6 +130,23 @@ async function checkUserFacingDocsForStaleReleaseLines(version) {
     if (body.includes(staleLine)) {
       errors.push(`${doc} contains stale previous release line ${staleLine}; update docs or move historical notes to CHANGELOG.md`);
     }
+  }
+}
+
+async function checkWorkflowTagDefaults() {
+  const workflows = [".github/workflows/release.yml", ".github/workflows/npm-publish.yml"];
+  for (const workflow of workflows) {
+    const body = await readFile(join(rootDir, workflow), "utf8");
+    if (/^\s*default:\s*["']?v\d+\.\d+\.\d+/m.test(body)) {
+      errors.push(`${workflow} contains a versioned workflow_dispatch tag default; require an explicit tag instead`);
+    }
+  }
+  const releaseWorkflow = await readFile(join(rootDir, workflows[0]), "utf8");
+  if (!releaseWorkflow.includes("ref: ${{ env.RELEASE_TAG }}")) {
+    errors.push(".github/workflows/release.yml must check out env.RELEASE_TAG before building release artifacts");
+  }
+  if (!releaseWorkflow.includes("RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}")) {
+    errors.push(".github/workflows/release.yml must resolve manual releases from inputs.tag and tag pushes from github.ref_name");
   }
 }
 
