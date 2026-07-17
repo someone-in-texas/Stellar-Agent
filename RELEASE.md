@@ -10,9 +10,9 @@ The release process is still intentionally conservative: GitHub releases are aut
 - **npm package publication:** supported through the protected `Publish npm` workflow after npm trusted publishing is configured. The same generated tarballs can still be published locally with `pnpm release:publish:npm` as a recovery path.
 - **Live Testnet verification:** strongly recommended before public release tags and required before releases that advertise new payment behavior.
 
-## 0.5.2 Scope
+## 0.5.3 Scope
 
-`0.5.2` is a Testnet-first patch release that fixes WalletConnect in npm installs, makes the bundled Codex plugin artifact installable by current Codex CLI, clarifies plugin artifact names, improves Codex plugin tooling help, documents `policy explain --request` JSON shape, and carries forward the guarded Mainnet agent-wallet, paid-service example, demo, schema, SDK-example, recipe, approval-bridge, and market-listener workflows from the `0.5.x` line:
+`0.5.3` is a Testnet-first patch release that hardens secret redaction and atomic private-file writes, makes MCP stdio framing byte-accurate and resource-bounded, tightens Aquarius liquidity policy validation and exact exposure arithmetic, guards manual release tag selection, refreshes patch-level dependencies, and carries forward the guarded Mainnet agent-wallet, paid-service example, demo, schema, SDK-example, recipe, approval-bridge, and market-listener workflows from the `0.5.x` line:
 
 - CLI command surface, JSON envelopes, policy checks, receipt logging, Testnet wallets, Friendbot funding, direct payments, fee-stat-aware transaction submission, bundled Testnet payments, issued assets, claimable balances, approval requests, guarded signed-XDR flows, MCP tools, local x402/MPP demos, Mainnet agent-wallet examples, agent-service-market examples, Blend DeFi inspection and guarded Testnet mutation, Aquarius AMM inspection and policy-gated preflight, core Stellar liquidity-pool inspection/preflight/Testnet mutation, market listeners, strategy investigation, cache controls, package-local npm READMEs, JSON version output, and Codex plugin validation are included.
 - Mainnet agent-wallet mode stores only public wallet metadata by default, requires explicit arming, enforces config/policy fingerprints, receipt-backed spend caps, destination and asset allowlists, max-balance checks, and visible real-funds warnings.
@@ -125,11 +125,11 @@ The examples use isolated temp configs. The Blend example runs deployment and pr
 
 ```text
 .release/artifacts/npm/*.tgz
-.release/artifacts/codex/stellar-agent-codex-plugin-v0.5.2.tgz
+.release/artifacts/codex/stellar-agent-codex-plugin-v0.5.3.tgz
 .release/artifacts/release-manifest.json
 ```
 
-The npm tarball named `stellar-agent-codex-plugin-0.5.2.tgz` is the `@stellar-agent/codex-plugin` validator/tooling package. The similarly named `stellar-agent-codex-plugin-v0.5.2.tgz` under `.release/artifacts/codex/` is the installable Codex plugin bundle.
+The npm tarball named `stellar-agent-codex-plugin-0.5.3.tgz` is the `@stellar-agent/codex-plugin` validator/tooling package. The similarly named `stellar-agent-codex-plugin-v0.5.3.tgz` under `.release/artifacts/codex/` is the installable Codex plugin bundle.
 
 `release-manifest.json` records the release version, source commit, artifact paths, package names, and SHA-256 checksums. `.release/` is local output and is not committed.
 
@@ -146,7 +146,7 @@ Release packaging:
 3. `pnpm release:pack` copies `plugins/codex` into a release staging directory.
 4. `stellar-agent-codex-plugin plugin-json` writes the Codex-native `.codex-plugin/plugin.json` into the staged plugin.
 5. `stellar-agent-codex-plugin manifest` writes `plugin-manifest.json` into the staged plugin.
-6. The staged plugin is archived as `stellar-agent-codex-plugin-v0.5.2.tgz`.
+6. The staged plugin is archived as `stellar-agent-codex-plugin-v0.5.3.tgz`.
 7. `pnpm release:verify-artifacts` extracts that archive and validates it through the installed `stellar-agent-codex-plugin` binary from the packed npm artifact.
 
 This keeps Codex plugin packaging aligned with GitHub releases: the GitHub release contains the npm package that validates plugin manifests and the matching plugin artifact that Codex can install.
@@ -156,8 +156,8 @@ This keeps Codex plugin packaging aligned with GitHub releases: the GitHub relea
 Create and verify the tag locally:
 
 ```bash
-git tag -a v0.5.2 -m "Stellar Agent v0.5.2"
-git push origin v0.5.2
+git tag -a v0.5.3 -m "Stellar Agent v0.5.3"
+git push origin v0.5.3
 ```
 
 The `Release` workflow runs on `v*` tags. It runs `pnpm release:preflight`, uploads generated artifacts, creates the GitHub release, and queues the protected `Publish npm` workflow from:
@@ -176,11 +176,11 @@ Manual local fallback:
 
 ```bash
 pnpm release:preflight
-gh release create v0.5.2 \
+gh release create v0.5.3 \
   .release/artifacts/npm/*.tgz \
   .release/artifacts/codex/*.tgz \
   .release/artifacts/release-manifest.json \
-  --title "Stellar Agent v0.5.2" \
+  --title "Stellar Agent v0.5.3" \
   --notes-file .release/github-release-notes.md \
   --verify-tag
 ```

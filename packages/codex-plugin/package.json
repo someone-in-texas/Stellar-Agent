@@ -1,6 +1,6 @@
 {
   "name": "@stellar-agent/codex-plugin",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Validation and manifest tooling for the Stellar Agent Bridge Codex plugin artifact.",
   "type": "module",
   "license": "MIT",

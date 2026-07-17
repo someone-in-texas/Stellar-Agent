@@ -1,6 +1,6 @@
 {
   "name": "@stellar-agent/stellar",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Stellar SDK and Stellar CLI adapters for Testnet-first agent payment workflows.",
   "type": "module",
   "license": "MIT",

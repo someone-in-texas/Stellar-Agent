@@ -7,7 +7,7 @@ Build payment-capable agents on Stellar from Testnet prototypes to risk-budgeted
 
 ## Status
 
-This repository is a `0.5.2` Testnet-first release. Core primitives, policy evaluation, local receipt logging, Testnet wallet creation, Friendbot funding, fee-aware Testnet payment submission, bundled Testnet payments, issued-asset trustlines, claimable balances, local approval bridge requests, local x402-style and MPP Testnet demos, agent-to-agent service-market examples, Blend DeFi inspection and guarded Testnet mutation, Aquarius AMM inspection and policy-gated preflight, core Stellar liquidity-pool inspection/preflight/Testnet mutation, market listeners, strategy investigation, MCP tools, Codex plugin packaging, cache controls, and the CLI command surface are present. Mainnet local auto-signing remains blocked except for explicitly enabled, armed, risk-budgeted agent-wallet payments; other guarded Mainnet submission is limited to externally signed XDR and explicitly acknowledged real-funds contract operations.
+This repository is a `0.5.3` Testnet-first release. Core primitives, policy evaluation, local receipt logging, Testnet wallet creation, Friendbot funding, fee-aware Testnet payment submission, bundled Testnet payments, issued-asset trustlines, claimable balances, local approval bridge requests, local x402-style and MPP Testnet demos, agent-to-agent service-market examples, Blend DeFi inspection and guarded Testnet mutation, Aquarius AMM inspection and policy-gated preflight, core Stellar liquidity-pool inspection/preflight/Testnet mutation, market listeners, strategy investigation, MCP tools, Codex plugin packaging, cache controls, and the CLI command surface are present. Mainnet local auto-signing remains blocked except for explicitly enabled, armed, risk-budgeted agent-wallet payments; other guarded Mainnet submission is limited to externally signed XDR and explicitly acknowledged real-funds contract operations.
 
 ## Safety First
 
@@ -143,11 +143,11 @@ For composable workflow examples, see [docs/agent-recipes.md](docs/agent-recipes
 
 ## Release Artifacts
 
-`v0.5.2` GitHub releases contain:
+`v0.5.3` GitHub releases contain:
 
 - npm tarballs for the scoped `@stellar-agent/*` packages.
-- `stellar-agent-codex-plugin-0.5.2.tgz`, the npm package tarball for `@stellar-agent/codex-plugin` validation tooling.
-- `stellar-agent-codex-plugin-v0.5.2.tgz`, the installable Codex plugin bundle. This tarball includes `.codex-plugin/plugin.json`, `plugin.yaml`, `plugin-manifest.json`, and the bundled skills.
+- `stellar-agent-codex-plugin-0.5.3.tgz`, the npm package tarball for `@stellar-agent/codex-plugin` validation tooling.
+- `stellar-agent-codex-plugin-v0.5.3.tgz`, the installable Codex plugin bundle. This tarball includes `.codex-plugin/plugin.json`, `plugin.yaml`, `plugin-manifest.json`, and the bundled skills.
 - `release-manifest.json` with artifact SHA-256 checksums and source commit metadata.
 
 The generated tarballs are verified by `pnpm release:preflight` through a fresh temporary install before release.

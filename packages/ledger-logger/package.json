@@ -1,6 +1,6 @@
 {
   "name": "@stellar-agent/ledger-logger",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Receipt and JSONL event logging for Stellar Agent Bridge operations.",
   "type": "module",
   "license": "MIT",

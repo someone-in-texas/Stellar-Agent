@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.3
+
+- Redacted Stellar secret-shaped values and URL query strings from serialized error messages and hints, in addition to structured error details.
+- Made private configuration, wallet, approval, policy, report, and receipt writes atomic while preserving restrictive file permissions.
+- Hardened MCP stdio handling with byte-accurate UTF-8 framing, fragmented and coalesced message support, bounded message and output sizes, and a CLI timeout.
+- Tightened Aquarius liquidity policy validation for exact per-pool amount vectors, complete withdrawal bounds, and exact decimal exposure arithmetic.
+- Guarded manually dispatched release runs against stale or mismatched tag, version, and commit selections.
+- Refreshed patch-level WalletConnect, Blend, Prettier, tsx, and TypeScript ESLint dependencies.
+
 ## 0.5.2
 
 - Fixed WalletConnect SignClient resolution for the npm-installed `@walletconnect/sign-client` export shape, including function exports with static `init`.
