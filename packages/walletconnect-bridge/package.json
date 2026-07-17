@@ -33,7 +33,7 @@
   },
   "dependencies": {
     "@stellar-agent/core": "workspace:*",
-    "@walletconnect/sign-client": "^2.23.9"
+    "@walletconnect/sign-client": "^2.23.10"
   },
   "devDependencies": {
     "@types/node": "^22.15.24"
