@@ -1,6 +1,7 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, open, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 
 export const XLM_DECIMALS = 7;
@@ -222,9 +223,9 @@ export function serializeError(error: unknown): SerializedError {
   if (error instanceof StellarAgentError) {
     return {
       code: error.code,
-      message: error.message,
-      hint: error.hint ?? defaultHintForError(error.code),
-      docs: error.docs ?? defaultDocsForError(error.code),
+      message: redactSensitive(error.message),
+      hint: redactSensitive(error.hint ?? defaultHintForError(error.code)),
+      docs: redactSensitive(error.docs ?? defaultDocsForError(error.code)),
       ...(error.details !== undefined ? { details: redactSensitive(error.details) } : {})
     };
   }
@@ -236,7 +237,7 @@ export function serializeError(error: unknown): SerializedError {
     });
     return {
       code: "INVALID_INPUT",
-      message: issues.length > 0 ? `Invalid input: ${issues.join("; ")}` : "Invalid input.",
+      message: redactSensitive(issues.length > 0 ? `Invalid input: ${issues.join("; ")}` : "Invalid input."),
       hint: defaultHintForError("INVALID_INPUT"),
       docs: defaultDocsForError("INVALID_INPUT")
     };
@@ -244,7 +245,7 @@ export function serializeError(error: unknown): SerializedError {
   if (error instanceof Error) {
     return {
       code: "UNKNOWN_ERROR",
-      message: error.message,
+      message: redactSensitive(error.message),
       hint: defaultHintForError("UNKNOWN_ERROR"),
       docs: defaultDocsForError("UNKNOWN_ERROR")
     };
@@ -426,6 +427,28 @@ export function expandHome(pathValue: string): string {
 export function resolvePath(pathValue: string, baseDir = process.cwd()): string {
   const expanded = expandHome(pathValue);
   return isAbsolute(expanded) ? expanded : resolve(baseDir, expanded);
+}
+
+export async function writeFileAtomic(
+  path: string,
+  data: string | Uint8Array,
+  options: { mode?: number } = {}
+): Promise<void> {
+  const parent = dirname(path);
+  await mkdir(parent, { recursive: true });
+  const temporaryPath = join(parent, `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(temporaryPath, "wx", options.mode ?? 0o600);
+    await handle.writeFile(data);
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+    await rename(temporaryPath, path);
+  } finally {
+    await handle?.close().catch(() => undefined);
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+  }
 }
 
 export function defaultStorage(rootDir = "~/.stellar-agent"): StorageConfig {

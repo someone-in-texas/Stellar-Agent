@@ -1,8 +1,12 @@
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   MCP_TOOLS,
   buildCliArgs,
   callMcpTool,
+  createChildProcessCliRunner,
   createMcpMessageParser,
   encodeMcpMessage,
   handleMcpRequest
@@ -572,6 +576,45 @@ describe("mcp server", () => {
     const parse = createMcpMessageParser((message) => messages.push(message));
     parse(encodeMcpMessage({ jsonrpc: "2.0", id: 1, method: "initialize" }));
     expect(messages).toEqual([{ jsonrpc: "2.0", id: 1, method: "initialize" }]);
+  });
+
+  it("parses Unicode messages by byte length across fragmented and coalesced frames", () => {
+    const messages: unknown[] = [];
+    const parse = createMcpMessageParser((message) => messages.push(message));
+    const first = Buffer.from(
+      encodeMcpMessage({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { arguments: { memo: "café 🚀" } } })
+    );
+    const second = Buffer.from(encodeMcpMessage({ jsonrpc: "2.0", id: 2, method: "tools/list" }));
+    const emojiStart = first.indexOf(Buffer.from("🚀"));
+    parse(first.subarray(0, emojiStart + 1));
+    expect(messages).toEqual([]);
+    parse(Buffer.concat([first.subarray(emojiStart + 1), second]));
+
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatchObject({ id: 1, params: { arguments: { memo: "café 🚀" } } });
+    expect(messages[1]).toMatchObject({ id: 2, method: "tools/list" });
+  });
+
+  it("rejects oversized MCP messages", () => {
+    const parse = createMcpMessageParser(() => undefined, { maxMessageBytes: 8 });
+    expect(() => parse("Content-Length: 9\r\n\r\n123456789")).toThrow("8-byte limit");
+  });
+
+  it("bounds CLI runner time and output", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "stellar-agent-mcp-runner-"));
+    const slowScript = join(dir, "slow.js");
+    const noisyScript = join(dir, "noisy.js");
+    await writeFile(slowScript, "setInterval(() => {}, 1000);\n");
+    await writeFile(noisyScript, "process.stdout.write('x'.repeat(200)); setInterval(() => {}, 1000);\n");
+
+    await expect(createChildProcessCliRunner(slowScript, { timeoutMs: 25 })([])).resolves.toMatchObject({
+      status: 124,
+      stderr: expect.stringContaining("25ms MCP timeout")
+    });
+    await expect(createChildProcessCliRunner(noisyScript, { timeoutMs: 1_000, maxOutputBytes: 100 })([])).resolves.toMatchObject({
+      status: 124,
+      stderr: expect.stringContaining("100-byte MCP limit")
+    });
   });
 
   it("keeps tool names unique", () => {

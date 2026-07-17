@@ -23,6 +23,8 @@ When installed globally, `stellar-agent-mcp` uses the `stellar-agent` binary by 
 
 Every tool calls `stellar-agent --json` and returns the parsed JSON output plus the CLI exit code.
 
+The stdio transport parses `Content-Length` as UTF-8 bytes and accepts messages up to 4 MiB. Spawned CLI calls are terminated after five minutes or when combined stdout and stderr exceed 1 MiB, preventing a stalled or noisy command from holding the MCP server indefinitely.
+
 ## Safety
 
 The MCP server delegates to the CLI so policy checks, Mainnet guards, redaction, and receipt behavior stay centralized. Tools should stop on `requires_approval` unless the user explicitly approves the guarded flow.

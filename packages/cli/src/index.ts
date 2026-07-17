@@ -23,7 +23,8 @@ import {
   paymentRequestSchema,
   redactSensitive,
   resolvePath,
-  serializeError
+  serializeError,
+  writeFileAtomic
 } from "@stellar-agent/core";
 import { latestLedger, lookupTransaction, parseStellarCliTransactionHash, resolveNetworkProfile } from "@stellar-agent/stellar";
 import type { LiquidityPoolPreflight, LiquidityPoolSummary } from "@stellar-agent/stellar";
@@ -3378,10 +3379,10 @@ function addDefiCommands(program: Command): void {
     .requiredOption("--pool <pool>", "Aquarius pool contract id, pool index, token, or search term")
     .requiredOption("--action <action>", "LP action: deposit or withdraw")
     .option("--account <account>", "Local wallet name or public key", "agent")
-    .option("--amount <amount...>", "Desired deposit amount, repeatable", collectOption, [])
+    .option("--amount <amount...>", "Desired deposit amount, one per pool asset in pool order", collectOption, [])
     .option("--min-shares <amount>", "Minimum pool shares for deposit")
     .option("--shares <amount>", "Pool shares to withdraw")
-    .option("--min-amount <amount...>", "Minimum withdraw token amount, repeatable", collectOption, [])
+    .option("--min-amount <amount...>", "Minimum withdrawal amount, one per pool asset in pool order", collectOption, [])
     .option("--network <name>", "Network profile to inspect: testnet or mainnet")
     .action(
       withContext(
@@ -3509,8 +3510,7 @@ function addPolicyCommands(program: Command): void {
           options.output ??
           join(context.config.storage.policiesDir, defaultPolicyFilename(options.network));
         const resolvedPath = resolvePath(path);
-        await mkdir(dirname(resolvedPath), { recursive: true });
-        await writeFile(resolvedPath, policyToYaml(target), { mode: 0o600 });
+        await writeFileAtomic(resolvedPath, policyToYaml(target), { mode: 0o600 });
         return { path: resolvedPath, policy: target };
       }, "Policy initialized.")
     );
@@ -4093,8 +4093,7 @@ async function loadConfig(options: CliOptions): Promise<StellarAgentConfig> {
 
 async function writeConfig(config: StellarAgentConfig, options: CliOptions): Promise<void> {
   const path = resolvePath(options.config ?? process.env.STELLAR_AGENT_CONFIG ?? join(config.storage.rootDir, "config.yaml"));
-  await import("node:fs/promises").then(({ mkdir }) => mkdir(dirname(path), { recursive: true }));
-  await writeFile(path, stringifyYaml(config), { mode: 0o600 });
+  await writeFileAtomic(path, stringifyYaml(config), { mode: 0o600 });
 }
 
 async function createTestnetWalletResult(context: CliContext, name: string, fund: boolean) {
@@ -6194,9 +6193,8 @@ function extractStellarCliTransactionHash(output: string): string | undefined {
 
 async function writeLocalReport(context: CliContext, outputPath: string) {
   const path = resolvePath(outputPath);
-  await mkdir(dirname(path), { recursive: true });
   const report = await buildLocalReport(context);
-  await writeFile(path, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
+  await writeFileAtomic(path, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
   return { path, report };
 }
 

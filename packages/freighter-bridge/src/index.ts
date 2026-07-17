@@ -7,11 +7,12 @@ import {
   nowIso,
   paymentRequestSchema,
   redactSensitive,
-  resolvePath
+  resolvePath,
+  writeFileAtomic
 } from "@stellar-agent/core";
 import { createHash, randomBytes } from "node:crypto";
 import { createServer, IncomingMessage, Server, ServerResponse } from "node:http";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { xdr } from "@stellar/stellar-sdk";
 
@@ -351,8 +352,7 @@ function assertAuthorizedBridgeRequest(request: IncomingMessage, authToken: stri
 
 async function writeApproval(approvalsDir: string, approval: ApprovalRequest): Promise<ApprovalRequest> {
   const parsed = parseApproval(redactSensitive(approval));
-  await mkdir(resolvePath(approvalsDir), { recursive: true });
-  await writeFile(approvalPath(approvalsDir, parsed.id), `${JSON.stringify(parsed, null, 2)}\n`, { mode: 0o600 });
+  await writeFileAtomic(approvalPath(approvalsDir, parsed.id), `${JSON.stringify(parsed, null, 2)}\n`, { mode: 0o600 });
   return parsed;
 }
 

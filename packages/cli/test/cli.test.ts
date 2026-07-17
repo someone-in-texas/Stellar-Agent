@@ -2152,6 +2152,52 @@ describe("CLI DeFi commands", () => {
       }
     });
   });
+
+  it("rejects partial Aquarius withdrawal slippage bounds", async () => {
+    const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          results: [
+            {
+              index: "pool-hash",
+              address: "CPOOL",
+              tokens_addresses: ["CXLM", "CAQUA"],
+              tokens_str: ["native", "AQUA:GISSUER"]
+            }
+          ]
+        })
+      )
+    );
+
+    const output = await runCli([
+      "--config",
+      configPath,
+      "--json",
+      "defi",
+      "aquarius",
+      "lp",
+      "preflight",
+      "--pool",
+      "CPOOL",
+      "--action",
+      "withdraw",
+      "--account",
+      "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      "--shares",
+      "1",
+      "--min-amount",
+      "0"
+    ]);
+
+    expect(output).toMatchObject({
+      ok: false,
+      error: {
+        code: "INVALID_INPUT",
+        message: "Aquarius withdraw preflight requires exactly 2 --min-amount values when slippage bounds are provided."
+      }
+    });
+  });
 });
 
 describe("CLI market liquidity commands", () => {

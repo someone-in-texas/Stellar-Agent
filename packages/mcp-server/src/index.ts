@@ -25,6 +25,11 @@ export interface CliExecutionResult {
 
 export type CliRunner = (args: string[]) => Promise<CliExecutionResult>;
 
+export interface CliRunnerOptions {
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+}
+
 export interface McpRequest {
   jsonrpc?: string;
   id?: string | number | null;
@@ -704,7 +709,12 @@ export async function handleMcpRequest(request: McpRequest, runner: CliRunner): 
   return mcpError(request, -32601, `Method '${request.method}' is not supported.`);
 }
 
-export function createChildProcessCliRunner(cliBinary = process.env.STELLAR_AGENT_CLI ?? "stellar-agent"): CliRunner {
+export function createChildProcessCliRunner(
+  cliBinary = process.env.STELLAR_AGENT_CLI ?? "stellar-agent",
+  options: CliRunnerOptions = {}
+): CliRunner {
+  const timeoutMs = options.timeoutMs ?? 300_000;
+  const maxOutputBytes = options.maxOutputBytes ?? 1_048_576;
   return async (args) =>
     new Promise((resolve) => {
       const executable = cliBinary.endsWith(".js") ? process.execPath : cliBinary;
@@ -712,19 +722,48 @@ export function createChildProcessCliRunner(cliBinary = process.env.STELLAR_AGEN
       const child = spawn(executable, childArgs, { stdio: ["ignore", "pipe", "pipe"] });
       let stdout = "";
       let stderr = "";
+      let outputBytes = 0;
+      let settled = false;
+      const finish = (result: CliExecutionResult) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        resolve(result);
+      };
+      const terminate = (message: string) => {
+        if (settled) return;
+        child.kill("SIGTERM");
+        const forceKill = setTimeout(() => child.kill("SIGKILL"), 1_000);
+        forceKill.unref();
+        finish({ status: 124, stdout, stderr: `${stderr}${stderr && !stderr.endsWith("\n") ? "\n" : ""}${message}\n` });
+      };
+      const appendOutput = (target: "stdout" | "stderr", chunk: string) => {
+        outputBytes += Buffer.byteLength(chunk, "utf8");
+        if (outputBytes > maxOutputBytes) {
+          terminate(`Stellar Agent CLI output exceeded the ${maxOutputBytes}-byte MCP limit.`);
+          return;
+        }
+        if (target === "stdout") stdout += chunk;
+        else stderr += chunk;
+      };
+      const timeout = setTimeout(
+        () => terminate(`Stellar Agent CLI exceeded the ${timeoutMs}ms MCP timeout.`),
+        timeoutMs
+      );
+      timeout.unref();
       child.stdout.setEncoding("utf8");
       child.stderr.setEncoding("utf8");
       child.stdout.on("data", (chunk) => {
-        stdout += chunk;
+        appendOutput("stdout", chunk);
       });
       child.stderr.on("data", (chunk) => {
-        stderr += chunk;
+        appendOutput("stderr", chunk);
       });
       child.on("error", (error) => {
-        resolve({ status: 127, stdout, stderr: `${stderr}${error.message}` });
+        finish({ status: 127, stdout, stderr: `${stderr}${error.message}` });
       });
       child.on("close", (status) => {
-        resolve({ status: status ?? 1, stdout, stderr });
+        finish({ status: status ?? 1, stdout, stderr });
       });
     });
 }
@@ -734,22 +773,35 @@ export function encodeMcpMessage(message: unknown): string {
   return `Content-Length: ${Buffer.byteLength(json, "utf8")}\r\n\r\n${json}`;
 }
 
-export function createMcpMessageParser(onMessage: (message: McpRequest) => void): (chunk: Buffer | string) => void {
-  let buffer = "";
+export function createMcpMessageParser(
+  onMessage: (message: McpRequest) => void,
+  options: { maxMessageBytes?: number; maxHeaderBytes?: number } = {}
+): (chunk: Buffer | string) => void {
+  const maxMessageBytes = options.maxMessageBytes ?? 4_194_304;
+  const maxHeaderBytes = options.maxHeaderBytes ?? 16_384;
+  const separator = Buffer.from("\r\n\r\n");
+  let buffer = Buffer.alloc(0);
   return (chunk) => {
-    buffer += chunk.toString();
+    buffer = Buffer.concat([buffer, typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk]);
     for (;;) {
-      const headerEnd = buffer.indexOf("\r\n\r\n");
-      if (headerEnd < 0) return;
-      const header = buffer.slice(0, headerEnd);
+      const headerEnd = buffer.indexOf(separator);
+      if (headerEnd < 0) {
+        if (buffer.length > maxHeaderBytes) throw new Error("MCP header exceeds the configured size limit.");
+        return;
+      }
+      if (headerEnd > maxHeaderBytes) throw new Error("MCP header exceeds the configured size limit.");
+      const header = buffer.subarray(0, headerEnd).toString("ascii");
       const lengthMatch = /content-length:\s*(\d+)/i.exec(header);
       if (!lengthMatch?.[1]) throw new Error("Missing MCP Content-Length header.");
       const length = Number.parseInt(lengthMatch[1], 10);
-      const bodyStart = headerEnd + 4;
+      if (!Number.isSafeInteger(length) || length > maxMessageBytes) {
+        throw new Error(`MCP Content-Length exceeds the ${maxMessageBytes}-byte limit.`);
+      }
+      const bodyStart = headerEnd + separator.length;
       const bodyEnd = bodyStart + length;
       if (buffer.length < bodyEnd) return;
-      onMessage(JSON.parse(buffer.slice(bodyStart, bodyEnd)));
-      buffer = buffer.slice(bodyEnd);
+      onMessage(JSON.parse(buffer.subarray(bodyStart, bodyEnd).toString("utf8")));
+      buffer = buffer.subarray(bodyEnd);
     }
   };
 }

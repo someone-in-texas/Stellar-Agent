@@ -1,3 +1,6 @@
+import { mkdtemp, readFile, readdir, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
@@ -13,7 +16,8 @@ import {
   redactSensitive,
   resolvePath,
   serializeError,
-  StellarAgentError
+  StellarAgentError,
+  writeFileAtomic
 } from "../src/index.js";
 
 describe("amount parsing", () => {
@@ -113,6 +117,36 @@ describe("error serialization", () => {
       hint: "Run the command with --help and correct the input.",
       docs: "docs/troubleshooting.md"
     });
+  });
+
+  it("redacts secrets and URL queries from error messages and hints", () => {
+    const secret = "S".padEnd(56, "A");
+    expect(serializeError(new Error(`failed for ${secret}`)).message).toBe("failed for [REDACTED_SECRET_KEY]");
+    expect(
+      serializeError(
+        new StellarAgentError({
+          code: "INVALID_INPUT",
+          message: `bad ${secret}`,
+          hint: "Inspect https://example.com/report?token=abc"
+        })
+      )
+    ).toMatchObject({
+      message: "bad [REDACTED_SECRET_KEY]",
+      hint: "Inspect https://example.com/report?[REDACTED_QUERY]"
+    });
+  });
+});
+
+describe("atomic file persistence", () => {
+  it("replaces a file with private permissions and leaves no temporary file", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "stellar-agent-atomic-"));
+    const path = join(dir, "state.json");
+    await writeFileAtomic(path, "first\n", { mode: 0o600 });
+    await writeFileAtomic(path, "second\n", { mode: 0o600 });
+
+    expect(await readFile(path, "utf8")).toBe("second\n");
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+    expect(await readdir(dir)).toEqual(["state.json"]);
   });
 });
 

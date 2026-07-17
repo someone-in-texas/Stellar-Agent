@@ -7,7 +7,8 @@ import {
   nowIso,
   parseAmount,
   redactSensitive,
-  resolvePath
+  resolvePath,
+  writeFileAtomic
 } from "@stellar-agent/core";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -170,7 +171,7 @@ export async function writeReceipt(receiptsDir: string, input: ReceiptInput): Pr
   };
   assertNoSecrets(receipt);
   const path = join(dir, `${receipt.id}.json`);
-  await writeFile(path, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
+  await writeFileAtomic(path, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
   return { path, receipt };
 }
 

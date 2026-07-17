@@ -73,7 +73,7 @@ stellar-agent defi aquarius lp preflight \
   --json
 ```
 
-LP preflight validates inputs, fetches pool metadata, computes a nominal exposure proxy, and evaluates `defi.aquarius` policy. It does not simulate, sign, or submit a Soroban transaction.
+LP preflight validates inputs, fetches pool metadata, computes a nominal exposure proxy, and evaluates `defi.aquarius` policy. Deposit `--amount` values and withdrawal `--min-amount` bounds must include exactly one value per pool asset in the order reported by the pool. Partial withdrawal bounds do not satisfy the slippage-bounds policy. The command does not simulate, sign, or submit a Soroban transaction.
 
 ## Swap Quoting And Preflight
 

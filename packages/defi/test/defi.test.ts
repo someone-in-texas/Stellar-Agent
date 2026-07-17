@@ -232,6 +232,62 @@ describe("Aquarius helpers", () => {
     });
   });
 
+  it("requires LP amount vectors to match the pool assets", async () => {
+    const fetchImpl = async () =>
+      new Response(
+        JSON.stringify({
+          results: [
+            {
+              index: "pool-hash",
+              address: "CPOOL",
+              tokens_addresses: ["CXLM", "CAQUA"],
+              tokens_str: ["native", "AQUA:GISSUER"]
+            }
+          ]
+        })
+      );
+    const common = {
+      network: "testnet" as const,
+      pool: "CPOOL",
+      account: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      fetchImpl: fetchImpl as typeof fetch
+    };
+
+    await expect(
+      preflightAquariusLp({ ...common, action: "deposit", desiredAmounts: ["1", "2", "3"], minShares: "1" })
+    ).rejects.toThrow("exactly 2 --amount values");
+    await expect(
+      preflightAquariusLp({ ...common, action: "withdraw", shareAmount: "1", minAmounts: ["0"] })
+    ).rejects.toThrow("exactly 2 --min-amount values");
+  });
+
+  it("computes Aquarius nominal exposure without floating-point precision loss", async () => {
+    const fetchImpl = async () =>
+      new Response(
+        JSON.stringify({
+          results: [
+            {
+              index: "pool-hash",
+              address: "CPOOL",
+              tokens_addresses: ["CXLM", "CAQUA"],
+              tokens_str: ["native", "AQUA:GISSUER"]
+            }
+          ]
+        })
+      );
+    const preflight = await preflightAquariusLp({
+      network: "testnet",
+      pool: "CPOOL",
+      account: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      action: "deposit",
+      desiredAmounts: ["9007199254740993.1", "0.2"],
+      minShares: "1",
+      fetchImpl: fetchImpl as typeof fetch
+    });
+
+    expect(preflight.nominalExposure).toBe("9007199254740993.3");
+  });
+
   it("quotes and preflights Aquarius swaps from API routes", async () => {
     const fetchImpl = async () =>
       new Response(

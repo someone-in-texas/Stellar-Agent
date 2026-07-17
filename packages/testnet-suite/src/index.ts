@@ -14,7 +14,8 @@ import {
   redactSensitive,
   redactWallet,
   resolvePath,
-  testnetWalletSchema
+  testnetWalletSchema,
+  writeFileAtomic
 } from "@stellar-agent/core";
 import { appendEvent, writeReceipt } from "@stellar-agent/ledger-logger";
 import {
@@ -40,8 +41,8 @@ import {
   readContractWithStellarCli,
   sendPayment
 } from "@stellar-agent/stellar";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, readFile, readdir } from "node:fs/promises";
+import { join } from "node:path";
 import { stringify } from "yaml";
 
 export interface TestnetHarness {
@@ -225,7 +226,7 @@ export async function initTestnetWorkspace(
 
   const policyPath = join(resolved.storage.policiesDir, "default-testnet.yaml");
   if (options.overwritePolicy) {
-    await writeFile(policyPath, policyToYaml(DEFAULT_TESTNET_POLICY), { mode: 0o600 });
+    await writeFileAtomic(policyPath, policyToYaml(DEFAULT_TESTNET_POLICY), { mode: 0o600 });
   } else {
     await writeIfMissing(policyPath, policyToYaml(DEFAULT_TESTNET_POLICY), 0o600);
   }
@@ -717,8 +718,7 @@ export async function ensureWallet(
     if (!(error instanceof StellarAgentError) || error.code !== "WALLET_NOT_FOUND") throw error;
   }
   const wallet = createTestnetWallet(name);
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(wallet, null, 2)}\n`, { mode: 0o600 });
+  await writeFileAtomic(path, `${JSON.stringify(wallet, null, 2)}\n`, { mode: 0o600 });
   return wallet;
 }
 
@@ -782,8 +782,7 @@ export async function importPublicWallet(args: {
   };
   const parsed = publicWalletSchema.parse(wallet);
   const path = publicWalletPath(args.config, args.name, args.network);
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(parsed, null, 2)}\n`, { mode: 0o600 });
+  await writeFileAtomic(path, `${JSON.stringify(parsed, null, 2)}\n`, { mode: 0o600 });
   return parsed;
 }
 
@@ -887,8 +886,7 @@ async function writeIfMissing(path: string, body: string, mode: number): Promise
     await readFile(path, "utf8");
   } catch (error: any) {
     if (error?.code !== "ENOENT") throw error;
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, body, { mode });
+    await writeFileAtomic(path, body, { mode });
   }
 }
 

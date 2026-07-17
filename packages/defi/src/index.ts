@@ -518,11 +518,19 @@ export async function preflightAquariusLp(args: {
   });
   const assetGroups = aquariusAssetGroupsFromPool(pool);
   const assets = uniqueAquariusAssetIdentifiers(assetGroups.flat());
+  const assetCount = assetGroups.length;
+  if (assetCount < 2) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Aquarius pool metadata must identify at least two assets.",
+      docs: "docs/defi-aquarius.md#lp-preflight"
+    });
+  }
   if (args.action === "deposit") {
-    if (!args.desiredAmounts || args.desiredAmounts.length < 2) {
+    if (!args.desiredAmounts || args.desiredAmounts.length !== assetCount) {
       throw new StellarAgentError({
         code: "INVALID_INPUT",
-        message: "Aquarius deposit preflight requires at least two --amount values.",
+        message: `Aquarius deposit preflight requires exactly ${assetCount} --amount values, one per pool asset.`,
         docs: "docs/defi-aquarius.md#lp-preflight"
       });
     }
@@ -537,6 +545,13 @@ export async function preflightAquariusLp(args: {
       });
     }
     validatePositiveDecimal(args.shareAmount, "shares");
+    if (args.minAmounts !== undefined && args.minAmounts.length !== assetCount) {
+      throw new StellarAgentError({
+        code: "INVALID_INPUT",
+        message: `Aquarius withdraw preflight requires exactly ${assetCount} --min-amount values when slippage bounds are provided.`,
+        docs: "docs/defi-aquarius.md#lp-preflight"
+      });
+    }
     for (const amount of args.minAmounts ?? []) validateNonnegativeDecimal(amount, "min-amount");
   }
   return {
@@ -551,9 +566,9 @@ export async function preflightAquariusLp(args: {
     assets,
     assetGroups,
     nominalExposure:
-      args.action === "deposit" ? String(args.desiredAmounts!.reduce((total, amount) => total + Number(amount), 0)) : args.shareAmount!,
+      args.action === "deposit" ? sumDecimalStrings(args.desiredAmounts!) : args.shareAmount!,
     slippageBoundsProvided:
-      args.action === "deposit" ? args.minShares !== undefined : Array.isArray(args.minAmounts) && args.minAmounts.length > 0,
+      args.action === "deposit" ? args.minShares !== undefined : args.minAmounts?.length === assetCount,
     simulated: false,
     submitted: false,
     signing: false,
@@ -1136,6 +1151,18 @@ function validatePositiveDecimal(input: string, label: string): void {
 
 function validateNonnegativeDecimal(input: string, label: string): void {
   validateDecimal(input, label, true);
+}
+
+function sumDecimalStrings(inputs: string[]): string {
+  const parts = inputs.map((input) => input.trim().split("."));
+  const scale = Math.max(...parts.map(([, fraction = ""]) => fraction.length));
+  const total = parts.reduce((sum, [whole = "0", fraction = ""]) => {
+    return sum + BigInt(`${whole}${fraction.padEnd(scale, "0")}`);
+  }, 0n);
+  if (scale === 0) return total.toString();
+  const digits = total.toString().padStart(scale + 1, "0");
+  const fraction = digits.slice(-scale).replace(/0+$/, "");
+  return fraction ? `${digits.slice(0, -scale)}.${fraction}` : digits.slice(0, -scale);
 }
 
 function validateDecimal(input: string, label: string, allowZero: boolean): void {

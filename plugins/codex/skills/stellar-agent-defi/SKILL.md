@@ -30,6 +30,7 @@ Aquarius:
 - Inspect account state with `stellar-agent defi aquarius account position --account <alias-or-G...> --pool <pool> --json`.
 - Preflight LP deposits with `stellar-agent defi aquarius lp preflight --pool <pool> --action deposit --amount <a> --amount <b> --min-shares <shares> --json`.
 - Preflight LP withdrawals with `stellar-agent defi aquarius lp preflight --pool <pool> --action withdraw --shares <shares> --min-amount <a> --min-amount <b> --json`.
+- Supply exactly one deposit amount or withdrawal minimum per pool asset, in pool order; never treat partial withdrawal minimums as complete slippage bounds.
 - Quote swaps with `stellar-agent defi aquarius swap quote --from XLM --to AQUA --amount <amount> --json`.
 - Preflight swaps with `stellar-agent defi aquarius swap preflight --from XLM --to AQUA --amount <amount> --slippage-bps <bps> --json`.
 - Inspect reward claim readiness with `stellar-agent defi aquarius rewards inspect --pool <pool> --account <alias-or-G...> --json`.
