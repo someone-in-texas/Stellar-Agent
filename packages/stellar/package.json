@@ -33,6 +33,6 @@
   },
   "dependencies": {
     "@stellar-agent/core": "workspace:*",
-    "@stellar/stellar-sdk": "^13.3.0"
+    "@stellar/stellar-sdk": "16.0.1"
   }
 }
