@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.4
+
+- Aligned direct Stellar SDK dependencies on the 16.3.0 LTS release, including current Protocol 28 XDR support and a patched Axios dependency.
+- Made signed transaction-envelope inspection compatible with both SDK 16 method-style XDR unions and SDK 17 property-style unions.
+- Made liquidity-pool identifiers explicitly `Uint8Array`-safe instead of relying on Buffer-only return behavior.
+- Added an SDK 17 migration notice covering its Node.js 22.12 floor, XDR runtime changes, and Buffer-to-Uint8Array transition.
+- Refreshed `body-parser` to 2.3.0 through Express's supported dependency range to clear the independent preflight advisory.
+- Documented the separately versioned Blend SDK dependency boundary instead of treating it as a direct Stellar Agent SDK alignment.
+
 ## 0.5.3
 
 - Redacted Stellar secret-shaped values and URL query strings from serialized error messages and hints, in addition to structured error details.

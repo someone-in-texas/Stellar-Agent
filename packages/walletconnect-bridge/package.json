@@ -1,6 +1,6 @@
 {
   "name": "@stellar-agent/walletconnect-bridge",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "WalletConnect external signing adapter for Stellar Agent Bridge approval workflows.",
   "type": "module",
   "license": "MIT",

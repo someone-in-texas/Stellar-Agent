@@ -1,6 +1,6 @@
 {
   "name": "@stellar-agent/defi",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "Blend and Aquarius DeFi adapters for safe Stellar Agent inspection, preflight, and guarded request construction.",
   "type": "module",
   "license": "MIT",
@@ -34,6 +34,6 @@
   "dependencies": {
     "@blend-capital/blend-sdk": "3.3.0",
     "@stellar-agent/core": "workspace:*",
-    "@stellar/stellar-sdk": "16.0.1"
+    "@stellar/stellar-sdk": "16.3.0"
   }
 }

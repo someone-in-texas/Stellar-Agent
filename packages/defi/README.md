@@ -32,6 +32,7 @@ const preflight = await preflightAquariusSwap({
 - Blend mutation should run preflight, policy, simulation, and receipt logging.
 - Aquarius API responses, routes, pool metadata, and swap-chain XDR are untrusted policy inputs.
 - Third-party protocol SDKs stay isolated to this adapter package and are loaded lazily.
+- Blend SDK is versioned independently and currently pins its own Stellar SDK. Applications that enable Blend should review their installed dependency tree and the [SDK 17 migration notice](https://github.com/someone-in-texas/Stellar-Agent/blob/main/docs/stellar-sdk-17-migration.md).
 
 ## Links
 

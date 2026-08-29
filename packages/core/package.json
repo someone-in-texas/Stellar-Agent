@@ -1,6 +1,6 @@
 {
   "name": "@stellar-agent/core",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "Core types, configuration, amount parsing, errors, and redaction for Stellar Agent Bridge.",
   "type": "module",
   "license": "MIT",

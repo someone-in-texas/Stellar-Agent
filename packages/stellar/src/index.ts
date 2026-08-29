@@ -1065,15 +1065,16 @@ function assertSignedTransactionXdr(rawXdr: string): void {
       docs: "docs/mainnet-safety.md#signed-xdr-submission"
     });
   }
-  const type = envelope.switch().name;
-  const signatures =
+  const type = xdrUnionType(envelope);
+  const envelopeValue =
     type === "envelopeTypeTx"
-      ? envelope.v1().signatures().length
+      ? xdrMember(envelope, "v1")
       : type === "envelopeTypeTxV0"
-        ? envelope.v0().signatures().length
+        ? xdrMember(envelope, "v0")
         : type === "envelopeTypeTxFeeBump"
-          ? envelope.feeBump().signatures().length
-          : 0;
+          ? xdrMember(envelope, "feeBump")
+          : undefined;
+  const signatures = xdrMember<unknown[]>(envelopeValue, "signatures")?.length ?? 0;
   if (signatures < 1) {
     throw new StellarAgentError({
       code: "INVALID_INPUT",
@@ -1081,6 +1082,19 @@ function assertSignedTransactionXdr(rawXdr: string): void {
       docs: "docs/mainnet-safety.md#signed-xdr-submission"
     });
   }
+}
+
+function xdrMember<T = unknown>(value: unknown, key: string): T | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const member = (value as Record<string, unknown>)[key];
+  return (typeof member === "function" ? member.call(value) : member) as T | undefined;
+}
+
+function xdrUnionType(value: unknown): string | undefined {
+  const directType = xdrMember<unknown>(value, "type");
+  if (typeof directType === "string") return directType;
+  const legacySwitch = xdrMember<{ name?: unknown }>(value, "switch");
+  return typeof legacySwitch?.name === "string" ? legacySwitch.name : undefined;
 }
 
 export async function listClaimableBalances(
@@ -1899,7 +1913,8 @@ async function resolveLiquidityPoolAssetForTrustline(args: {
   }
   const [assetA, assetB] = sortedLiquidityPoolAssets(args.assetA, args.assetB);
   const asset = new LiquidityPoolAsset(assetA, assetB, LiquidityPoolFeeV18);
-  return { poolId: getLiquidityPoolId("constant_product", { assetA, assetB, fee: LiquidityPoolFeeV18 }).toString("hex"), asset };
+  const poolIdBytes = getLiquidityPoolId("constant_product", { assetA, assetB, fee: LiquidityPoolFeeV18 });
+  return { poolId: Buffer.from(poolIdBytes).toString("hex"), asset };
 }
 
 function sortedLiquidityPoolAssets(assetA: string, assetB: string): [Asset, Asset] {

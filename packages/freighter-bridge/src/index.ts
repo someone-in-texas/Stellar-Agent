@@ -421,29 +421,29 @@ function comparableEnvelope(rawXdr: string, label: string): { type: string; tran
     });
   }
 
-  const type = envelope.switch().name;
+  const type = xdrUnionType(envelope);
   if (type === "envelopeTypeTx") {
-    const value = envelope.v1();
+    const value = xdrMember(envelope, "v1");
     return {
       type,
-      transactionXdr: value.tx().toXDR("base64"),
-      signatures: value.signatures().length
+      transactionXdr: xdrToBase64(xdrMember(value, "tx")),
+      signatures: xdrMember<unknown[]>(value, "signatures")?.length ?? 0
     };
   }
   if (type === "envelopeTypeTxV0") {
-    const value = envelope.v0();
+    const value = xdrMember(envelope, "v0");
     return {
       type,
-      transactionXdr: value.tx().toXDR("base64"),
-      signatures: value.signatures().length
+      transactionXdr: xdrToBase64(xdrMember(value, "tx")),
+      signatures: xdrMember<unknown[]>(value, "signatures")?.length ?? 0
     };
   }
   if (type === "envelopeTypeTxFeeBump") {
-    const value = envelope.feeBump();
+    const value = xdrMember(envelope, "feeBump");
     return {
       type,
-      transactionXdr: value.tx().toXDR("base64"),
-      signatures: value.signatures().length
+      transactionXdr: xdrToBase64(xdrMember(value, "tx")),
+      signatures: xdrMember<unknown[]>(value, "signatures")?.length ?? 0
     };
   }
 
@@ -452,6 +452,40 @@ function comparableEnvelope(rawXdr: string, label: string): { type: string; tran
     message: `Unsupported ${label} envelope type: ${type}.`,
     docs: "docs/mainnet-safety.md#local-approval-bridge"
   });
+}
+
+function xdrMember<T = unknown>(value: unknown, key: string): T | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const member = (value as Record<string, unknown>)[key];
+  return (typeof member === "function" ? member.call(value) : member) as T | undefined;
+}
+
+function xdrUnionType(value: unknown): string | undefined {
+  const directType = xdrMember<unknown>(value, "type");
+  if (typeof directType === "string") return directType;
+  const legacySwitch = xdrMember<{ name?: unknown }>(value, "switch");
+  return typeof legacySwitch?.name === "string" ? legacySwitch.name : undefined;
+}
+
+function xdrToBase64(value: unknown): string {
+  if (!value || typeof value !== "object") {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Transaction envelope is missing its transaction body.",
+      docs: "docs/mainnet-safety.md#local-approval-bridge"
+    });
+  }
+  const record = value as Record<string, unknown>;
+  const encode = record.toXDR ?? record.toXdr;
+  if (typeof encode !== "function") {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Transaction envelope body cannot be encoded as XDR.",
+      docs: "docs/mainnet-safety.md#local-approval-bridge"
+    });
+  }
+  const encoded = encode.call(value, "base64");
+  return typeof encoded === "string" ? encoded : Buffer.from(encoded as Uint8Array).toString("base64");
 }
 
 function isLoopbackHost(host: string): boolean {

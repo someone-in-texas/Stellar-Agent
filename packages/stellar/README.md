@@ -29,6 +29,10 @@ await fundWithFriendbot(wallet.publicKey, profile);
 - Submitted operations should be paired with policy checks and receipt logging.
 - Stellar CLI-backed Mainnet contract operations require external custody and explicit real-funds acknowledgement.
 
+## Stellar SDK compatibility
+
+Version 0.5.4 targets `@stellar/stellar-sdk` 16.3.0. Signed transaction-envelope inspection and liquidity-pool byte encoding are prepared for SDK 17's property-style XDR unions and `Uint8Array` results, but SDK 17 is not the supported dependency yet. Direct consumers should review the [SDK 17 migration notice](https://github.com/someone-in-texas/Stellar-Agent/blob/main/docs/stellar-sdk-17-migration.md) before overriding the SDK dependency.
+
 ## Links
 
 - GitHub: https://github.com/someone-in-texas/Stellar-Agent

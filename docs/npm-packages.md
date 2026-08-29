@@ -33,13 +33,15 @@ The other scoped packages are public so applications and agent runtimes can embe
 
 Typed direct-import examples are available in [`examples/sdk-typescript`](../examples/sdk-typescript), including Aquarius quote/preflight, core market LP preflight, and local approval request handling.
 
+The 0.5.4 packages target `@stellar/stellar-sdk` 16.3.0. Direct consumers that also manipulate Stellar SDK XDR or byte values should read the [SDK 17 migration notice](stellar-sdk-17-migration.md) before adopting SDK 17 in their application.
+
 ## Package README Preview
 
 npm renders the `README.md` included in each package tarball. To preview what npm will receive before publishing:
 
 ```bash
 pnpm release:pack
-tar -xOf .release/artifacts/npm/stellar-agent-cli-0.5.3.tgz package/README.md
+tar -xOf .release/artifacts/npm/stellar-agent-cli-0.5.4.tgz package/README.md
 pnpm release:verify-readmes
 ```
 

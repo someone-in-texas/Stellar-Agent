@@ -247,8 +247,8 @@ describe("stellar operations", () => {
         iso: "2030-01-01T00:00:00.000Z"
       }
     });
-    expect((notBefore.predicate as any).switch().name).toBe("claimPredicateNot");
-    expect((notBefore.predicate as any).value().switch().name).toBe("claimPredicateBeforeAbsoluteTime");
+    expect(predicateType(notBefore.predicate)).toBe("claimPredicateNot");
+    expect(predicateType(predicateValue(notBefore.predicate))).toBe("claimPredicateBeforeAbsoluteTime");
 
     const window = buildClaimableBalancePredicate({
       claimableAfter: "1893456000",
@@ -265,7 +265,7 @@ describe("stellar operations", () => {
         iso: "2030-01-02T00:00:00.000Z"
       }
     });
-    expect((window.predicate as any).switch().name).toBe("claimPredicateAnd");
+    expect(predicateType(window.predicate)).toBe("claimPredicateAnd");
   });
 
   it("rejects invalid claimable balance predicate windows", () => {
@@ -797,6 +797,15 @@ describe("stellar operations", () => {
     }
   });
 });
+
+function predicateType(predicate: any): string | undefined {
+  return predicate?.type ?? predicate?.switch?.().name;
+}
+
+function predicateValue(predicate: any): unknown {
+  if (predicate?.notPredicate !== undefined && typeof predicate.notPredicate !== "function") return predicate.notPredicate;
+  return predicate?.value?.();
+}
 
 function testnetProfile() {
   return {

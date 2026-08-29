@@ -1,6 +1,3 @@
 packages:
   - "packages/*"
   - "examples/*"
-
-overrides:
-  form-data: 4.0.6
