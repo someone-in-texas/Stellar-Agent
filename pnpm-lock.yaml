@@ -208,8 +208,8 @@ importers:
         specifier: workspace:*
         version: link:../core
       '@stellar/stellar-sdk':
-        specifier: 16.3.0
-        version: 16.3.0
+        specifier: 17.0.1
+        version: 17.0.1
 
   packages/freighter-bridge:
     dependencies:
@@ -217,8 +217,8 @@ importers:
         specifier: workspace:*
         version: link:../core
       '@stellar/stellar-sdk':
-        specifier: 16.3.0
-        version: 16.3.0
+        specifier: 17.0.1
+        version: 17.0.1
     devDependencies:
       '@types/node':
         specifier: ^22.15.24
@@ -273,8 +273,8 @@ importers:
         specifier: workspace:*
         version: link:../core
       '@stellar/stellar-sdk':
-        specifier: 16.3.0
-        version: 16.3.0
+        specifier: 17.0.1
+        version: 17.0.1
 
   packages/testnet-suite:
     dependencies:
@@ -680,6 +680,15 @@ packages:
     resolution: {integrity: sha512-43/qtrDUokr7LJqoF2c3+RInu/t4zfrpYdoSDfYyhg52rwLV6TnOvdG4fXm7IkSB3wErkcmJS9iEhjVtOSEjjA==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
 
+  '@exodus/bytes@1.15.1':
+    resolution: {integrity: sha512-S6mL0yNB/Abt9Ei4tq8gDhcczc4S3+vQ4ra7vxnAf+YHC02srtqxKKZghx2Dq6p0e66THKwR6r8N6P95wEty7Q==}
+    engines: {node: ^20.19.0 || ^22.12.0 || >=24.0.0}
+    peerDependencies:
+      '@noble/hashes': ^1.8.0 || ^2.0.0
+    peerDependenciesMeta:
+      '@noble/hashes':
+        optional: true
+
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
     engines: {node: '>=18.18.0'}
@@ -876,14 +885,18 @@ packages:
     resolution: {integrity: sha512-+NmNa7Tk5BI5XFdy/6xGTqAN4J9a9KgCrCGhj2uEUTCBhLkch0M+QbKzNH8zEnejWe0p8w+0q5hUVX6L3OzoVA==}
     engines: {node: '>=20.0.0', pnpm: '>=9.0.0'}
 
+  '@stellar/js-xdr@5.0.0':
+    resolution: {integrity: sha512-HBDNKnxr+ecdaEmbZ0mcKkirOF8tXXEbWSw34P3wT40Tn3g+u+cCH17xAWZymzscq8cojHB8340pR8QNVaD32w==}
+    engines: {node: '>=22.0.0', pnpm: '>=10.0.0'}
+
   '@stellar/stellar-sdk@16.0.0':
     resolution: {integrity: sha512-DRrgtYhJu9dE1uwSygiKa414GHOARhRnfXB9LialcXZzwxeEdlyh4WI5dVJbYROi9gflWGpys2sdPqUWSJAqFQ==}
     engines: {node: '>=22.0.0'}
     hasBin: true
 
-  '@stellar/stellar-sdk@16.3.0':
-    resolution: {integrity: sha512-pnB1t4bdnkN8M7tRIcLXnNboq+Hof62NzPMnQrl5MWBNC/d1vUbdrzXgy7yw8I+0hbfz5YN64uVb84BqzIpYiQ==}
-    engines: {node: '>=22.0.0'}
+  '@stellar/stellar-sdk@17.0.1':
+    resolution: {integrity: sha512-fsHHbzJ14N5Ttq5Qpz4AX0ytmPSLCzcy4XC3uIgSQz0cBkEgv0Zb4KE6tWEd3nDQUk/1qP8ZX9cRonIaUXO3Sw==}
+    engines: {node: '>=22.12.0'}
     hasBin: true
 
   '@types/body-parser@1.19.6':
@@ -2426,6 +2439,10 @@ snapshots:
       '@eslint/core': 0.17.0
       levn: 0.4.1
 
+  '@exodus/bytes@1.15.1(@noble/hashes@2.2.0)':
+    optionalDependencies:
+      '@noble/hashes': 2.2.0
+
   '@humanfs/core@0.19.2':
     dependencies:
       '@humanfs/types': 0.15.0
@@ -2558,6 +2575,8 @@ snapshots:
 
   '@stellar/js-xdr@4.0.0': {}
 
+  '@stellar/js-xdr@5.0.0': {}
+
   '@stellar/stellar-sdk@16.0.0':
     dependencies:
       '@noble/ed25519': 3.1.0
@@ -2576,15 +2595,15 @@ snapshots:
       - debug
       - supports-color
 
-  '@stellar/stellar-sdk@16.3.0':
+  '@stellar/stellar-sdk@17.0.1':
     dependencies:
+      '@exodus/bytes': 1.15.1(@noble/hashes@2.2.0)
       '@noble/ed25519': 3.1.0
       '@noble/hashes': 2.2.0
-      '@stellar/js-xdr': 4.0.0
+      '@stellar/js-xdr': 5.0.0
+      '@types/json-schema': 7.0.15
       axios: 1.18.1
-      base32.js: 0.1.0
       bignumber.js: 11.1.5
-      buffer: 6.0.3
       commander: 14.0.3
       eventsource: 4.1.0
       feaxios: 0.0.23

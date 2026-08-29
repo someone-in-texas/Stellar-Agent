@@ -38,7 +38,7 @@ stellar-agent tx submit-approval appr_... --json
 
 The UI uses Freighter's browser API when available. It reads the bridge token from the printed `uiUrl` or `copyUrl` fragment, not from unauthenticated HTML, and posts `signedTransactionXdr` and `signerPublicKey` back to the bridge without exposing secrets to the CLI. The bridge accepts signed transaction XDR only when it has at least one signature and its transaction body matches the original approval request. Signed transaction approvals can then be submitted to Testnet with `tx submit-approval`. Mainnet submission is available only with Mainnet enabled, an active Mainnet profile, and `--allow-real-funds --i-understand-real-funds`; the CLI still never imports or stores Mainnet secret keys.
 
-The signed-envelope comparison path accepts both Stellar SDK 16 method-style XDR unions and SDK 17 property-style unions. The supported 0.5.4 dependency remains SDK 16.3.0; see the [SDK 17 migration notice](https://github.com/someone-in-texas/Stellar-Agent/blob/main/docs/stellar-sdk-17-migration.md) before overriding it.
+The signed-envelope comparison path uses Stellar SDK 17 property-style XDR unions. Approvals expire, are atomically bound to one execution intent, and are consumed once; transaction approvals also verify that the exact approved body was signed by the declared signer. See the [SDK 17 migration guide](https://github.com/someone-in-texas/Stellar-Agent/blob/main/docs/stellar-sdk-17-migration.md).
 
 ## Links
 

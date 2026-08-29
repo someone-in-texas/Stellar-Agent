@@ -10,9 +10,9 @@ The release process is still intentionally conservative: GitHub releases are aut
 - **npm package publication:** supported through the protected `Publish npm` workflow after npm trusted publishing is configured. The same generated tarballs can still be published locally with `pnpm release:publish:npm` as a recovery path.
 - **Live Testnet verification:** strongly recommended before public release tags and required before releases that advertise new payment behavior.
 
-## 0.5.4 Scope
+## 0.6.0 Scope
 
-`0.5.4` is a Testnet-first dependency-alignment release that moves direct Stellar SDK integrations to the 16.3.0 LTS line, prepares signed-envelope and liquidity-pool byte handling for SDK 17's XDR and `Uint8Array` shapes, documents the future SDK 17 migration boundary, refreshes the independent Express body parser, and carries forward the guarded Mainnet agent-wallet, paid-service example, demo, schema, SDK-example, recipe, approval-bridge, and market-listener workflows from the `0.5.x` line:
+`0.6.0` is a Testnet-first durable-execution release. It upgrades direct integrations to Stellar SDK 17.0.1 and Node.js 22.12+, adds idempotent execution intents, explicit RPC/Horizon outcomes and reconciliation, signer capabilities and Soroban authorization helpers, one-use intent-bound approvals, continuation metadata, hash-chained receipts/events, pinned facilitator verification, and durable MPP budgets.
 
 - CLI command surface, JSON envelopes, policy checks, receipt logging, Testnet wallets, Friendbot funding, direct payments, fee-stat-aware transaction submission, bundled Testnet payments, issued assets, claimable balances, approval requests, guarded signed-XDR flows, MCP tools, local x402/MPP demos, Mainnet agent-wallet examples, agent-service-market examples, Blend DeFi inspection and guarded Testnet mutation, Aquarius AMM inspection and policy-gated preflight, core Stellar liquidity-pool inspection/preflight/Testnet mutation, market listeners, strategy investigation, cache controls, package-local npm READMEs, JSON version output, and Codex plugin validation are included.
 - Mainnet agent-wallet mode stores only public wallet metadata by default, requires explicit arming, enforces config/policy fingerprints, receipt-backed spend caps, destination and asset allowlists, max-balance checks, and visible real-funds warnings.
@@ -28,7 +28,7 @@ The release process is still intentionally conservative: GitHub releases are aut
 - Mainnet liquidity-pool mutation remains blocked until an external signer flow exists.
 - Generic Soroban AMM mutation remains adapter-required until a protocol-specific adapter exists.
 - Aquarius commands in this release are read-only or preflight-only and do not sign or submit transactions.
-- Production facilitator-backed x402/MPP support remains future work.
+- Production x402 deployments can use the versioned facilitator verification contract and durable replay state; no specific facilitator is bundled or endorsed, and the CLI demo wire protocols remain local-only.
 - Blend SDK remains independently versioned and currently carries its own Stellar SDK dependency; downstream consumers should review or override that transitive tree until Blend publishes an aligned release.
 
 ## Preconditions
@@ -126,11 +126,11 @@ The examples use isolated temp configs. The Blend example runs deployment and pr
 
 ```text
 .release/artifacts/npm/*.tgz
-.release/artifacts/codex/stellar-agent-codex-plugin-v0.5.4.tgz
+.release/artifacts/codex/stellar-agent-codex-plugin-v0.6.0.tgz
 .release/artifacts/release-manifest.json
 ```
 
-The npm tarball named `stellar-agent-codex-plugin-0.5.4.tgz` is the `@stellar-agent/codex-plugin` validator/tooling package. The similarly named `stellar-agent-codex-plugin-v0.5.4.tgz` under `.release/artifacts/codex/` is the installable Codex plugin bundle.
+The npm tarball named `stellar-agent-codex-plugin-0.6.0.tgz` is the `@stellar-agent/codex-plugin` validator/tooling package. The similarly named `stellar-agent-codex-plugin-v0.6.0.tgz` under `.release/artifacts/codex/` is the installable Codex plugin bundle.
 
 `release-manifest.json` records the release version, source commit, artifact paths, package names, and SHA-256 checksums. `.release/` is local output and is not committed.
 
@@ -147,7 +147,7 @@ Release packaging:
 3. `pnpm release:pack` copies `plugins/codex` into a release staging directory.
 4. `stellar-agent-codex-plugin plugin-json` writes the Codex-native `.codex-plugin/plugin.json` into the staged plugin.
 5. `stellar-agent-codex-plugin manifest` writes `plugin-manifest.json` into the staged plugin.
-6. The staged plugin is archived as `stellar-agent-codex-plugin-v0.5.4.tgz`.
+6. The staged plugin is archived as `stellar-agent-codex-plugin-v0.6.0.tgz`.
 7. `pnpm release:verify-artifacts` extracts that archive and validates it through the installed `stellar-agent-codex-plugin` binary from the packed npm artifact.
 
 This keeps Codex plugin packaging aligned with GitHub releases: the GitHub release contains the npm package that validates plugin manifests and the matching plugin artifact that Codex can install.
@@ -157,8 +157,8 @@ This keeps Codex plugin packaging aligned with GitHub releases: the GitHub relea
 Create and verify the tag locally:
 
 ```bash
-git tag -a v0.5.4 -m "Stellar Agent v0.5.4"
-git push origin v0.5.4
+git tag -a v0.6.0 -m "Stellar Agent v0.6.0"
+git push origin v0.6.0
 ```
 
 The `Release` workflow runs on `v*` tags. It runs `pnpm release:preflight`, uploads generated artifacts, creates the GitHub release, and queues the protected `Publish npm` workflow from:
@@ -177,11 +177,11 @@ Manual local fallback:
 
 ```bash
 pnpm release:preflight
-gh release create v0.5.4 \
+gh release create v0.6.0 \
   .release/artifacts/npm/*.tgz \
   .release/artifacts/codex/*.tgz \
   .release/artifacts/release-manifest.json \
-  --title "Stellar Agent v0.5.4" \
+  --title "Stellar Agent v0.6.0" \
   --notes-file .release/github-release-notes.md \
   --verify-tag
 ```
@@ -324,8 +324,8 @@ The `Release` workflow creates GitHub releases and artifacts, then queues the se
 ## Known Boundaries
 
 - npm publishing is handled by the separate protected `Publish npm` workflow after environment approval.
-- Production facilitator-backed x402/MPP is future work.
+- The package-level facilitator adapter is available, but provider selection, provider authentication, and independent ledger reconciliation remain deployment responsibilities; CLI x402/MPP protocols are still local demos.
 - Mainnet local auto-signing and Mainnet secret-key storage are intentionally blocked.
-- Blend SDK 3.3.0 pins Stellar SDK 16.0.0 independently of Stellar Agent's direct 16.3.0 alignment; npm consumers should review that transitive dependency until Blend publishes an update.
-- Stellar SDK 17 is migration-tested for the current transaction-envelope and byte-handling paths but is not the supported runtime dependency for 0.5.4.
+- Blend SDK remains independently versioned and may retain a nested SDK 16 dependency; npm consumers should review that adapter boundary separately.
+- Stellar Agent's direct supported runtime dependency is Stellar SDK 17.0.1.
 ```

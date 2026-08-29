@@ -1,17 +1,12 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { Account, Asset, BASE_FEE, Keypair, Networks, Operation, TransactionBuilder } from "@stellar/stellar-sdk";
-import {
-  assertSignedTransactionMatchesApproval,
-  assertPaymentApproval,
-  createPaymentApprovalRequest,
-  createTransactionXdrApprovalRequest,
-  decideApprovalRequest,
-  listApprovalRequests,
-  startApprovalBridge
-} from "../src/index.js";
+import { assertSignedTransactionMatchesApproval, assertSignedTransactionMeetsThreshold, assertPaymentApproval, consumeApprovalRequest, createPaymentApprovalRequest, createTransactionXdrApprovalRequest, decideApprovalRequest, listApprovalRequests, startApprovalBridge } from "../src/index.js";
 
 const payment = {
   source: "GBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
@@ -22,21 +17,62 @@ const payment = {
 };
 
 describe("freighter bridge approvals", () => {
+  it("creates exactly one intent-bound approval across independent processes", async () => {
+    const approvalsDir = await mkdtemp(join(tmpdir(), "stellar-agent-approval-processes-"));
+    const moduleUrl = pathToFileURL(fileURLToPath(new URL("../dist/index.js", import.meta.url))).href;
+    const script = `import { createPaymentApprovalRequest } from ${JSON.stringify(moduleUrl)}; void (async () => { const result = await createPaymentApprovalRequest({ approvalsDir: ${JSON.stringify(approvalsDir)}, payment: ${JSON.stringify(payment)}, intentId: "int_process_race" }); process.stdout.write(result.id); })();`;
+    const results = await Promise.all(Array.from({ length: 8 }, () => promisify(execFile)(process.execPath, ["--input-type=module", "-e", script])));
+    expect(new Set(results.map((result) => result.stdout))).toEqual(new Set(["appr_int_process_race"]));
+    expect((await readdir(approvalsDir)).filter((name) => name.endsWith(".json"))).toEqual(["appr_int_process_race.json"]);
+  }, 20_000);
   it("creates, lists, and approves payment requests", async () => {
     const approvalsDir = await mkdtemp(join(tmpdir(), "stellar-agent-approvals-"));
     const approval = await createPaymentApprovalRequest({ approvalsDir, payment });
     expect(approval).toMatchObject({ kind: "payment", status: "pending", payment });
     await expect(listApprovalRequests(approvalsDir)).resolves.toHaveLength(1);
 
-    await expect(assertPaymentApproval({ approvalsDir, approvalId: approval.id, payment })).rejects.toMatchObject({
+    await expect(assertPaymentApproval({ approvalsDir, approvalId: approval.id, payment, intentId: "int_1" })).rejects.toMatchObject({
       code: "APPROVAL_REQUIRED"
     });
     const approved = await decideApprovalRequest({ approvalsDir, id: approval.id, approved: true });
     expect(approved.status).toBe("approved");
-    await expect(assertPaymentApproval({ approvalsDir, approvalId: approval.id, payment })).resolves.toMatchObject({
+    await expect(assertPaymentApproval({ approvalsDir, approvalId: approval.id, payment, intentId: "int_1" })).resolves.toMatchObject({
       id: approval.id,
-      status: "approved"
+      status: "claimed"
     });
+    await expect(consumeApprovalRequest({ approvalsDir, approvalId: approval.id, intentId: "int_1" })).resolves.toMatchObject({ status: "consumed" });
+    await expect(assertPaymentApproval({ approvalsDir, approvalId: approval.id, payment, intentId: "int_2" })).rejects.toMatchObject({ code: "APPROVAL_REQUIRED" });
+  });
+
+  it("allows exactly one execution intent to claim an approval under concurrency", async () => {
+    const approvalsDir = await mkdtemp(join(tmpdir(), "stellar-agent-approval-claim-"));
+    const approval = await createPaymentApprovalRequest({ approvalsDir, payment });
+    await decideApprovalRequest({ approvalsDir, id: approval.id, approved: true });
+    const results = await Promise.allSettled([
+      assertPaymentApproval({
+        approvalsDir,
+        approvalId: approval.id,
+        payment,
+        intentId: "int_left"
+      }),
+      assertPaymentApproval({
+        approvalsDir,
+        approvalId: approval.id,
+        payment,
+        intentId: "int_right"
+      })
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+  });
+
+  it("cryptographically binds payment approvals to their originating intent", async () => {
+    const approvalsDir = await mkdtemp(join(tmpdir(), "stellar-agent-approval-binding-"));
+    const approval = await createPaymentApprovalRequest({ approvalsDir, payment, intentId: "int_original" });
+    expect(approval.boundIntentId).toBe("int_original");
+    await decideApprovalRequest({ approvalsDir, id: approval.id, approved: true });
+    await expect(assertPaymentApproval({ approvalsDir, approvalId: approval.id, payment, intentId: "int_other" })).rejects.toThrow("different execution intent");
+    await expect(assertPaymentApproval({ approvalsDir, approvalId: approval.id, payment, intentId: "int_original" })).resolves.toMatchObject({ status: "claimed", claim: { intentId: "int_original" } });
   });
 
   it("records signed transaction XDR decisions for Freighter signing requests", async () => {
@@ -66,6 +102,12 @@ describe("freighter bridge approvals", () => {
         signedTransactionXdr: signedXdr
       }
     });
+  });
+
+  it("cryptographically enforces source signer thresholds", () => {
+    const { signerPublicKey, signedXdr } = signedPaymentFixture();
+    expect(() => assertSignedTransactionMeetsThreshold({ signedTransactionXdr: signedXdr, network: "testnet", signerWeights: [{ publicKey: signerPublicKey, weight: 1 }], requiredWeight: 1 })).not.toThrow();
+    expect(() => assertSignedTransactionMeetsThreshold({ signedTransactionXdr: signedXdr, network: "testnet", signerWeights: [{ publicKey: signerPublicKey, weight: 1 }], requiredWeight: 2 })).toThrow("does not satisfy");
   });
 
   it("can attach payment metadata to transaction XDR approvals", async () => {
@@ -123,7 +165,10 @@ describe("freighter bridge approvals", () => {
   it("serves approval requests over HTTP", async () => {
     const approvalsDir = await mkdtemp(join(tmpdir(), "stellar-agent-approval-bridge-"));
     const bridge = await startApprovalBridge({ approvalsDir });
-    const headers = { "content-type": "application/json", authorization: `Bearer ${bridge.authToken}` };
+    const headers = {
+      "content-type": "application/json",
+      authorization: `Bearer ${bridge.authToken}`
+    };
     try {
       const unauthorized = await fetch(`${bridge.url}/api/requests`);
       expect(unauthorized.status).toBe(400);
@@ -140,13 +185,18 @@ describe("freighter bridge approvals", () => {
       expect(createResponse.status).toBe(201);
       const created: any = await createResponse.json();
       const listResponse = await fetch(`${bridge.url}/api/requests`, { headers });
-      await expect(listResponse.json()).resolves.toMatchObject({ requests: [{ id: created.id, status: "pending" }] });
+      await expect(listResponse.json()).resolves.toMatchObject({
+        requests: [{ id: created.id, status: "pending" }]
+      });
       const decisionResponse = await fetch(`${bridge.url}/api/requests/${created.id}/decision`, {
         method: "POST",
         headers,
         body: JSON.stringify({ approved: false })
       });
-      await expect(decisionResponse.json()).resolves.toMatchObject({ id: created.id, status: "denied" });
+      await expect(decisionResponse.json()).resolves.toMatchObject({
+        id: created.id,
+        status: "denied"
+      });
 
       const htmlResponse = await fetch(bridge.url);
       const html = await htmlResponse.text();

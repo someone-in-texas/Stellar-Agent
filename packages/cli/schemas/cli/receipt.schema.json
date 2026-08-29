@@ -3,10 +3,20 @@
   "$id": "https://stellar-agent.dev/schemas/cli/receipt.schema.json",
   "title": "stellar-agent receipt object",
   "type": "object",
-  "required": ["schemaVersion", "id", "createdAt", "command", "profile", "network", "policyDecision", "transaction", "redactions"],
+  "required": [
+    "schemaVersion",
+    "id",
+    "createdAt",
+    "command",
+    "profile",
+    "network",
+    "policyDecision",
+    "transaction",
+    "redactions"
+  ],
   "additionalProperties": true,
   "properties": {
-    "schemaVersion": { "const": "stellar-agent.receipt.v1" },
+    "schemaVersion": { "enum": ["stellar-agent.receipt.v1", "stellar-agent.receipt.v2"] },
     "id": { "type": "string" },
     "createdAt": { "type": "string", "format": "date-time" },
     "command": { "type": "string" },
@@ -40,11 +50,17 @@
         "hash": { "type": "string" },
         "ledger": { "type": "integer" },
         "successful": { "type": "boolean" },
-        "feeCharged": { "type": "string" }
+        "feeCharged": { "type": "string" },
+        "transport": { "enum": ["rpc", "horizon"] }
       }
     },
     "ledger": { "type": "object", "additionalProperties": true },
     "files": { "type": "object", "additionalProperties": true },
+    "intentId": { "type": "string" },
+    "idempotencyKeyHash": { "type": "string" },
+    "outcome": { "type": "object", "additionalProperties": true },
+    "attempts": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "integrity": { "type": "object", "additionalProperties": true },
     "redactions": {
       "type": "object",
       "required": ["secretKeysIncluded"],

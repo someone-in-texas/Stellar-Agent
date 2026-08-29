@@ -1,16 +1,99 @@
-import {
-  NetworkProfile,
-  PaymentRequest,
-  StellarAgentError,
-  TestnetWallet,
-  formatStroops,
-  makeId,
-  parseAmount
-} from "@stellar-agent/core";
-import { appendEvent, writeReceipt } from "@stellar-agent/ledger-logger";
+import { NetworkProfile, PaymentRequest, StellarAgentError, TestnetWallet, formatStroops, makeId, parseAmount, withFileLock, writeFileAtomic } from "@stellar-agent/core";
+import { appendEvent, claimExecutionIntent, createExecutionIntent, readExecutionIntent, transitionExecutionIntent, updateExecutionIntent, writeReceipt } from "@stellar-agent/ledger-logger";
 import { Policy, SpendHistory, evaluatePaymentRequest } from "@stellar-agent/policy";
 import { sendPayment } from "@stellar-agent/stellar";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createHash } from "node:crypto";
+import { mkdir, readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+
+export interface DurableMppSession {
+  schemaVersion: "stellar-agent.mpp-session.v1";
+  sessionId: string;
+  networkPassphraseHash: string;
+  asset: string;
+  budget: string;
+  spent: string;
+  recipient: string;
+  facilitatorOrigin: string;
+  revision: number;
+}
+
+export function mppSessionStatePath(sessionStateDir: string, sessionId: string): string {
+  return join(sessionStateDir, `${createHash("sha256").update(sessionId).digest("hex")}.json`);
+}
+
+/** Atomically reserve one MPP debit so concurrent agents cannot overspend a session budget. */
+export async function reserveMppSessionDebit(args: { path: string; session: Omit<DurableMppSession, "schemaVersion" | "spent" | "revision">; amount: string }): Promise<DurableMppSession> {
+  await mkdir(dirname(args.path), { recursive: true });
+  return withFileLock(args.path, async () => {
+    let current: DurableMppSession = {
+      ...args.session,
+      schemaVersion: "stellar-agent.mpp-session.v1",
+      spent: "0.0000000",
+      revision: 0
+    };
+    try {
+      current = validateDurableMppSession(JSON.parse(await readFile(args.path, "utf8")));
+    } catch (error: any) {
+      if (error?.code !== "ENOENT") {
+        if (error instanceof StellarAgentError) throw error;
+        throw new StellarAgentError({
+          code: "CONFIG_INVALID",
+          message: "MPP session state is unreadable and debit failed closed."
+        });
+      }
+    }
+    if (current.sessionId !== args.session.sessionId || current.networkPassphraseHash !== args.session.networkPassphraseHash || current.asset !== args.session.asset || current.recipient !== args.session.recipient || current.facilitatorOrigin !== args.session.facilitatorOrigin || parseAmount(current.budget).stroops !== parseAmount(args.session.budget).stroops)
+      throw new StellarAgentError({
+        code: "INVALID_INPUT",
+        message: "MPP session binding does not match persisted session state."
+      });
+    const nextSpent = parseNonNegativeAmount(current.spent) + parseAmount(args.amount).stroops;
+    if (nextSpent > parseAmount(current.budget).stroops) {
+      throw new StellarAgentError({
+        code: "POLICY_DENIED",
+        message: "MPP session debit would exceed its durable budget."
+      });
+    }
+    const next: DurableMppSession = {
+      ...current,
+      spent: formatStroops(nextSpent),
+      revision: current.revision + 1
+    };
+    await writeFileAtomic(args.path, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+    return next;
+  });
+}
+
+export async function readDurableMppSession(path: string): Promise<DurableMppSession> {
+  try {
+    return validateDurableMppSession(JSON.parse(await readFile(path, "utf8")));
+  } catch (error: any) {
+    if (error instanceof StellarAgentError) throw error;
+    throw new StellarAgentError({
+      code: "CONFIG_INVALID",
+      message: "MPP session state is missing or unreadable."
+    });
+  }
+}
+
+function validateDurableMppSession(value: unknown): DurableMppSession {
+  const state = value as DurableMppSession;
+  if (!state || state.schemaVersion !== "stellar-agent.mpp-session.v1" || !state.sessionId || !state.networkPassphraseHash || !state.asset || !state.recipient || !state.facilitatorOrigin || !Number.isInteger(state.revision) || state.revision < 0) {
+    throw new StellarAgentError({
+      code: "CONFIG_INVALID",
+      message: "MPP session state is corrupt and debit failed closed."
+    });
+  }
+  parseAmount(state.budget);
+  parseNonNegativeAmount(state.spent);
+  return state;
+}
+
+function parseNonNegativeAmount(value: string): bigint {
+  return /^0(?:\.0{1,7})?$/.test(value) ? 0n : parseAmount(value).stroops;
+}
 
 export interface MppCharge {
   protocol: "stellar-agent-local-mpp";
@@ -51,6 +134,7 @@ export interface MppPaymentResult {
   receiptPath?: string;
   responseBody?: string;
   paidResourceDelivered?: boolean;
+  intent?: Awaited<ReturnType<typeof readExecutionIntent>>;
 }
 
 export interface MppSessionRequirement {
@@ -100,22 +184,10 @@ export interface MppSessionResult {
     status: number;
     body: string;
   }>;
+  intent?: Awaited<ReturnType<typeof readExecutionIntent>>;
 }
 
-export async function runMppPayment(args: {
-  url: string;
-  source: TestnetWallet;
-  policy: Policy;
-  profile: NetworkProfile;
-  receiptsDir: string;
-  eventLog: string;
-  command: string;
-  dryRun?: boolean;
-  spendHistory?: SpendHistory;
-  loadSpendHistory?: (request: PaymentRequest) => Promise<SpendHistory>;
-  fetchImpl?: typeof fetch;
-  sendPaymentImpl?: typeof sendPayment;
-}): Promise<MppPaymentResult> {
+export async function runMppPayment(args: { url: string; source: TestnetWallet; policy: Policy; profile: NetworkProfile; receiptsDir: string; eventLog: string; command: string; dryRun?: boolean; intentsDir?: string; idempotencyKey?: string; spendHistory?: SpendHistory; loadSpendHistory?: (request: PaymentRequest, excludeIntentId?: string) => Promise<SpendHistory>; fetchImpl?: typeof fetch; sendPaymentImpl?: typeof sendPayment }): Promise<MppPaymentResult> {
   const fetchImpl = args.fetchImpl ?? fetch;
   const sendPaymentImpl = args.sendPaymentImpl ?? sendPayment;
   const first = await fetchResource(fetchImpl, args.url);
@@ -146,8 +218,24 @@ export async function runMppPayment(args: {
     domain: new URL(args.url).host,
     url: args.url
   };
-  const history = args.loadSpendHistory ? await args.loadSpendHistory(request) : args.spendHistory;
+  let intent = args.intentsDir ? await prepareMppIntent(args.intentsDir, args.command, args.profile, args.idempotencyKey, request, { resource: charge.resource }) : undefined;
+  if (intent?.status === "confirmed") {
+    return {
+      firstStatus: 402,
+      finalStatus: 402,
+      charge,
+      policyDecision: { status: intent.policy?.status ?? "allowed", network: "testnet", realFunds: false, matchedRules: intent.policy?.matchedRules ?? ["idempotent_replay"], reasons: ["Existing confirmed payment was not resubmitted; resource delivery was not replayed."] },
+      paidResourceDelivered: false,
+      responseBody: "",
+      intent
+    };
+  }
+  const history = args.loadSpendHistory ? await args.loadSpendHistory(request, intent?.id) : args.spendHistory;
   const policyDecision = evaluatePaymentRequest(args.policy, request, history);
+  if (intent && !["policy_checked", "approved"].includes(intent.status))
+    intent = await transitionExecutionIntent(args.intentsDir!, intent.id, "policy_checked", {
+      policy: { status: policyDecision.status, matchedRules: policyDecision.matchedRules }
+    });
   await appendEvent(args.eventLog, {
     event: "policy_decision",
     status: policyDecision.status,
@@ -156,6 +244,11 @@ export async function runMppPayment(args: {
     data: { request, charge, policyDecision }
   });
   if (policyDecision.status === "denied") {
+    if (intent)
+      await transitionExecutionIntent(args.intentsDir!, intent.id, "denied", {
+        spendReservation: { ...intent.spendReservation!, active: false },
+        outcome: { changedOnChain: false, safeToRetry: false, reason: "policy_denied" }
+      });
     throw new StellarAgentError({
       code: "POLICY_DENIED",
       message: "MPP charge was denied by policy.",
@@ -164,24 +257,59 @@ export async function runMppPayment(args: {
     });
   }
   if (policyDecision.status === "requires_approval") {
+    if (intent)
+      intent = await transitionExecutionIntent(args.intentsDir!, intent.id, "cancelled", {
+        spendReservation: { ...intent.spendReservation!, active: false },
+        outcome: { changedOnChain: false, safeToRetry: false, reason: "interactive_approval_not_supported" }
+      });
     throw new StellarAgentError({
       code: "APPROVAL_REQUIRED",
       message: "MPP charge requires approval.",
-      docs: "docs/x402-and-mpp.md#local-mpp-demo"
+      docs: "docs/x402-and-mpp.md#local-mpp-demo",
+      details: { ...(intent ? { intentId: intent.id } : {}), changedOnChain: false, safeToRetry: false }
     });
   }
   if (args.dryRun) {
-    return { firstStatus: 402, finalStatus: 402, charge, policyDecision };
+    if (intent)
+      intent = await transitionExecutionIntent(args.intentsDir!, intent.id, "cancelled", {
+        spendReservation: { ...intent.spendReservation!, active: false },
+        outcome: { changedOnChain: false, safeToRetry: true, reason: "dry_run" }
+      });
+    return {
+      firstStatus: 402,
+      finalStatus: 402,
+      charge,
+      policyDecision,
+      ...(intent === undefined ? {} : { intent })
+    };
   }
-
-  const transaction = await sendPaymentImpl({
-    source: args.source,
-    destination: charge.recipient,
-    amount: charge.amount,
-    asset: charge.asset,
-    ...(charge.memo === undefined ? {} : { memo: charge.memo }),
-    profile: args.profile
-  });
+  if (intent) {
+    intent = await claimExecutionIntent(args.intentsDir!, intent.id);
+    intent = await transitionExecutionIntent(args.intentsDir!, intent.id, "approved");
+  }
+  let transaction;
+  try {
+    transaction = await sendPaymentImpl({
+      source: args.source,
+      destination: charge.recipient,
+      amount: charge.amount,
+      asset: charge.asset,
+      ...(charge.memo === undefined ? {} : { memo: charge.memo }),
+      profile: args.profile,
+      ...(args.intentsDir === undefined ? {} : { executionLockPath: mppSequenceLock(args.intentsDir, args.source.publicKey) }),
+      ...(intent === undefined
+        ? {}
+        : {
+            lifecycle: mppIntentLifecycle(args.intentsDir!, intent.id, (next) => {
+              intent = next;
+            })
+          })
+    });
+  } catch (error) {
+    if (intent) await failMppIntent(args.intentsDir!, intent.id, error);
+    throw error;
+  }
+  if (intent) intent = await confirmMppIntent(args.intentsDir!, intent, transaction);
   const proof: MppPaymentProof = {
     protocol: "stellar-agent-local-mpp",
     version: 1,
@@ -219,14 +347,33 @@ export async function runMppPayment(args: {
     policyDecision,
     transaction,
     ...(transaction.ledger === undefined ? {} : { ledger: { confirmedLedger: transaction.ledger } }),
-    eventLog: args.eventLog
+    eventLog: args.eventLog,
+    ...(intent === undefined
+      ? {}
+      : {
+          intentId: intent.id,
+          ...(intent.idempotencyKeyHash === undefined ? {} : { idempotencyKeyHash: intent.idempotencyKeyHash }),
+          outcome: { status: "confirmed", changedOnChain: true, safeToRetry: false },
+          ...(intent.submission?.attempts === undefined ? {} : { attempts: intent.submission.attempts })
+        })
   });
+  if (intent)
+    intent = await updateExecutionIntent(args.intentsDir!, intent.id, (current) => ({
+      ...current,
+      receiptPath
+    }));
   await appendEvent(args.eventLog, {
     event: "receipt_written",
     status: paidResourceDelivered ? "success" : "paid_resource_failed",
     command: args.command,
     profile: "testnet",
-    data: { receiptPath, transactionHash: transaction.hash, finalStatus: paid.status, chargeId: charge.chargeId, paidResourceDelivered }
+    data: {
+      receiptPath,
+      transactionHash: transaction.hash,
+      finalStatus: paid.status,
+      chargeId: charge.chargeId,
+      paidResourceDelivered
+    }
   });
   return {
     firstStatus: 402,
@@ -236,7 +383,8 @@ export async function runMppPayment(args: {
     transaction,
     receiptPath,
     responseBody,
-    paidResourceDelivered
+    paidResourceDelivered,
+    ...(intent === undefined ? {} : { intent })
   };
 }
 
@@ -250,8 +398,11 @@ export async function runMppSession(args: {
   command: string;
   requestCount?: number;
   dryRun?: boolean;
+  intentsDir?: string;
+  idempotencyKey?: string;
+  sessionStateDir?: string;
   spendHistory?: SpendHistory;
-  loadSpendHistory?: (request: PaymentRequest) => Promise<SpendHistory>;
+  loadSpendHistory?: (request: PaymentRequest, excludeIntentId?: string) => Promise<SpendHistory>;
   fetchImpl?: typeof fetch;
   sendPaymentImpl?: typeof sendPayment;
 }): Promise<MppSessionResult> {
@@ -295,8 +446,26 @@ export async function runMppSession(args: {
     domain: new URL(args.url).host,
     url: args.url
   };
-  const history = args.loadSpendHistory ? await args.loadSpendHistory(request) : args.spendHistory;
+  let intent = args.intentsDir ? await prepareMppIntent(args.intentsDir, args.command, args.profile, args.idempotencyKey, request, { resource: session.resource }) : undefined;
+  if (intent?.status === "confirmed") {
+    return {
+      firstStatus: 402,
+      finalStatus: 402,
+      requestCount,
+      successfulRequests: 0,
+      session,
+      policyDecision: { status: intent.policy?.status ?? "allowed", network: "testnet", realFunds: false, matchedRules: intent.policy?.matchedRules ?? ["idempotent_replay"], reasons: ["Existing confirmed session funding was not resubmitted; requests were not replayed."] },
+      paidResourceDelivered: false,
+      responses: [{ status: 402, body: "" }],
+      intent
+    };
+  }
+  const history = args.loadSpendHistory ? await args.loadSpendHistory(request, intent?.id) : args.spendHistory;
   const policyDecision = evaluatePaymentRequest(args.policy, request, history);
+  if (intent && !["policy_checked", "approved"].includes(intent.status))
+    intent = await transitionExecutionIntent(args.intentsDir!, intent.id, "policy_checked", {
+      policy: { status: policyDecision.status, matchedRules: policyDecision.matchedRules }
+    });
   await appendEvent(args.eventLog, {
     event: "policy_decision",
     status: policyDecision.status,
@@ -305,6 +474,11 @@ export async function runMppSession(args: {
     data: { request, session, policyDecision }
   });
   if (policyDecision.status === "denied") {
+    if (intent)
+      await transitionExecutionIntent(args.intentsDir!, intent.id, "denied", {
+        spendReservation: { ...intent.spendReservation!, active: false },
+        outcome: { changedOnChain: false, safeToRetry: false, reason: "policy_denied" }
+      });
     throw new StellarAgentError({
       code: "POLICY_DENIED",
       message: "MPP session budget was denied by policy.",
@@ -313,13 +487,24 @@ export async function runMppSession(args: {
     });
   }
   if (policyDecision.status === "requires_approval") {
+    if (intent)
+      intent = await transitionExecutionIntent(args.intentsDir!, intent.id, "cancelled", {
+        spendReservation: { ...intent.spendReservation!, active: false },
+        outcome: { changedOnChain: false, safeToRetry: false, reason: "interactive_approval_not_supported" }
+      });
     throw new StellarAgentError({
       code: "APPROVAL_REQUIRED",
       message: "MPP session budget requires approval.",
-      docs: "docs/x402-and-mpp.md#local-mpp-session-demo"
+      docs: "docs/x402-and-mpp.md#local-mpp-session-demo",
+      details: { ...(intent ? { intentId: intent.id } : {}), changedOnChain: false, safeToRetry: false }
     });
   }
   if (args.dryRun) {
+    if (intent)
+      intent = await transitionExecutionIntent(args.intentsDir!, intent.id, "cancelled", {
+        spendReservation: { ...intent.spendReservation!, active: false },
+        outcome: { changedOnChain: false, safeToRetry: true, reason: "dry_run" }
+      });
     return {
       firstStatus: 402,
       finalStatus: 402,
@@ -327,18 +512,37 @@ export async function runMppSession(args: {
       successfulRequests: 0,
       session,
       policyDecision,
-      responses: []
+      responses: [],
+      ...(intent === undefined ? {} : { intent })
     };
   }
-
-  const transaction = await sendPaymentImpl({
-    source: args.source,
-    destination: session.recipient,
-    amount: session.budget,
-    asset: session.asset,
-    ...(session.memo === undefined ? {} : { memo: session.memo }),
-    profile: args.profile
-  });
+  if (intent) {
+    intent = await claimExecutionIntent(args.intentsDir!, intent.id);
+    intent = await transitionExecutionIntent(args.intentsDir!, intent.id, "approved");
+  }
+  let transaction;
+  try {
+    transaction = await sendPaymentImpl({
+      source: args.source,
+      destination: session.recipient,
+      amount: session.budget,
+      asset: session.asset,
+      ...(session.memo === undefined ? {} : { memo: session.memo }),
+      profile: args.profile,
+      ...(args.intentsDir === undefined ? {} : { executionLockPath: mppSequenceLock(args.intentsDir, args.source.publicKey) }),
+      ...(intent === undefined
+        ? {}
+        : {
+            lifecycle: mppIntentLifecycle(args.intentsDir!, intent.id, (next) => {
+              intent = next;
+            })
+          })
+    });
+  } catch (error) {
+    if (intent) await failMppIntent(args.intentsDir!, intent.id, error);
+    throw error;
+  }
+  if (intent) intent = await confirmMppIntent(args.intentsDir!, intent, transaction);
   const proof: MppSessionProof = {
     protocol: "stellar-agent-local-mpp-session",
     version: 1,
@@ -355,6 +559,20 @@ export async function runMppSession(args: {
 
   const responses: MppSessionResult["responses"] = [];
   for (let index = 0; index < requestCount; index += 1) {
+    if (args.sessionStateDir) {
+      await reserveMppSessionDebit({
+        path: mppSessionStatePath(args.sessionStateDir, session.sessionId),
+        session: {
+          sessionId: session.sessionId,
+          networkPassphraseHash: createNetworkHash(args.profile.networkPassphrase),
+          asset: session.asset,
+          budget: session.budget,
+          recipient: session.recipient,
+          facilitatorOrigin: new URL(args.url).origin
+        },
+        amount: session.pricePerRequest
+      });
+    }
     const paid = await fetchResource(fetchImpl, args.url, {
       headers: {
         "X-MPP-Session": JSON.stringify(proof),
@@ -383,8 +601,21 @@ export async function runMppSession(args: {
     policyDecision,
     transaction,
     ...(transaction.ledger === undefined ? {} : { ledger: { confirmedLedger: transaction.ledger } }),
-    eventLog: args.eventLog
+    eventLog: args.eventLog,
+    ...(intent === undefined
+      ? {}
+      : {
+          intentId: intent.id,
+          ...(intent.idempotencyKeyHash === undefined ? {} : { idempotencyKeyHash: intent.idempotencyKeyHash }),
+          outcome: { status: "confirmed", changedOnChain: true, safeToRetry: false },
+          ...(intent.submission?.attempts === undefined ? {} : { attempts: intent.submission.attempts })
+        })
   });
+  if (intent)
+    intent = await updateExecutionIntent(args.intentsDir!, intent.id, (current) => ({
+      ...current,
+      receiptPath
+    }));
   await appendEvent(args.eventLog, {
     event: "receipt_written",
     status: paidResourceDelivered ? "success" : "paid_resource_failed",
@@ -411,7 +642,8 @@ export async function runMppSession(args: {
     transaction,
     receiptPath,
     paidResourceDelivered,
-    responses
+    responses,
+    ...(intent === undefined ? {} : { intent })
   };
 }
 
@@ -429,16 +661,7 @@ export async function parseMppSessionRequirement(response: Response): Promise<Mp
 
 export function validateCharge(value: unknown): MppCharge {
   const candidate = value as Partial<MppCharge>;
-  if (
-    candidate.protocol !== "stellar-agent-local-mpp" ||
-    candidate.version !== 1 ||
-    candidate.network !== "testnet" ||
-    !candidate.chargeId ||
-    !candidate.recipient ||
-    !candidate.amount ||
-    !candidate.asset ||
-    !candidate.resource
-  ) {
+  if (candidate.protocol !== "stellar-agent-local-mpp" || candidate.version !== 1 || candidate.network !== "testnet" || !candidate.chargeId || !candidate.recipient || !candidate.amount || !candidate.asset || !candidate.resource) {
     throw new StellarAgentError({
       code: "INVALID_INPUT",
       message: "HTTP 402 response did not include a supported MPP charge.",
@@ -461,17 +684,7 @@ export function validateCharge(value: unknown): MppCharge {
 
 export function validateSessionRequirement(value: unknown): MppSessionRequirement {
   const candidate = value as Partial<MppSessionRequirement>;
-  if (
-    candidate.protocol !== "stellar-agent-local-mpp-session" ||
-    candidate.version !== 1 ||
-    candidate.network !== "testnet" ||
-    !candidate.sessionId ||
-    !candidate.recipient ||
-    !candidate.budget ||
-    !candidate.pricePerRequest ||
-    !candidate.asset ||
-    !candidate.resource
-  ) {
+  if (candidate.protocol !== "stellar-agent-local-mpp-session" || candidate.version !== 1 || candidate.network !== "testnet" || !candidate.sessionId || !candidate.recipient || !candidate.budget || !candidate.pricePerRequest || !candidate.asset || !candidate.resource) {
     throw new StellarAgentError({
       code: "INVALID_INPUT",
       message: "HTTP 402 response did not include a supported MPP session requirement.",
@@ -501,13 +714,7 @@ export function validateSessionRequirement(value: unknown): MppSessionRequiremen
   };
 }
 
-export async function startMppDemo(args: {
-  recipient: string;
-  amount?: string;
-  asset?: string;
-  port?: number;
-  host?: string;
-}): Promise<{
+export async function startMppDemo(args: { recipient: string; amount?: string; asset?: string; port?: number; host?: string }): Promise<{
   url: string;
   close(): Promise<void>;
 }> {
@@ -549,13 +756,7 @@ export async function startMppDemo(args: {
     }
     const proof = parseProofHeader(proofHeader);
     const resource = mppResource(host, server);
-    if (
-      !proof ||
-      proof.protocol !== "stellar-agent-local-mpp" ||
-      proof.version !== 1 ||
-      !proof.transactionHash ||
-      !proof.payer
-    ) {
+    if (!proof || proof.protocol !== "stellar-agent-local-mpp" || proof.version !== 1 || !proof.transactionHash || !proof.payer) {
       writeJson(response, 402, { ok: false, error: "invalid_mpp_payment_proof" });
       return;
     }
@@ -568,13 +769,7 @@ export async function startMppDemo(args: {
       writeJson(response, 402, { ok: false, error: "mpp_charge_not_issued" });
       return;
     }
-    if (
-      proof.recipient !== issuedCharge.recipient ||
-      proof.asset !== issuedCharge.asset ||
-      proof.amount !== parseAmount(issuedCharge.amount, issuedCharge.asset).value ||
-      proof.resource !== resource ||
-      proof.resource !== issuedCharge.resource
-    ) {
+    if (proof.recipient !== issuedCharge.recipient || proof.asset !== issuedCharge.asset || proof.amount !== parseAmount(issuedCharge.amount, issuedCharge.asset).value || proof.resource !== resource || proof.resource !== issuedCharge.resource) {
       writeJson(response, 402, { ok: false, error: "invalid_mpp_payment_proof" });
       return;
     }
@@ -606,14 +801,7 @@ export async function startMppDemo(args: {
   };
 }
 
-export async function startMppSessionDemo(args: {
-  recipient: string;
-  budget?: string;
-  pricePerRequest?: string;
-  asset?: string;
-  port?: number;
-  host?: string;
-}): Promise<{
+export async function startMppSessionDemo(args: { recipient: string; budget?: string; pricePerRequest?: string; asset?: string; port?: number; host?: string }): Promise<{
   url: string;
   close(): Promise<void>;
 }> {
@@ -631,10 +819,7 @@ export async function startMppSessionDemo(args: {
     });
   }
   const issuedSessions = new Map<string, MppSessionRequirement>();
-  const sessions = new Map<
-    string,
-    { session: MppSessionRequirement; remaining: bigint; spent: bigint; requests: number }
-  >();
+  const sessions = new Map<string, { session: MppSessionRequirement; remaining: bigint; spent: bigint; requests: number }>();
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
     if (request.url?.startsWith("/health")) {
       writeJson(response, 200, { ok: true });
@@ -660,14 +845,7 @@ export async function startMppSessionDemo(args: {
       return;
     }
     const proof = parseProofHeader(sessionHeader) as Partial<MppSessionProof> | null;
-    if (
-      !proof ||
-      proof.protocol !== "stellar-agent-local-mpp-session" ||
-      proof.version !== 1 ||
-      !proof.sessionId ||
-      !proof.transactionHash ||
-      !proof.payer
-    ) {
+    if (!proof || proof.protocol !== "stellar-agent-local-mpp-session" || proof.version !== 1 || !proof.sessionId || !proof.transactionHash || !proof.payer) {
       writeJson(response, 402, { ok: false, error: "invalid_mpp_session_proof" });
       return;
     }
@@ -677,15 +855,7 @@ export async function startMppSessionDemo(args: {
       writeJson(response, 402, { ok: false, error: "mpp_session_not_issued" });
       return;
     }
-    if (
-      proof.sessionId !== session.sessionId ||
-      proof.recipient !== session.recipient ||
-      proof.asset !== session.asset ||
-      proof.budget !== session.budget ||
-      proof.pricePerRequest !== session.pricePerRequest ||
-      proof.resource !== session.resource ||
-      proof.resource !== sessionResource(host, server)
-    ) {
+    if (proof.sessionId !== session.sessionId || proof.recipient !== session.recipient || proof.asset !== session.asset || proof.budget !== session.budget || proof.pricePerRequest !== session.pricePerRequest || proof.resource !== session.resource || proof.resource !== sessionResource(host, server)) {
       writeJson(response, 402, { ok: false, error: "invalid_mpp_session_proof" });
       return;
     }
@@ -744,7 +914,7 @@ export async function startMppSessionDemo(args: {
 
 async function fetchResource(fetchImpl: typeof fetch, url: string, init?: RequestInit): Promise<Response> {
   try {
-    return await fetchImpl(url, init);
+    return await fetchImpl(url, { ...init, redirect: "error" });
   } catch (error) {
     throw new StellarAgentError({
       code: "MPP_RESOURCE_UNAVAILABLE",
@@ -783,17 +953,7 @@ function syntheticSession(url: string): MppSessionRequirement {
   };
 }
 
-function mppSessionRequirement(
-  args: {
-    host: string;
-    server: ReturnType<typeof createServer>;
-    sessionId: string;
-    asset: string;
-    budget: string;
-    pricePerRequest: string;
-    recipient: string;
-  }
-): MppSessionRequirement {
+function mppSessionRequirement(args: { host: string; server: ReturnType<typeof createServer>; sessionId: string; asset: string; budget: string; pricePerRequest: string; recipient: string }): MppSessionRequirement {
   return {
     protocol: "stellar-agent-local-mpp-session",
     version: 1,
@@ -849,8 +1009,114 @@ function writeJson(response: ServerResponse, status: number, body: unknown): voi
 
 function parseProofHeader(header: string | string[] | undefined): any | null {
   try {
-    return JSON.parse(Array.isArray(header) ? header[0] ?? "{}" : header ?? "{}");
+    return JSON.parse(Array.isArray(header) ? (header[0] ?? "{}") : (header ?? "{}"));
   } catch {
     return null;
   }
+}
+
+async function prepareMppIntent(intentsDir: string, command: string, profile: NetworkProfile, idempotencyKey: string | undefined, request: PaymentRequest, details: unknown) {
+  const created = await createExecutionIntent(intentsDir, {
+    command,
+    profile: "testnet",
+    networkPassphrase: profile.networkPassphrase,
+    realFunds: false,
+    operation: {
+      type: "mpp.payment",
+      ...(request.source === undefined ? {} : { source: request.source }),
+      destination: request.destination,
+      asset: request.asset,
+      amount: request.amount,
+      details
+    },
+    ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+    spendReservation: {
+      asset: request.asset,
+      amount: request.amount,
+      destination: request.destination,
+      ...(request.domain === undefined ? {} : { domain: request.domain })
+    }
+  });
+  if (!created.created) {
+    if (created.intent.status === "confirmed" || ["proposed", "policy_checked", "approved"].includes(created.intent.status)) return created.intent;
+    throw new StellarAgentError({
+      code: "TRANSACTION_TIMEOUT",
+      message: "This MPP payment may already have settled; reconcile its intent before retrying.",
+      details: {
+        intentId: created.intent.id,
+        transactionHash: created.intent.transaction?.hash,
+        changedOnChain: "unknown",
+        safeToRetry: false
+      }
+    });
+  }
+  return created.intent;
+}
+
+function mppIntentLifecycle(intentsDir: string, intentId: string, setIntent: (intent: Awaited<ReturnType<typeof readExecutionIntent>>) => void) {
+  return {
+    onBuilt: async (built: { hash: string; signedXdr: string; source?: string; sequence?: string; expiresAt?: string }) =>
+      setIntent(
+        await transitionExecutionIntent(intentsDir, intentId, "signed", {
+          transaction: {
+            hash: built.hash,
+            envelopeHash: built.hash,
+            signedXdr: built.signedXdr,
+            ...(built.source === undefined ? {} : { source: built.source }),
+            ...(built.sequence === undefined ? {} : { sequence: built.sequence }),
+            ...(built.expiresAt === undefined ? {} : { expiresAt: built.expiresAt })
+          },
+          outcome: { changedOnChain: false, safeToRetry: false }
+        })
+      ),
+    onSubmission: async (attempt: { transport: "rpc" | "horizon"; endpoint: string; status: string; detail?: unknown }) =>
+      setIntent(
+        await updateExecutionIntent(intentsDir, intentId, (current) => ({
+          ...current,
+          status: attempt.status === "transport_unknown" ? "confirmation_unknown" : "submitted",
+          submission: {
+            attempts: [...(current.submission?.attempts ?? []), { ...attempt, at: new Date().toISOString() }]
+          },
+          outcome: { changedOnChain: "unknown", safeToRetry: false }
+        }))
+      )
+  };
+}
+
+async function failMppIntent(intentsDir: string, intentId: string, error: unknown): Promise<void> {
+  const current = await readExecutionIntent(intentsDir, intentId);
+  if (["submitted", "confirmation_unknown"].includes(current.status)) return;
+  await transitionExecutionIntent(intentsDir, intentId, "failed", {
+    ...(current.spendReservation ? { spendReservation: { ...current.spendReservation, active: false } } : {}),
+    outcome: {
+      changedOnChain: false,
+      safeToRetry: false,
+      reason: error instanceof Error ? error.name : "unknown"
+    }
+  });
+}
+
+function createNetworkHash(passphrase: string): string {
+  return createHash("sha256").update(passphrase).digest("hex");
+}
+
+function mppSequenceLock(intentsDir: string, source: string): string {
+  return join(intentsDir, "sequences", createHash("sha256").update(`testnet:${source}`).digest("hex"));
+}
+
+async function confirmMppIntent(intentsDir: string, intent: Awaited<ReturnType<typeof readExecutionIntent>>, transaction: { hash: string }) {
+  let current = intent;
+  if (current.status === "approved")
+    current = await transitionExecutionIntent(intentsDir, current.id, "signed", {
+      transaction: { hash: transaction.hash, envelopeHash: transaction.hash },
+      outcome: { changedOnChain: false, safeToRetry: false }
+    });
+  if (current.status === "signed")
+    current = await transitionExecutionIntent(intentsDir, current.id, "submitted", {
+      outcome: { changedOnChain: "unknown", safeToRetry: false }
+    });
+  return transitionExecutionIntent(intentsDir, current.id, "confirmed", {
+    spendReservation: { ...current.spendReservation!, active: false },
+    outcome: { changedOnChain: true, safeToRetry: false }
+  });
 }

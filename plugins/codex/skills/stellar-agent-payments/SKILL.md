@@ -14,11 +14,14 @@ Rules:
 8. Never use `--allow-real-funds` as a policy bypass.
 9. Mainnet agent-wallet spend is bounded, not safe; generic Mainnet auto-signing remains blocked.
 10. After any submitted payment or signed-XDR submission, inspect `stellar-agent receipts latest --json` and report the receipt path and transaction hash without printing secrets.
+11. Supply a stable `--idempotency-key` for durable agent jobs. Persist the returned intent id.
+12. If JSON reports `changedOnChain: "unknown"` or `safeToRetry: false`, do not resubmit. Run `stellar-agent intent reconcile <id> --json` until the outcome is terminal.
 
 Direct payments:
 
 - Quote XLM or issued-asset payments with `stellar-agent pay quote --to <G...> --amount <amount> --asset <asset> --fee-strategy medium --json`.
 - Submit approved Testnet payments with `stellar-agent pay send ... --json`.
+- Inspect resumable state with `stellar-agent intent list --json` and verify local audit integrity with `stellar-agent receipts verify-chain --json`.
 - For bundled Testnet payments, run `stellar-agent pay batch --file <payments.json> --dry-run --json` first and submit only if every policy decision is `allowed`.
 - Use `--fee-strategy high` or `--fee-strategy p95` only when the user wants a higher fee bid for faster acceptance.
 - For issued assets, confirm the recipient has a trustline before submitting, or use `stellar-agent testnet scenario issued-asset-payment --json` for an end-to-end Testnet scenario.
@@ -64,4 +67,4 @@ HTTP payment demos:
 - `stellar-agent pay x402 <localhost-url> --allow-localhost-demo --json` pays a compatible local x402 demo resource.
 - `stellar-agent pay mpp <localhost-url> --allow-localhost-demo --json` pays a compatible one-time MPP demo resource.
 - `stellar-agent pay mpp-session <localhost-url> --requests <n> --allow-localhost-demo --json` pays a local MPP session budget once, then performs authorized requests.
-- The x402 and MPP flows in this build are local Testnet demos, not production facilitator integrations.
+- CLI x402 and MPP flows remain local Testnet demos. Production code may use the package-level versioned facilitator adapter and durable MPP budget store only when it also pins network/domain/challenge bindings, independently reconciles settlement, and retains ordinary policy, approval, receipt, and Mainnet controls.

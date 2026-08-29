@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, open, rename, rm } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
@@ -30,7 +30,28 @@ export interface StorageConfig {
   walletsDir: string;
   policiesDir: string;
   approvalsDir: string;
+  intentsDir: string;
   scenariosDir: string;
+}
+
+export interface SignerCapabilities {
+  provider: string;
+  accounts: string[];
+  networks: NetworkName[];
+  signTransaction: boolean;
+  signAuthEntry: boolean;
+  submitTransaction: boolean;
+}
+
+export interface AgentContinuation {
+  intentId?: string;
+  transactionHash?: string;
+  changedOnChain: boolean | "unknown";
+  safeToRetry: boolean;
+  approvalRequired: boolean;
+  nextActions: string[];
+  expiresAt?: string;
+  reason?: string;
 }
 
 export interface StellarAgentConfig {
@@ -64,33 +85,39 @@ export interface MainnetAgentWalletConfig {
   createdAt: string;
   updatedAt: string;
   riskBudget: MainnetAgentWalletRiskBudget;
-  autosign?: {
-    enabled: boolean;
-    secretKeyEnvVar: string;
-    enabledAt: string;
-    warningAcknowledgedAt: string;
-  } | undefined;
-  spendCounters?: {
-    updatedAt: string;
-    source: "receipts";
-    assets: Record<
-      string,
-      {
-        dailyTotal?: string | undefined;
-        monthlyTotal?: string | undefined;
-        knownRecipients?: string[] | undefined;
-        knownDomains?: string[] | undefined;
-        unreadable?: boolean | undefined;
+  autosign?:
+    | {
+        enabled: boolean;
+        secretKeyEnvVar: string;
+        enabledAt: string;
+        warningAcknowledgedAt: string;
       }
-    >;
-  } | undefined;
-  arming?: {
-    armedAt: string;
-    configPath: string;
-    configFingerprint: string;
-    policyPath: string;
-    policyFingerprint: string;
-  } | undefined;
+    | undefined;
+  spendCounters?:
+    | {
+        updatedAt: string;
+        source: "receipts";
+        assets: Record<
+          string,
+          {
+            dailyTotal?: string | undefined;
+            monthlyTotal?: string | undefined;
+            knownRecipients?: string[] | undefined;
+            knownDomains?: string[] | undefined;
+            unreadable?: boolean | undefined;
+          }
+        >;
+      }
+    | undefined;
+  arming?:
+    | {
+        armedAt: string;
+        configPath: string;
+        configFingerprint: string;
+        policyPath: string;
+        policyFingerprint: string;
+      }
+    | undefined;
 }
 
 export type MainnetAgentWalletSpendHistory = NonNullable<MainnetAgentWalletConfig["spendCounters"]>["assets"][string];
@@ -100,22 +127,22 @@ export interface MainnetAgentWalletBalanceLine {
   balance: string;
 }
 
-export const MAINNET_AGENT_WALLET_WARNING =
-  "Mainnet agent-wallet spend is bounded, not safe. Local Mainnet auto-signing remains blocked except explicitly enabled agent-wallet autosigning.";
+export const MAINNET_AGENT_WALLET_WARNING = "Mainnet agent-wallet spend is bounded, not safe. Local Mainnet auto-signing remains blocked except explicitly enabled agent-wallet autosigning.";
 
-export const MAINNET_AGENT_WALLET_AUTOSIGN_WARNING =
-  "Mainnet agent-wallet autosigning can spend real funds within configured limits; any process with the configured secret-key env var can spend from this wallet.";
+export const MAINNET_AGENT_WALLET_AUTOSIGN_WARNING = "Mainnet agent-wallet autosigning can spend real funds within configured limits; any process with the configured secret-key env var can spend from this wallet.";
 
 export type CommandResult<T> = SuccessEnvelope<T> | ErrorEnvelope;
 
 export interface SuccessEnvelope<T> {
   ok: true;
   data: T;
+  continuation?: AgentContinuation;
 }
 
 export interface ErrorEnvelope {
   ok: false;
   error: SerializedError;
+  continuation?: AgentContinuation;
 }
 
 export interface SerializedError {
@@ -177,14 +204,7 @@ export class StellarAgentError extends Error {
   readonly details: unknown;
   readonly exitCode: number;
 
-  constructor(args: {
-    code: ErrorCode;
-    message: string;
-    hint?: string;
-    docs?: string;
-    details?: unknown;
-    exitCode?: number;
-  }) {
+  constructor(args: { code: ErrorCode; message: string; hint?: string; docs?: string; details?: unknown; exitCode?: number }) {
     super(args.message);
     this.name = "StellarAgentError";
     this.code = args.code;
@@ -208,15 +228,122 @@ export function exitCodeForError(code: ErrorCode): number {
   return EXIT_CODES.general;
 }
 
-export function ok<T>(data: T): SuccessEnvelope<T> {
-  return { ok: true, data };
+export function ok<T>(data: T, continuation?: AgentContinuation): SuccessEnvelope<T> {
+  return { ok: true, data, ...(continuation === undefined ? {} : { continuation }) };
 }
 
-export function fail(error: StellarAgentError | SerializedError): ErrorEnvelope {
+export function fail(error: StellarAgentError | SerializedError, continuation?: AgentContinuation): ErrorEnvelope {
   return {
     ok: false,
-    error: error instanceof StellarAgentError ? serializeError(error) : error
+    error: error instanceof StellarAgentError ? serializeError(error) : error,
+    ...(continuation === undefined ? {} : { continuation })
   };
+}
+
+export function continuationForResult(data: unknown): AgentContinuation | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const record = data as Record<string, any>;
+  const intent = record.intent && typeof record.intent === "object" ? record.intent : undefined;
+  const status = String(intent?.status ?? record.status ?? "");
+  const intentId = intent?.id ?? record.intentId;
+  const transactionHash = intent?.transaction?.hash ?? record.transaction?.hash ?? record.transactionHash;
+  if (!intentId && !transactionHash && !["awaiting_approval", "confirmation_unknown", "submitted", "confirmed"].includes(status)) {
+    return undefined;
+  }
+  const approvalRequired = status === "awaiting_approval" || record.approvalRequired === true;
+  const changedOnChain: boolean | "unknown" = intent?.outcome?.changedOnChain ?? (status === "confirmed" || record.transaction?.successful === true ? true : transactionHash || status === "confirmation_unknown" || status === "submitted" ? "unknown" : false);
+  const safeToRetry = intent?.outcome?.safeToRetry ?? (status === "proposed" || status === "policy_checked");
+  const nextActions = Array.isArray(record.nextActions) ? record.nextActions.map(String) : approvalRequired ? ["approval.review"] : status === "confirmation_unknown" || status === "submitted" ? ["intent.reconcile"] : [];
+  return {
+    ...(intentId === undefined ? {} : { intentId: String(intentId) }),
+    ...(transactionHash === undefined ? {} : { transactionHash: String(transactionHash) }),
+    changedOnChain,
+    safeToRetry,
+    approvalRequired,
+    nextActions,
+    ...(intent?.transaction?.expiresAt === undefined ? {} : { expiresAt: String(intent.transaction.expiresAt) })
+  };
+}
+
+export function continuationForError(error: SerializedError): AgentContinuation | undefined {
+  const details = error.details && typeof error.details === "object" ? (error.details as Record<string, any>) : {};
+  const hash = details.hash ?? details.transactionHash;
+  const intentId = details.intentId;
+  const approvalRequired = error.code === "APPROVAL_REQUIRED";
+  if (!hash && !intentId && !approvalRequired && !error.code.startsWith("TRANSACTION_")) return undefined;
+  const changedOnChain = details.changedOnChain ?? (error.code === "TRANSACTION_TIMEOUT" ? "unknown" : false);
+  const safeToRetry = details.safeToRetry === true;
+  return {
+    ...(intentId === undefined ? {} : { intentId: String(intentId) }),
+    ...(hash === undefined ? {} : { transactionHash: String(hash) }),
+    changedOnChain,
+    safeToRetry,
+    approvalRequired,
+    nextActions: approvalRequired ? ["approval.review"] : changedOnChain === "unknown" ? ["intent.reconcile"] : [],
+    reason: error.code
+  };
+}
+
+export async function withFileLock<T>(targetPath: string, action: () => Promise<T>, options: { timeoutMs?: number; staleMs?: number; retryMs?: number } = {}): Promise<T> {
+  const lockPath = `${resolvePath(targetPath)}.lock`;
+  const timeoutMs = options.timeoutMs ?? 10_000;
+  const staleMs = options.staleMs ?? 30_000;
+  const retryMs = options.retryMs ?? 25;
+  const startedAt = Date.now();
+  const owner = `${process.pid}:${randomUUID()}`;
+  await mkdir(dirname(lockPath), { recursive: true });
+
+  while (true) {
+    try {
+      await mkdir(lockPath, { recursive: false, mode: 0o700 });
+      await writeFile(join(lockPath, "owner"), owner, {
+        encoding: "utf8",
+        mode: 0o600,
+        flag: "wx"
+      });
+      break;
+    } catch (error: any) {
+      if (error?.code !== "EEXIST") throw error;
+      try {
+        const lockStat = await stat(lockPath);
+        if (Date.now() - lockStat.mtimeMs > staleMs) {
+          const stalePath = `${lockPath}.stale.${randomUUID()}`;
+          await rename(lockPath, stalePath);
+          await rm(stalePath, { recursive: true, force: true });
+          continue;
+        }
+      } catch (staleError: any) {
+        if (staleError?.code === "ENOENT") continue;
+        if (staleError?.code !== "EEXIST") throw staleError;
+      }
+      if (Date.now() - startedAt >= timeoutMs) {
+        throw new StellarAgentError({
+          code: "CONFIG_INVALID",
+          message: "Timed out waiting for an exclusive local state lock.",
+          details: { targetPath: resolvePath(targetPath) }
+        });
+      }
+      await new Promise((resolveWait) => setTimeout(resolveWait, retryMs));
+    }
+  }
+
+  let result: T | undefined;
+  let actionError: unknown;
+  try {
+    result = await action();
+  } catch (error) {
+    actionError = error;
+  }
+  let cleanupError: unknown;
+  try {
+    const recordedOwner = await readFile(join(lockPath, "owner"), "utf8");
+    if (recordedOwner === owner) await rm(lockPath, { recursive: true, force: true });
+  } catch (error: any) {
+    if (error?.code !== "ENOENT") cleanupError = error;
+  }
+  if (actionError !== undefined) throw actionError;
+  if (cleanupError !== undefined) throw cleanupError;
+  return result as T;
 }
 
 export function serializeError(error: unknown): SerializedError {
@@ -261,18 +388,7 @@ export function serializeError(error: unknown): SerializedError {
 
 function zodErrorIssues(error: unknown): z.ZodIssue[] | undefined {
   if (error instanceof z.ZodError) return error.issues;
-  if (
-    error &&
-    typeof error === "object" &&
-    Array.isArray((error as { issues?: unknown }).issues) &&
-    (error as { issues: unknown[] }).issues.every(
-      (issue) =>
-        issue &&
-        typeof issue === "object" &&
-        Array.isArray((issue as { path?: unknown }).path) &&
-        typeof (issue as { message?: unknown }).message === "string"
-    )
-  ) {
+  if (error && typeof error === "object" && Array.isArray((error as { issues?: unknown }).issues) && (error as { issues: unknown[] }).issues.every((issue) => issue && typeof issue === "object" && Array.isArray((issue as { path?: unknown }).path) && typeof (issue as { message?: unknown }).message === "string")) {
     return (error as { issues: z.ZodIssue[] }).issues;
   }
   return undefined;
@@ -429,11 +545,7 @@ export function resolvePath(pathValue: string, baseDir = process.cwd()): string 
   return isAbsolute(expanded) ? expanded : resolve(baseDir, expanded);
 }
 
-export async function writeFileAtomic(
-  path: string,
-  data: string | Uint8Array,
-  options: { mode?: number } = {}
-): Promise<void> {
+export async function writeFileAtomic(path: string, data: string | Uint8Array, options: { mode?: number } = {}): Promise<void> {
   const parent = dirname(path);
   await mkdir(parent, { recursive: true });
   const temporaryPath = join(parent, `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
@@ -460,6 +572,7 @@ export function defaultStorage(rootDir = "~/.stellar-agent"): StorageConfig {
     walletsDir: `${rootDir}/wallets`,
     policiesDir: `${rootDir}/policies`,
     approvalsDir: `${rootDir}/approvals`,
+    intentsDir: `${rootDir}/intents`,
     scenariosDir: `${rootDir}/scenarios`
   };
 }
@@ -514,13 +627,7 @@ export function mainnetAgentWalletConfigFingerprint(config: StellarAgentConfig):
   return sha256(JSON.stringify(sortJson(clone)));
 }
 
-export function mainnetAgentWalletIntegrityFailures(args: {
-  wallet: MainnetAgentWalletConfig;
-  config: StellarAgentConfig;
-  configPath: string;
-  policyPath: string;
-  policyFingerprint: string;
-}): string[] {
+export function mainnetAgentWalletIntegrityFailures(args: { wallet: MainnetAgentWalletConfig; config: StellarAgentConfig; configPath: string; policyPath: string; policyFingerprint: string }): string[] {
   const failures: string[] = [];
   if (!args.wallet.arming) {
     failures.push("arming_metadata_missing");
@@ -535,16 +642,7 @@ export function mainnetAgentWalletIntegrityFailures(args: {
   return failures;
 }
 
-export function assertMainnetAgentWalletPaymentPreflight(args: {
-  wallet: MainnetAgentWalletConfig;
-  request: PaymentRequest;
-  config: StellarAgentConfig;
-  configPath: string;
-  policyPath: string;
-  policyFingerprint: string;
-  spendHistory: MainnetAgentWalletSpendHistory;
-  balances?: MainnetAgentWalletBalanceLine[] | undefined;
-}): void {
+export function assertMainnetAgentWalletPaymentPreflight(args: { wallet: MainnetAgentWalletConfig; request: PaymentRequest; config: StellarAgentConfig; configPath: string; policyPath: string; policyFingerprint: string; spendHistory: MainnetAgentWalletSpendHistory; balances?: MainnetAgentWalletBalanceLine[] | undefined }): void {
   const { wallet, request } = args;
   if (wallet.status !== "armed") {
     throw new StellarAgentError({
@@ -580,10 +678,7 @@ export function assertMainnetAgentWalletPaymentPreflight(args: {
       docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet"
     });
   }
-  if (
-    wallet.riskBudget.monthlyLimit &&
-    amountGreaterThanForAsset(addAmountValues(args.spendHistory.monthlyTotal ?? "0", amount, request.asset), wallet.riskBudget.monthlyLimit, request.asset)
-  ) {
+  if (wallet.riskBudget.monthlyLimit && amountGreaterThanForAsset(addAmountValues(args.spendHistory.monthlyTotal ?? "0", amount, request.asset), wallet.riskBudget.monthlyLimit, request.asset)) {
     throw new StellarAgentError({
       code: "POLICY_DENIED",
       message: "Mainnet agent-wallet payment would exceed the monthly risk budget.",
@@ -629,12 +724,12 @@ export function assertMainnetAgentWalletRiskBudgetAllows(wallet: MainnetAgentWal
   }
 }
 
-export function assertMainnetAgentWalletBalanceWithinBudget(
-  wallet: MainnetAgentWalletConfig,
-  balances: MainnetAgentWalletBalanceLine[]
-): void {
+export function assertMainnetAgentWalletBalanceWithinBudget(wallet: MainnetAgentWalletConfig, balances: MainnetAgentWalletBalanceLine[]): void {
   if (!wallet.publicKey) {
-    throw new StellarAgentError({ code: "WALLET_NOT_FOUND", message: "Mainnet agent wallet public key is missing." });
+    throw new StellarAgentError({
+      code: "WALLET_NOT_FOUND",
+      message: "Mainnet agent wallet public key is missing."
+    });
   }
   for (const asset of wallet.riskBudget.allowedAssets) {
     const matchingBalances = balances.filter((line) => mainnetAgentWalletAssetAllowed(line.asset, [asset]));
@@ -644,7 +739,11 @@ export function assertMainnetAgentWalletBalanceWithinBudget(
         code: "POLICY_DENIED",
         message: "Mainnet agent-wallet balance exceeds the configured risk budget.",
         docs: "docs/mainnet-safety.md#risk-budgeted-mainnet-agent-wallet",
-        details: { asset: line.asset, balance: line.balance, maxBalance: wallet.riskBudget.maxBalance }
+        details: {
+          asset: line.asset,
+          balance: line.balance,
+          maxBalance: wallet.riskBudget.maxBalance
+        }
       });
     }
   }
@@ -654,7 +753,13 @@ export function mainnetAgentWalletRiskBudgetState(
   wallet: MainnetAgentWalletConfig | undefined,
   before: MainnetAgentWalletSpendHistory,
   payment: PaymentRequest
-): { limits: MainnetAgentWalletRiskBudget; before: MainnetAgentWalletSpendHistory; after: MainnetAgentWalletSpendHistory } | undefined {
+):
+  | {
+      limits: MainnetAgentWalletRiskBudget;
+      before: MainnetAgentWalletSpendHistory;
+      after: MainnetAgentWalletSpendHistory;
+    }
+  | undefined {
   if (!wallet) return undefined;
   return {
     limits: wallet.riskBudget,
@@ -671,19 +776,14 @@ export function mainnetAgentWalletAssetAllowed(asset: string, allowedAssets: str
   });
 }
 
-function incrementMainnetAgentWalletSpendHistory(
-  before: MainnetAgentWalletSpendHistory,
-  payment: PaymentRequest
-): MainnetAgentWalletSpendHistory {
+function incrementMainnetAgentWalletSpendHistory(before: MainnetAgentWalletSpendHistory, payment: PaymentRequest): MainnetAgentWalletSpendHistory {
   const amount = parseAmount(payment.amount, payment.asset).value;
   return {
     ...before,
     dailyTotal: addAmountValues(before.dailyTotal ?? "0", amount, payment.asset),
     monthlyTotal: addAmountValues(before.monthlyTotal ?? "0", amount, payment.asset),
     knownRecipients: Array.from(new Set([...(before.knownRecipients ?? []), payment.destination])),
-    knownDomains: payment.domain
-      ? Array.from(new Set([...(before.knownDomains ?? []), payment.domain]))
-      : before.knownDomains
+    knownDomains: payment.domain ? Array.from(new Set([...(before.knownDomains ?? []), payment.domain])) : before.knownDomains
   };
 }
 
@@ -711,7 +811,11 @@ function sha256(value: string): string {
 function sortJson(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortJson);
   if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, sortJson(child)]));
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, child]) => [key, sortJson(child)])
+  );
 }
 
 export const networkProfileSchema = z.object({
@@ -735,6 +839,7 @@ export const storageConfigSchema = z.object({
   walletsDir: z.string().min(1),
   policiesDir: z.string().min(1),
   approvalsDir: z.string().min(1),
+  intentsDir: z.string().min(1),
   scenariosDir: z.string().min(1)
 });
 
@@ -826,9 +931,7 @@ export const publicWalletSchema = z.object({
 
 export type PublicWallet = z.infer<typeof publicWalletSchema>;
 
-export type WalletPublicView =
-  | Omit<TestnetWallet, "secretKey"> & { hasSecret: true; source: "generated-testnet" }
-  | (PublicWallet & { hasSecret: false });
+export type WalletPublicView = (Omit<TestnetWallet, "secretKey"> & { hasSecret: true; source: "generated-testnet" }) | (PublicWallet & { hasSecret: false });
 
 export const paymentRequestSchema = z.object({
   source: z.string().optional(),
@@ -847,34 +950,19 @@ export type PaymentRequest = z.infer<typeof paymentRequestSchema>;
 const sensitiveKeyPattern = /secret|private|seed|password|api[_-]?key|token/i;
 const secretLikePattern = /\bS[A-Z2-7]{55}\b/g;
 const urlWithQueryPattern = /(https?:\/\/[^\s?#]+)\?([^\s]+)/g;
-const publicTokenMetricKeys = new Set([
-  "expectedTokens",
-  "bTokens",
-  "dTokens",
-  "supplyBTokens",
-  "collateralBTokens",
-  "liabilityDTokens",
-  "claimedTokens"
-]);
+const publicTokenMetricKeys = new Set(["expectedTokens", "bTokens", "dTokens", "supplyBTokens", "collateralBTokens", "liabilityDTokens", "claimedTokens"]);
 const publicSensitiveBooleanKeys = new Set(["secretKeysIncluded", "hasSecret", "secretPrinted"]);
 
 export function redactSensitive<T>(value: T): T {
   if (value === null || value === undefined) return value;
   if (typeof value === "string") {
-    return value
-      .replace(secretLikePattern, "[REDACTED_SECRET_KEY]")
-      .replace(urlWithQueryPattern, "$1?[REDACTED_QUERY]") as T;
+    return value.replace(secretLikePattern, "[REDACTED_SECRET_KEY]").replace(urlWithQueryPattern, "$1?[REDACTED_QUERY]") as T;
   }
   if (Array.isArray(value)) return value.map((item) => redactSensitive(item)) as T;
   if (typeof value === "object") {
     const redacted: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(value)) {
-      redacted[key] =
-        publicSensitiveBooleanKeys.has(key) && typeof child === "boolean"
-          ? child
-          : sensitiveKeyPattern.test(key) && !publicTokenMetricKeys.has(key)
-            ? "[REDACTED]"
-            : redactSensitive(child);
+      redacted[key] = publicSensitiveBooleanKeys.has(key) && typeof child === "boolean" ? child : sensitiveKeyPattern.test(key) && !publicTokenMetricKeys.has(key) ? "[REDACTED]" : redactSensitive(child);
     }
     return redacted as T;
   }
@@ -892,7 +980,10 @@ export function nowIso(): string {
 }
 
 export function makeId(prefix: string): string {
-  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+  const stamp = new Date()
+    .toISOString()
+    .replace(/[-:.TZ]/g, "")
+    .slice(0, 14);
   const random = Math.random().toString(36).slice(2, 8);
   return `${prefix}_${stamp}_${random}`;
 }

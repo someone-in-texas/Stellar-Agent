@@ -10,6 +10,8 @@ import {
   StellarAgentConfig,
   StellarAgentError,
   configSchema,
+  continuationForError,
+  continuationForResult,
   assertMainnetAgentWalletBalanceWithinBudget as assertCoreMainnetAgentWalletBalanceWithinBudget,
   assertMainnetAgentWalletPaymentPreflight,
   createDefaultConfig,
@@ -29,39 +31,9 @@ import {
 import { latestLedger, lookupTransaction, parseStellarCliTransactionHash, resolveNetworkProfile } from "@stellar-agent/stellar";
 import type { LiquidityPoolPreflight, LiquidityPoolSummary } from "@stellar-agent/stellar";
 import type { AquariusLpPreflight, AquariusSwapPreflight, BlendAction, BlendPreflight } from "@stellar-agent/defi";
-import {
-  appendEvent,
-  latestReceipt,
-  listReceipts,
-  readReceipt,
-  spendHistoryFromReceipts,
-  verifyReceipt,
-  writeReceipt
-} from "@stellar-agent/ledger-logger";
-import {
-  DEFAULT_MAINNET_POLICY,
-  DEFAULT_TESTNET_POLICY,
-  Policy,
-  PolicyDecision,
-  defaultPolicyForNetwork,
-  evaluateDefiAquariusRequest,
-  evaluateDefiBlendRequest,
-  evaluateMarketLiquidityRequest,
-  evaluatePaymentRequest,
-  parsePolicyYaml,
-  policyToYaml
-} from "@stellar-agent/policy";
-import {
-  createTestnetHarness,
-  ensureWallet,
-  importPublicWallet,
-  initTestnetWorkspace,
-  listWalletPublicViews,
-  loadWallet,
-  loadWalletPublic,
-  walletBalances,
-  walletTrustlines
-} from "@stellar-agent/testnet-suite";
+import { appendEvent, activeSpendReservations, claimExecutionIntent, createExecutionIntent, findReceiptForIntent, listExecutionIntents, latestReceipt, listReceipts, readReceipt, readExecutionIntent, spendHistoryFromReceipts, transitionExecutionIntent, updateExecutionIntent, verifyReceipt, verifyEventLogChain, verifyReceiptChain, writeReceipt } from "@stellar-agent/ledger-logger";
+import { DEFAULT_MAINNET_POLICY, DEFAULT_TESTNET_POLICY, Policy, PolicyDecision, defaultPolicyForNetwork, evaluateDefiAquariusRequest, evaluateDefiBlendRequest, evaluateMarketLiquidityRequest, evaluatePaymentRequest, parsePolicyYaml, policyToYaml } from "@stellar-agent/policy";
+import { createTestnetHarness, ensureWallet, importPublicWallet, initTestnetWorkspace, listWalletPublicViews, loadWallet, loadWalletPublic, walletBalances, walletTrustlines } from "@stellar-agent/testnet-suite";
 import { Command } from "commander";
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
@@ -147,6 +119,7 @@ Common commands:
   addWalletCommands(program);
   addApprovalCommands(program);
   addTransactionCommands(program);
+  addIntentCommands(program);
   addPayCommands(program);
   addX402Commands(program);
   addDemoCommands(program);
@@ -227,11 +200,7 @@ function optionConsumesValue(command: Command, token: string): boolean {
   return Boolean(option?.required || option?.optional);
 }
 
-function rootVersionOptions(
-  program: Command,
-  argv: CommandParseArgs = process.argv,
-  parseOptions?: CommandParseOptions
-): CliOptions | null {
+function rootVersionOptions(program: Command, argv: CommandParseArgs = process.argv, parseOptions?: CommandParseOptions): CliOptions | null {
   const args = userArgs(argv, parseOptions);
   const commandNames = new Set(program.commands.map((command) => command.name()));
   const rootOptions = new Map(program.options.flatMap((option) => [option.long, option.short].filter(Boolean).map((flag) => [flag, option])));
@@ -336,9 +305,21 @@ function addTestnetCommands(program: Command): void {
     .action(
       withContext(async (context, options: { live?: boolean }) => {
         const checks = [
-          { name: "node", ok: Number(process.versions.node.split(".")[0]) >= 22, detail: process.version },
-          { name: "profile", ok: Boolean(context.config.profiles.testnet), detail: "testnet profile configured" },
-          { name: "storage", ok: Boolean(context.config.storage.rootDir), detail: context.config.storage.rootDir },
+          {
+            name: "node",
+            ok: Number(process.versions.node.split(".")[0]) >= 22,
+            detail: process.version
+          },
+          {
+            name: "profile",
+            ok: Boolean(context.config.profiles.testnet),
+            detail: "testnet profile configured"
+          },
+          {
+            name: "storage",
+            ok: Boolean(context.config.storage.rootDir),
+            detail: context.config.storage.rootDir
+          },
           {
             name: "network",
             ok: options.live ? Boolean(context.config.profiles.testnet?.horizonUrl) : true,
@@ -360,13 +341,10 @@ function addTestnetCommands(program: Command): void {
     .option("--overwrite-policy", "Overwrite the default Testnet policy")
     .action(
       withContext(async (context, options: { fund?: boolean; overwritePolicy?: boolean }) => {
-        const result = await initTestnetWorkspace(
-          context.config,
-          {
-            ...(options.fund === undefined ? {} : { fund: options.fund }),
-            ...(options.overwritePolicy === undefined ? {} : { overwritePolicy: options.overwritePolicy })
-          }
-        );
+        const result = await initTestnetWorkspace(context.config, {
+          ...(options.fund === undefined ? {} : { fund: options.fund }),
+          ...(options.overwritePolicy === undefined ? {} : { overwritePolicy: options.overwritePolicy })
+        });
         if (context.options.config) await writeConfig(context.config, context.options);
         return {
           ...result,
@@ -392,12 +370,7 @@ function addTestnetCommands(program: Command): void {
         return { planned: true, soft: Boolean(options.soft), wallets: Boolean(options.wallets) };
       }, "Reset plan generated.")
     );
-  const friendbot = testnet
-    .command("friendbot")
-    .alias("fund")
-    .description("Fund a Testnet account with Friendbot. Alias: testnet fund.")
-    .option("--account <name>", "Local wallet name", "agent")
-    .option("--address <address>", "Raw Stellar public key");
+  const friendbot = testnet.command("friendbot").alias("fund").description("Fund a Testnet account with Friendbot. Alias: testnet fund.").option("--account <name>", "Local wallet name", "agent").option("--address <address>", "Raw Stellar public key");
   friendbot.action(
     withContext(async (context, options: { account: string; address?: string }) => {
       const { fundWithFriendbot } = await import("@stellar-agent/stellar");
@@ -410,10 +383,13 @@ function addTestnetCommands(program: Command): void {
     .command("create-pair")
     .description("Create local agent and merchant Testnet wallets if missing.")
     .action(
-      withContext(async (context) => ({
-        agent: await ensureWallet(context.config, "agent"),
-        merchant: await ensureWallet(context.config, "merchant")
-      }), "Testnet pair ready.")
+      withContext(
+        async (context) => ({
+          agent: await ensureWallet(context.config, "agent"),
+          merchant: await ensureWallet(context.config, "merchant")
+        }),
+        "Testnet pair ready."
+      )
     );
   testnet
     .command("smoke-test")
@@ -521,9 +497,7 @@ function addTestnetCommands(program: Command): void {
   scenario
     .command("policy-denied")
     .description("Verify a policy denial without signing or submitting.")
-    .action(
-      withContext(async (context) => createTestnetHarness(context.config).runPolicyDeniedScenario(), "Policy-denied scenario complete.")
-    );
+    .action(withContext(async (context) => createTestnetHarness(context.config).runPolicyDeniedScenario(), "Policy-denied scenario complete."));
   scenario
     .command("approval-required")
     .description("Verify approval-required behavior.")
@@ -578,26 +552,25 @@ function addWalletCommands(program: Command): void {
     .command("create")
     .description("Create a Testnet wallet. Mainnet secret storage is not implemented.")
     .option("--fund", "Fund the Testnet wallet with Friendbot after creation")
-    .action(
-      withContext(async (context, options: { fund?: boolean }) => createTestnetWalletResult(context, "agent", Boolean(options.fund)), "Wallet created.")
-    );
+    .action(withContext(async (context, options: { fund?: boolean }) => createTestnetWalletResult(context, "agent", Boolean(options.fund)), "Wallet created."));
   wallet
     .command("create-testnet")
     .description("Create a local Testnet wallet.")
     .argument("[name]", "Wallet name", "agent")
     .option("--fund", "Fund the Testnet wallet with Friendbot after creation")
-    .action(
-      withContext(async (context, name: string, options: { fund?: boolean }) => createTestnetWalletResult(context, name, Boolean(options.fund)), "Testnet wallet created.")
-    );
+    .action(withContext(async (context, name: string, options: { fund?: boolean }) => createTestnetWalletResult(context, name, Boolean(options.fund)), "Testnet wallet created."));
   wallet
     .command("balance")
     .description("Show wallet balances.")
     .option("--account <name>", "Local wallet name", "agent")
     .action(
-      withContext(async (context, options: { account: string }) => ({
-        account: options.account,
-        balances: await walletBalances(context.config, options.account)
-      }), "Wallet balance loaded.")
+      withContext(
+        async (context, options: { account: string }) => ({
+          account: options.account,
+          balances: await walletBalances(context.config, options.account)
+        }),
+        "Wallet balance loaded."
+      )
     );
   wallet
     .command("address")
@@ -606,7 +579,12 @@ function addWalletCommands(program: Command): void {
     .action(
       withContext(async (context, options: { account: string }) => {
         const wallet = await loadWalletPublic(context.config, options.account);
-        return { account: options.account, publicKey: wallet.publicKey, network: wallet.network, hasSecret: wallet.hasSecret };
+        return {
+          account: options.account,
+          publicKey: wallet.publicKey,
+          network: wallet.network,
+          hasSecret: wallet.hasSecret
+        };
       }, "Wallet address loaded.")
     );
   wallet
@@ -639,9 +617,7 @@ function addWalletCommands(program: Command): void {
   wallet
     .command("use-env")
     .description("Report whether STELLAR_SECRET_KEY is configured without printing it.")
-    .action(
-      withContext(async () => ({ configured: Boolean(process.env.STELLAR_SECRET_KEY), secretPrinted: false }), "Environment wallet checked.")
-    );
+    .action(withContext(async () => ({ configured: Boolean(process.env.STELLAR_SECRET_KEY), secretPrinted: false }), "Environment wallet checked."));
   wallet
     .command("status")
     .description("Show local wallet status.")
@@ -678,40 +654,31 @@ function addWalletCommands(program: Command): void {
     .option("--project-id <id>", "WalletConnect project id; defaults to WALLETCONNECT_PROJECT_ID")
     .option("--timeout-ms <ms>", "Pairing timeout in milliseconds", parsePositiveIntegerOption, 120_000)
     .action(
-      withContext(
-        async (context, options: { wallet: "lobstr" | "walletconnect"; projectId?: string; timeoutMs: number }) => {
-          const {
-            closeWalletConnectSignClient,
-            createWalletConnectSignClient,
-            pairWalletConnectSession,
-            walletConnectMetadata,
-            walletConnectSessionView
-          } = await import("@stellar-agent/walletconnect-bridge");
-          const client = await createWalletConnectSignClient({
-            projectId: options.projectId,
-            metadata: walletConnectMetadata(options.wallet),
-            storagePath: walletConnectStoragePath(context)
+      withContext(async (context, options: { wallet: "lobstr" | "walletconnect"; projectId?: string; timeoutMs: number }) => {
+        const { closeWalletConnectSignClient, createWalletConnectSignClient, pairWalletConnectSession, walletConnectMetadata, walletConnectSessionView } = await import("@stellar-agent/walletconnect-bridge");
+        const client = await createWalletConnectSignClient({
+          projectId: options.projectId,
+          metadata: walletConnectMetadata(options.wallet),
+          storagePath: walletConnectStoragePath(context)
+        });
+        try {
+          const session = await pairWalletConnectSession({
+            client,
+            network: context.profileName,
+            timeoutMs: options.timeoutMs,
+            onPairingUri: (uri) => printWalletConnectPairingUri(context.options, uri)
           });
-          try {
-            const session = await pairWalletConnectSession({
-              client,
-              network: context.profileName,
-              timeoutMs: options.timeoutMs,
-              onPairingUri: (uri) => printWalletConnectPairingUri(context.options, uri)
-            });
-            return {
-              wallet: options.wallet,
-              network: context.profileName,
-              session: walletConnectSessionView(session),
-              pairingUriPrinted: true,
-              custody: "external_wallet"
-            };
-          } finally {
-            await closeWalletConnectSignClient(client);
-          }
-        },
-        "WalletConnect session paired."
-      )
+          return {
+            wallet: options.wallet,
+            network: context.profileName,
+            session: walletConnectSessionView(session),
+            pairingUriPrinted: true,
+            custody: "external_wallet"
+          };
+        } finally {
+          await closeWalletConnectSignClient(client);
+        }
+      }, "WalletConnect session paired.")
     );
   walletconnect
     .command("status")
@@ -720,16 +687,18 @@ function addWalletCommands(program: Command): void {
     .option("--project-id <id>", "WalletConnect project id; defaults to WALLETCONNECT_PROJECT_ID")
     .action(
       withContext(async (context, options: { wallet: "lobstr" | "walletconnect"; projectId?: string }) => {
-        const { closeWalletConnectSignClient, createWalletConnectSignClient, listWalletConnectSessions, walletConnectMetadata } = await import(
-          "@stellar-agent/walletconnect-bridge"
-        );
+        const { closeWalletConnectSignClient, createWalletConnectSignClient, listWalletConnectSessions, walletConnectMetadata } = await import("@stellar-agent/walletconnect-bridge");
         const client = await createWalletConnectSignClient({
           projectId: options.projectId,
           metadata: walletConnectMetadata(options.wallet),
           storagePath: walletConnectStoragePath(context)
         });
         try {
-          return { wallet: options.wallet, sessions: listWalletConnectSessions(client), custody: "external_wallet" };
+          return {
+            wallet: options.wallet,
+            sessions: listWalletConnectSessions(client),
+            custody: "external_wallet"
+          };
         } finally {
           await closeWalletConnectSignClient(client);
         }
@@ -743,9 +712,7 @@ function addWalletCommands(program: Command): void {
     .option("--project-id <id>", "WalletConnect project id; defaults to WALLETCONNECT_PROJECT_ID")
     .action(
       withContext(async (context, options: { topic: string; wallet: "lobstr" | "walletconnect"; projectId?: string }) => {
-        const { closeWalletConnectSignClient, createWalletConnectSignClient, disconnectWalletConnectSession, walletConnectMetadata } = await import(
-          "@stellar-agent/walletconnect-bridge"
-        );
+        const { closeWalletConnectSignClient, createWalletConnectSignClient, disconnectWalletConnectSession, walletConnectMetadata } = await import("@stellar-agent/walletconnect-bridge");
         const client = await createWalletConnectSignClient({
           projectId: options.projectId,
           metadata: walletConnectMetadata(options.wallet),
@@ -863,34 +830,31 @@ function addApprovalCommands(program: Command): void {
     .option("--from <account>", "Local source wallet name", "agent")
     .option("--memo <memo>", "Memo")
     .action(
-      withContext(
-        async (context, options: { to: string; amount: string; asset: string; from: string; memo?: string }) => {
-          const { createPaymentApprovalRequest } = await import("@stellar-agent/freighter-bridge");
-          const source = await loadWalletPublic(context.config, options.from);
-          const request = paymentRequestSchema.parse({
-            source: source.publicKey,
-            destination: options.to,
-            amount: options.amount,
-            asset: options.asset,
-            memo: options.memo,
-            network: context.profileName
-          });
-          const approval = await createPaymentApprovalRequest({
-            approvalsDir: context.config.storage.approvalsDir,
-            payment: request
-          });
-          await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
-            event: "approval_requested",
-            status: "pending",
-            command: "approval create-payment",
-            profile: context.profileName,
-            requestId: approval.id,
-            data: approval
-          });
-          return approval;
-        },
-        "Approval request created."
-      )
+      withContext(async (context, options: { to: string; amount: string; asset: string; from: string; memo?: string }) => {
+        const { createPaymentApprovalRequest } = await import("@stellar-agent/freighter-bridge");
+        const source = await loadWalletPublic(context.config, options.from);
+        const request = paymentRequestSchema.parse({
+          source: source.publicKey,
+          destination: options.to,
+          amount: options.amount,
+          asset: options.asset,
+          memo: options.memo,
+          network: context.profileName
+        });
+        const approval = await createPaymentApprovalRequest({
+          approvalsDir: context.config.storage.approvalsDir,
+          payment: request
+        });
+        await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
+          event: "approval_requested",
+          status: "pending",
+          command: "approval create-payment",
+          profile: context.profileName,
+          requestId: approval.id,
+          data: approval
+        });
+        return approval;
+      }, "Approval request created.")
     );
   approval
     .command("create-transaction")
@@ -899,27 +863,24 @@ function addApprovalCommands(program: Command): void {
     .option("--summary <summary>", "Human-readable signing summary", "Approve transaction XDR")
     .option("--network <network>", "Network name: testnet, mainnet, local")
     .action(
-      withContext(
-        async (context, options: { xdr: string; summary: string; network?: NetworkName }) => {
-          const { createTransactionXdrApprovalRequest } = await import("@stellar-agent/freighter-bridge");
-          const approval = await createTransactionXdrApprovalRequest({
-            approvalsDir: context.config.storage.approvalsDir,
-            network: options.network ?? context.profileName,
-            transactionXdr: options.xdr,
-            summary: options.summary
-          });
-          await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
-            event: "approval_requested",
-            status: "pending",
-            command: "approval create-transaction",
-            profile: approval.network,
-            requestId: approval.id,
-            data: approval
-          });
-          return approval;
-        },
-        "Transaction approval request created."
-      )
+      withContext(async (context, options: { xdr: string; summary: string; network?: NetworkName }) => {
+        const { createTransactionXdrApprovalRequest } = await import("@stellar-agent/freighter-bridge");
+        const approval = await createTransactionXdrApprovalRequest({
+          approvalsDir: context.config.storage.approvalsDir,
+          network: options.network ?? context.profileName,
+          transactionXdr: options.xdr,
+          summary: options.summary
+        });
+        await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
+          event: "approval_requested",
+          status: "pending",
+          command: "approval create-transaction",
+          profile: approval.network,
+          requestId: approval.id,
+          data: approval
+        });
+        return approval;
+      }, "Transaction approval request created.")
     );
   approval
     .command("list")
@@ -950,34 +911,47 @@ function addApprovalCommands(program: Command): void {
     .option("--signer-public-key <address>", "Signer public key for signed transaction XDR")
     .option("--signed-transaction-xdr <base64>", "Signed transaction XDR returned by Freighter")
     .action(
-      withContext(async (context, id: string, options: { approve?: boolean; deny?: boolean; reason?: string; signerPublicKey?: string; signedTransactionXdr?: string }) => {
-        const signing = Boolean(options.signedTransactionXdr);
-        if (!signing && Boolean(options.approve) === Boolean(options.deny)) {
-          throw new StellarAgentError({
-            code: "INVALID_INPUT",
-            message: "Pass exactly one of --approve or --deny.",
-            docs: "docs/mainnet-safety.md#local-approval-bridge"
+      withContext(
+        async (
+          context,
+          id: string,
+          options: {
+            approve?: boolean;
+            deny?: boolean;
+            reason?: string;
+            signerPublicKey?: string;
+            signedTransactionXdr?: string;
+          }
+        ) => {
+          const signing = Boolean(options.signedTransactionXdr);
+          if (!signing && Boolean(options.approve) === Boolean(options.deny)) {
+            throw new StellarAgentError({
+              code: "INVALID_INPUT",
+              message: "Pass exactly one of --approve or --deny.",
+              docs: "docs/mainnet-safety.md#local-approval-bridge"
+            });
+          }
+          const { decideApprovalRequest } = await import("@stellar-agent/freighter-bridge");
+          const decided = await decideApprovalRequest({
+            approvalsDir: context.config.storage.approvalsDir,
+            id,
+            approved: signing || Boolean(options.approve),
+            ...(options.reason === undefined ? {} : { reason: options.reason }),
+            ...(options.signerPublicKey === undefined ? {} : { signerPublicKey: options.signerPublicKey }),
+            ...(options.signedTransactionXdr === undefined ? {} : { signedTransactionXdr: options.signedTransactionXdr })
           });
-        }
-        const { decideApprovalRequest } = await import("@stellar-agent/freighter-bridge");
-        const decided = await decideApprovalRequest({
-          approvalsDir: context.config.storage.approvalsDir,
-          id,
-          approved: signing || Boolean(options.approve),
-          ...(options.reason === undefined ? {} : { reason: options.reason }),
-          ...(options.signerPublicKey === undefined ? {} : { signerPublicKey: options.signerPublicKey }),
-          ...(options.signedTransactionXdr === undefined ? {} : { signedTransactionXdr: options.signedTransactionXdr })
-        });
-        await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
-          event: decided.status === "denied" ? "approval_denied" : "approval_granted",
-          status: decided.status,
-          command: "approval decide",
-          profile: context.profileName,
-          requestId: decided.id,
-          data: decided
-        });
-        return decided;
-      }, "Approval request decided.")
+          await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
+            event: decided.status === "denied" ? "approval_denied" : "approval_granted",
+            status: decided.status,
+            command: "approval decide",
+            profile: context.profileName,
+            requestId: decided.id,
+            data: decided
+          });
+          return decided;
+        },
+        "Approval request decided."
+      )
     );
   approval
     .command("sign-walletconnect")
@@ -1002,13 +976,7 @@ function addApprovalCommands(program: Command): void {
           }
         ) => {
           const { decideApprovalRequest, readApprovalRequest } = await import("@stellar-agent/freighter-bridge");
-          const {
-            closeWalletConnectSignClient,
-            createWalletConnectSignClient,
-            signTransactionXdrWithWalletConnect,
-            walletConnectMetadata,
-            walletConnectSessionView
-          } = await import("@stellar-agent/walletconnect-bridge");
+          const { closeWalletConnectSignClient, createWalletConnectSignClient, signTransactionXdrWithWalletConnect, walletConnectMetadata, walletConnectSessionView } = await import("@stellar-agent/walletconnect-bridge");
           const approval = await readApprovalRequest(context.config.storage.approvalsDir, id);
           if (approval.kind !== "transaction_xdr" || !approval.transactionXdr) {
             throw new StellarAgentError({
@@ -1110,9 +1078,7 @@ function addApprovalCommands(program: Command): void {
           sessionIncluded: Boolean(options.token),
           approvalsDir: context.config.storage.approvalsDir,
           startServer: `stellar-agent approval serve --host ${options.host} --port ${options.port}`,
-          note: options.token
-            ? "Open copyUrl in a browser with Freighter installed."
-            : "Run approval serve and pass its session token with --token to include browser API authorization."
+          note: options.token ? "Open copyUrl in a browser with Freighter installed." : "Run approval serve and pass its session token with --token to include browser API authorization."
         };
       }, "Approval bridge URL loaded.")
     );
@@ -1135,9 +1101,7 @@ function addApprovalCommands(program: Command): void {
         allowRemoteAccess: Boolean(options.allowRemoteAccess)
       });
       if (parent.json) {
-        process.stdout.write(
-          `${JSON.stringify(ok({ url: bridge.url, uiUrl: bridge.uiUrl, copyUrl: bridge.copyUrl, authToken: bridge.authToken, approvalsDir: context.config.storage.approvalsDir }))}\n`
-        );
+        process.stdout.write(`${JSON.stringify(ok({ url: bridge.url, uiUrl: bridge.uiUrl, copyUrl: bridge.copyUrl, authToken: bridge.authToken, approvalsDir: context.config.storage.approvalsDir }))}\n`);
       } else {
         process.stdout.write(`Approval bridge listening at ${bridge.url}\n`);
         process.stdout.write(`Approval UI URL: ${bridge.uiUrl}\n`);
@@ -1155,8 +1119,7 @@ function addApprovalCommands(program: Command): void {
 
 function addTransactionCommands(program: Command): void {
   const tx = program.command("tx").description("Build and submit transaction XDR on Testnet or guarded Mainnet.");
-  tx
-    .command("build-payment")
+  tx.command("build-payment")
     .description("Build unsigned payment transaction XDR for browser-wallet signing.")
     .requiredOption("--to <address>", "Destination public key")
     .requiredOption("--amount <amount>", "Payment amount")
@@ -1167,65 +1130,87 @@ function addTransactionCommands(program: Command): void {
     .option("--allow-real-funds", "Permit guarded Mainnet payment-XDR building")
     .option("--i-understand-real-funds", "Acknowledge this payment uses real funds")
     .action(
-      withContext(async (context, options: { to: string; amount: string; asset: string; from: string; memo?: string; feeStrategy: string; allowRealFunds?: boolean; iUnderstandRealFunds?: boolean }) => {
-        const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
-        assertGuardedRealFundsProfile(context, profile, {
-          allowRealFunds: Boolean(options.allowRealFunds),
-          acknowledgeRealFunds: Boolean(options.iUnderstandRealFunds),
-          action: "payment-XDR building"
-        });
-        const { buildPaymentTransactionXdr } = await import("@stellar-agent/stellar");
-        const sourcePublicKey = await resolvePaymentSourcePublicKey(context, options.from, { realFunds: profile.realFunds });
-        const request = paymentRequestSchema.parse({
-          source: sourcePublicKey,
-          destination: options.to,
-          amount: options.amount,
-          asset: options.asset,
-          memo: options.memo,
-          network: profile.name
-        });
-        const policy = await loadPolicy(context);
-        const history = await loadSpendHistory(context, request);
-        const policyDecision = evaluatePaymentRequest(policy, request, history);
-        if (policyDecision.status === "denied") throw policyDeniedError();
-        const mainnetAgentWallet = await assertMainnetAgentWalletPaymentAllowed(context, request);
-        if (profile.realFunds && policyDecision.status === "requires_approval") {
-          throw new StellarAgentError({
-            code: "APPROVAL_REQUIRED",
-            message: "Mainnet payment-XDR building requires a transaction approval request.",
-            hint: "Use tx request-payment-signature so the unsigned XDR is recorded for human approval.",
-            docs: "docs/mainnet-safety.md#signed-xdr-submission"
+      withContext(
+        async (
+          context,
+          options: {
+            to: string;
+            amount: string;
+            asset: string;
+            from: string;
+            memo?: string;
+            feeStrategy: string;
+            allowRealFunds?: boolean;
+            iUnderstandRealFunds?: boolean;
+          }
+        ) => {
+          const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
+          assertGuardedRealFundsProfile(context, profile, {
+            allowRealFunds: Boolean(options.allowRealFunds),
+            acknowledgeRealFunds: Boolean(options.iUnderstandRealFunds),
+            action: "payment-XDR building"
           });
-        }
-        const built = await buildPaymentTransactionXdr({
-          sourcePublicKey,
-          destination: options.to,
-          amount: options.amount,
-          asset: options.asset,
-          ...(options.memo === undefined ? {} : { memo: options.memo }),
-          profile,
-          allowRealFunds: profile.realFunds,
-          feeStrategy: parseFeeStrategy(options.feeStrategy),
-          noCache: context.options.noCache
-        });
-        await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
-          event: "transaction_built",
-          status: "unsigned_payment_xdr",
-          command: "tx build-payment",
-          profile: profile.name,
-          data: { source: sourcePublicKey, destination: options.to, asset: options.asset, amount: built.amount, policyDecision }
-        });
-        return {
-          ...built,
-          policyDecision,
-          spendHistory: mainnetAgentWallet?.spendHistory ?? history,
-          realFunds: profile.realFunds,
-          ...(mainnetAgentWallet === undefined ? {} : { mainnetAgentWallet })
-        };
-      }, "Unsigned payment transaction built.")
+          const { buildPaymentTransactionXdr } = await import("@stellar-agent/stellar");
+          const sourcePublicKey = await resolvePaymentSourcePublicKey(context, options.from, {
+            realFunds: profile.realFunds
+          });
+          const request = paymentRequestSchema.parse({
+            source: sourcePublicKey,
+            destination: options.to,
+            amount: options.amount,
+            asset: options.asset,
+            memo: options.memo,
+            network: profile.name
+          });
+          const policy = await loadPolicy(context);
+          const history = await loadSpendHistory(context, request);
+          const policyDecision = evaluatePaymentRequest(policy, request, history);
+          if (policyDecision.status === "denied") throw policyDeniedError();
+          const mainnetAgentWallet = await assertMainnetAgentWalletPaymentAllowed(context, request);
+          if (profile.realFunds && policyDecision.status === "requires_approval") {
+            throw new StellarAgentError({
+              code: "APPROVAL_REQUIRED",
+              message: "Mainnet payment-XDR building requires a transaction approval request.",
+              hint: "Use tx request-payment-signature so the unsigned XDR is recorded for human approval.",
+              docs: "docs/mainnet-safety.md#signed-xdr-submission"
+            });
+          }
+          const built = await buildPaymentTransactionXdr({
+            sourcePublicKey,
+            destination: options.to,
+            amount: options.amount,
+            asset: options.asset,
+            ...(options.memo === undefined ? {} : { memo: options.memo }),
+            profile,
+            allowRealFunds: profile.realFunds,
+            feeStrategy: parseFeeStrategy(options.feeStrategy),
+            noCache: context.options.noCache
+          });
+          await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
+            event: "transaction_built",
+            status: "unsigned_payment_xdr",
+            command: "tx build-payment",
+            profile: profile.name,
+            data: {
+              source: sourcePublicKey,
+              destination: options.to,
+              asset: options.asset,
+              amount: built.amount,
+              policyDecision
+            }
+          });
+          return {
+            ...built,
+            policyDecision,
+            spendHistory: mainnetAgentWallet?.spendHistory ?? history,
+            realFunds: profile.realFunds,
+            ...(mainnetAgentWallet === undefined ? {} : { mainnetAgentWallet })
+          };
+        },
+        "Unsigned payment transaction built."
+      )
     );
-  tx
-    .command("request-payment-signature")
+  tx.command("request-payment-signature")
     .description("Build unsigned payment XDR and create a local transaction approval request.")
     .requiredOption("--to <address>", "Destination public key")
     .requiredOption("--amount <amount>", "Payment amount")
@@ -1240,7 +1225,17 @@ function addTransactionCommands(program: Command): void {
       withContext(
         async (
           context,
-          options: { to: string; amount: string; asset: string; from: string; memo?: string; summary?: string; feeStrategy: string; allowRealFunds?: boolean; iUnderstandRealFunds?: boolean }
+          options: {
+            to: string;
+            amount: string;
+            asset: string;
+            from: string;
+            memo?: string;
+            summary?: string;
+            feeStrategy: string;
+            allowRealFunds?: boolean;
+            iUnderstandRealFunds?: boolean;
+          }
         ) => {
           const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
           assertGuardedRealFundsProfile(context, profile, {
@@ -1250,7 +1245,9 @@ function addTransactionCommands(program: Command): void {
           });
           const { createTransactionXdrApprovalRequest } = await import("@stellar-agent/freighter-bridge");
           const { buildPaymentTransactionXdr } = await import("@stellar-agent/stellar");
-          const sourcePublicKey = await resolvePaymentSourcePublicKey(context, options.from, { realFunds: profile.realFunds });
+          const sourcePublicKey = await resolvePaymentSourcePublicKey(context, options.from, {
+            realFunds: profile.realFunds
+          });
           const request = paymentRequestSchema.parse({
             source: sourcePublicKey,
             destination: options.to,
@@ -1288,7 +1285,14 @@ function addTransactionCommands(program: Command): void {
             command: "tx request-payment-signature",
             profile: profile.name,
             requestId: approval.id,
-            data: { approval, source: sourcePublicKey, destination: options.to, asset: options.asset, amount: built.amount, policyDecision }
+            data: {
+              approval,
+              source: sourcePublicKey,
+              destination: options.to,
+              asset: options.asset,
+              amount: built.amount,
+              policyDecision
+            }
           });
           return {
             approval,
@@ -1302,50 +1306,102 @@ function addTransactionCommands(program: Command): void {
         "Payment signature approval request created."
       )
     );
-  tx
-    .command("submit-xdr")
+  tx.command("submit-xdr")
     .description("Submit signed transaction XDR to Horizon.")
     .requiredOption("--xdr <base64>", "Signed transaction XDR")
+    .option("--idempotency-key <key>", "Stable caller-provided key for safe submission retries")
     .option("--allow-real-funds", "Permit guarded Mainnet signed-XDR submission")
     .option("--i-understand-real-funds", "Acknowledge this transaction uses real funds")
     .action(
-      withContext(async (context, options: { xdr: string; allowRealFunds?: boolean; iUnderstandRealFunds?: boolean }) => {
-        const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
-        assertGuardedRealFundsProfile(context, profile, {
-          allowRealFunds: Boolean(options.allowRealFunds),
-          acknowledgeRealFunds: Boolean(options.iUnderstandRealFunds),
-          action: "signed-XDR submission"
-        });
-        const { submitTransactionXdr } = await import("@stellar-agent/stellar");
-        const transaction = await submitTransactionXdr({
-          xdr: options.xdr,
-          profile,
-          allowRealFunds: profile.realFunds
-        });
-        await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
-          event: "transaction_confirmed",
-          status: "signed_xdr_submitted",
-          command: "tx submit-xdr",
-          profile: profile.name,
-          data: { transaction }
-        });
-        const receiptPath = await writeSubmittedXdrReceipt(context, {
-          command: "tx submit-xdr",
-          profile,
-          operation: {
-            type: "tx.submit_xdr",
-            details: {
-              source: "external_signed_xdr",
-              realFundsAcknowledged: profile.realFunds
-            }
-          },
-          transaction
-        });
-        return { transaction, receiptPath, realFunds: profile.realFunds };
-      }, "Signed transaction submitted.")
+      withContext(
+        async (
+          context,
+          options: {
+            xdr: string;
+            idempotencyKey?: string;
+            allowRealFunds?: boolean;
+            iUnderstandRealFunds?: boolean;
+          }
+        ) => {
+          const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
+          assertGuardedRealFundsProfile(context, profile, {
+            allowRealFunds: Boolean(options.allowRealFunds),
+            acknowledgeRealFunds: Boolean(options.iUnderstandRealFunds),
+            action: "signed-XDR submission"
+          });
+          const { intent, created } = await createExecutionIntent(context.config.storage.intentsDir, {
+            command: "tx submit-xdr",
+            profile: profile.name,
+            networkPassphrase: profile.networkPassphrase,
+            realFunds: profile.realFunds,
+            operation: {
+              type: "tx.submit_xdr",
+              details: { xdrHash: createHash("sha256").update(options.xdr).digest("hex") }
+            },
+            ...(options.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey })
+          });
+          if (!created && intent.status === "confirmed") return { intent, idempotentReplay: true, receiptPath: intent.receiptPath };
+          if (!created && ["signed", "submitted", "confirmation_unknown"].includes(intent.status)) {
+            throw new StellarAgentError({
+              code: "TRANSACTION_TIMEOUT",
+              message: "This transaction may already have been submitted; reconcile the intent before retrying.",
+              details: {
+                intentId: intent.id,
+                transactionHash: intent.transaction?.hash,
+                changedOnChain: "unknown",
+                safeToRetry: false
+              }
+            });
+          }
+          let executionIntent = await transitionExecutionIntent(context.config.storage.intentsDir, intent.id, "approved");
+          const { submitTransactionXdr } = await import("@stellar-agent/stellar");
+          let transaction;
+          try {
+            transaction = await submitTransactionXdr({
+              xdr: options.xdr,
+              profile,
+              allowRealFunds: profile.realFunds,
+              lifecycle: intentLifecycle(context, intent.id, (next) => {
+                executionIntent = next;
+              })
+            });
+          } catch (error) {
+            await failUnsubmittedIntent(context, intent.id, error);
+            throw error;
+          }
+          executionIntent = await transitionExecutionIntent(context.config.storage.intentsDir, intent.id, "confirmed", { outcome: { changedOnChain: true, safeToRetry: false } });
+          await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
+            event: "transaction_confirmed",
+            status: "signed_xdr_submitted",
+            command: "tx submit-xdr",
+            profile: profile.name,
+            data: { transaction }
+          });
+          const receiptPath = await writeSubmittedXdrReceipt(context, {
+            command: "tx submit-xdr",
+            profile,
+            operation: {
+              type: "tx.submit_xdr",
+              details: {
+                source: "external_signed_xdr",
+                realFundsAcknowledged: profile.realFunds
+              }
+            },
+            transaction,
+            intent: executionIntent
+          });
+          executionIntent = await updateExecutionIntent(context.config.storage.intentsDir, intent.id, (current) => ({ ...current, receiptPath }));
+          return {
+            transaction,
+            receiptPath,
+            intent: executionIntent,
+            realFunds: profile.realFunds
+          };
+        },
+        "Signed transaction submitted."
+      )
     );
-  tx
-    .command("submit-approval")
+  tx.command("submit-approval")
     .description("Submit signed transaction XDR recorded on a local approval request.")
     .argument("<id>", "Approval request id")
     .option("--allow-real-funds", "Permit guarded Mainnet signed approval submission")
@@ -1368,7 +1424,7 @@ function addTransactionCommands(program: Command): void {
             docs: "docs/mainnet-safety.md#signed-xdr-submission"
           });
         }
-        if (approval.status !== "signed" || !approval.decision?.signedTransactionXdr) {
+        if (!["signed", "claimed"].includes(approval.status) || !approval.decision?.signedTransactionXdr) {
           throw new StellarAgentError({
             code: "APPROVAL_REQUIRED",
             message: "Approval request does not contain signed transaction XDR.",
@@ -1383,15 +1439,84 @@ function addTransactionCommands(program: Command): void {
           action: "signed approval submission"
         });
         const approvalPayment = approval.payment;
-        const approvedPayment =
-          approvalPayment === undefined
-            ? undefined
-            : await evaluateApprovedPaymentBeforeSubmission(context, approvalPayment);
+        const { intent, created } = await createExecutionIntent(context.config.storage.intentsDir, {
+          command: "tx submit-approval",
+          profile: profile.name,
+          networkPassphrase: profile.networkPassphrase,
+          realFunds: profile.realFunds,
+          operation: {
+            type: approvalPayment ? "payment" : "tx.submit_approval",
+            ...(approvalPayment?.source === undefined ? {} : { source: approvalPayment.source }),
+            ...(approvalPayment?.destination === undefined ? {} : { destination: approvalPayment.destination }),
+            ...(approvalPayment?.asset === undefined ? {} : { asset: approvalPayment.asset }),
+            ...(approvalPayment?.amount === undefined ? {} : { amount: approvalPayment.amount }),
+            details: { approvalId: approval.id, requestHash: approval.requestHash }
+          },
+          idempotencyKey: `approval:${approval.id}`,
+          ...(approvalPayment === undefined
+            ? {}
+            : {
+                spendReservation: {
+                  asset: approvalPayment.asset,
+                  amount: approvalPayment.amount,
+                  destination: approvalPayment.destination,
+                  ...(approvalPayment.domain === undefined ? {} : { domain: approvalPayment.domain })
+                }
+              })
+        });
+        if (!created && intent.status === "confirmed") return { intent, idempotentReplay: true, receiptPath: intent.receiptPath };
+        if (!created && ["signed", "submitted", "confirmation_unknown"].includes(intent.status)) {
+          throw new StellarAgentError({
+            code: "TRANSACTION_TIMEOUT",
+            message: "This approved transaction may already have been submitted; reconcile the intent before retrying.",
+            details: {
+              intentId: intent.id,
+              transactionHash: intent.transaction?.hash,
+              changedOnChain: "unknown",
+              safeToRetry: false
+            }
+          });
+        }
+        const { claimSignedTransactionApproval, consumeApprovalRequest } = await import("@stellar-agent/freighter-bridge");
+        const claimedApproval = await claimSignedTransactionApproval({
+          approvalsDir: context.config.storage.approvalsDir,
+          approvalId: approval.id,
+          intentId: intent.id
+        });
+        if (profile.realFunds) await verifyClaimedApprovalThreshold(profile, claimedApproval);
+        let executionIntent = await transitionExecutionIntent(context.config.storage.intentsDir, intent.id, "approved", {
+          approval: {
+            id: approval.id,
+            status: "claimed",
+            requestHash: approval.requestHash,
+            ...(approval.expiresAt === undefined ? {} : { expiresAt: approval.expiresAt })
+          }
+        });
+        const approvedPayment = approvalPayment === undefined ? undefined : await evaluateApprovedPaymentBeforeSubmission(context, approvalPayment, intent.id);
         const { submitTransactionXdr } = await import("@stellar-agent/stellar");
-        const transaction = await submitTransactionXdr({
-          xdr: approval.decision.signedTransactionXdr,
-          profile,
-          allowRealFunds: profile.realFunds
+        let transaction;
+        try {
+          transaction = await submitTransactionXdr({
+            xdr: claimedApproval.decision!.signedTransactionXdr!,
+            profile,
+            allowRealFunds: profile.realFunds,
+            lifecycle: intentLifecycle(context, intent.id, (next) => {
+              executionIntent = next;
+            })
+          });
+        } catch (error) {
+          await failUnsubmittedIntent(context, intent.id, error);
+          throw error;
+        }
+        await consumeApprovalRequest({
+          approvalsDir: context.config.storage.approvalsDir,
+          approvalId: approval.id,
+          intentId: intent.id
+        });
+        executionIntent = await transitionExecutionIntent(context.config.storage.intentsDir, intent.id, "confirmed", {
+          ...(executionIntent.spendReservation ? { spendReservation: { ...executionIntent.spendReservation, active: false } } : {}),
+          approval: { ...executionIntent.approval!, status: "consumed" },
+          outcome: { changedOnChain: true, safeToRetry: false }
         });
         await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
           event: "transaction_confirmed",
@@ -1402,7 +1527,8 @@ function addTransactionCommands(program: Command): void {
           data: {
             approvalId: approval.id,
             signerPublicKey: approval.decision.signerPublicKey,
-            transaction
+            transaction,
+            intentId: executionIntent.id
           }
         });
         let receiptPath: string;
@@ -1425,18 +1551,23 @@ function addTransactionCommands(program: Command): void {
             command: "tx submit-approval",
             profile,
             approvalId: approval.id,
-            ...(approval.decision.signerPublicKey === undefined
-              ? {}
-              : { signerPublicKey: approval.decision.signerPublicKey }),
+            ...(approval.decision.signerPublicKey === undefined ? {} : { signerPublicKey: approval.decision.signerPublicKey }),
             payment: approvalPayment,
             policyDecision: approvedPayment.policyDecision,
             transaction,
-            ...(approvedPayment.mainnetAgentWallet === undefined
-              ? {}
-              : { mainnetAgentWallet: approvedPayment.mainnetAgentWallet })
+            intent: executionIntent,
+            ...(approvedPayment.mainnetAgentWallet === undefined ? {} : { mainnetAgentWallet: approvedPayment.mainnetAgentWallet })
           });
         }
-        return { approvalId: approval.id, signerPublicKey: approval.decision.signerPublicKey, transaction, receiptPath, realFunds: profile.realFunds };
+        executionIntent = await updateExecutionIntent(context.config.storage.intentsDir, intent.id, (current) => ({ ...current, receiptPath }));
+        return {
+          approvalId: approval.id,
+          signerPublicKey: approval.decision.signerPublicKey,
+          transaction,
+          receiptPath,
+          intent: executionIntent,
+          realFunds: profile.realFunds
+        };
       }, "Signed approval transaction submitted.")
     );
 }
@@ -1487,117 +1618,335 @@ function addPayCommands(program: Command): void {
     .option("--from <account>", "Local source wallet name", "agent")
     .option("--memo <memo>", "Memo")
     .option("--fee-strategy <strategy>", "Fee strategy: base, low, medium, high, p95", "medium")
+    .option("--idempotency-key <key>", "Stable caller-provided key for safe payment retries")
     .option("--approval-id <id>", "Approved local approval request id")
     .option("--allow-real-funds", "Permit the guarded Mainnet agent-wallet autosign path")
     .option("--i-understand-real-funds", "Acknowledge this payment can spend real Mainnet funds")
     .option("--i-understand-agent-wallet-autosign", "Acknowledge bounded Mainnet agent-wallet autosigning risk")
     .option("--dry-run", "Evaluate locally without submitting")
     .action(
-      withContext(async (context, options: { to: string; amount: string; asset: string; from: string; memo?: string; feeStrategy: string; approvalId?: string; allowRealFunds?: boolean; iUnderstandRealFunds?: boolean; iUnderstandAgentWalletAutosign?: boolean; dryRun?: boolean }) => {
-        if (context.profileName === "mainnet") {
-          return sendMainnetAgentWalletPayment(context, options);
-        }
-        const policy = await loadPolicy(context);
-        const source = await loadWallet(context.config, options.from);
-        const request = paymentRequestSchema.parse({
-          source: source.publicKey,
-          destination: options.to,
-          amount: options.amount,
-          asset: options.asset,
-          memo: options.memo,
-          network: "testnet"
-        });
-        const history = await loadSpendHistory(context, request);
-        const decision = evaluatePaymentRequest(policy, request, history);
-        if (options.dryRun) return { request, policyDecision: decision, spendHistory: history, dryRun: true };
-        if (decision.status === "denied") {
-          throw new StellarAgentError({
-            code: "POLICY_DENIED",
-            message: "Payment request was denied by policy.",
-            hint: "Run policy explain to inspect the matched rules.",
-            docs: "docs/troubleshooting.md#policy-denied"
-          });
-        }
-        if (decision.status === "requires_approval") {
-          const { assertPaymentApproval, createPaymentApprovalRequest } = await import("@stellar-agent/freighter-bridge");
-          if (options.approvalId) {
-            await assertPaymentApproval({
-              approvalsDir: context.config.storage.approvalsDir,
-              approvalId: options.approvalId,
-              payment: request
-            });
-          } else {
-            const approval = await createPaymentApprovalRequest({
-              approvalsDir: context.config.storage.approvalsDir,
-              payment: request
-            });
-            await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
-              event: "approval_requested",
-              status: "pending",
-              command: "pay send",
-              profile: "testnet",
-              requestId: approval.id,
-              data: approval
-            });
-            throw new StellarAgentError({
-              code: "APPROVAL_REQUIRED",
-              message: "Payment requires approval.",
-              hint: `Review approval '${approval.id}', then rerun with --approval-id ${approval.id}.`,
-              docs: "docs/mainnet-safety.md#local-approval-bridge",
-              details: { approvalId: approval.id, approval }
-            });
+      withContext(
+        async (
+          context,
+          options: {
+            to: string;
+            amount: string;
+            asset: string;
+            from: string;
+            memo?: string;
+            feeStrategy: string;
+            idempotencyKey?: string;
+            approvalId?: string;
+            allowRealFunds?: boolean;
+            iUnderstandRealFunds?: boolean;
+            iUnderstandAgentWalletAutosign?: boolean;
+            dryRun?: boolean;
           }
-        }
-        const { sendPayment } = await import("@stellar-agent/stellar");
-        const transaction = await sendPayment({
-          source,
-          destination: options.to,
-          amount: options.amount,
-          asset: options.asset,
-          ...(options.memo === undefined ? {} : { memo: options.memo }),
-          profile: context.config.profiles.testnet,
-          feeStrategy: parseFeeStrategy(options.feeStrategy),
-          noCache: context.options.noCache
-        });
-        const eventLog = join(context.config.storage.logsDir, "events.jsonl");
-        await appendEvent(eventLog, {
-          event: "transaction_confirmed",
-          status: "successful",
-          command: "pay send",
-          profile: "testnet",
-          data: { transaction, source: options.from, destination: options.to, asset: options.asset }
-        });
-        const { path: receiptPath } = await writeReceipt(context.config.storage.receiptsDir, {
-          command: "pay send",
-          profile: "testnet",
-          networkPassphrase: context.config.profiles.testnet.networkPassphrase,
-          realFunds: false,
-          payment: {
+        ) => {
+          if (context.profileName === "mainnet") {
+            return sendMainnetAgentWalletPayment(context, options);
+          }
+          const policy = await loadPolicy(context);
+          const source = await loadWallet(context.config, options.from);
+          const request = paymentRequestSchema.parse({
             source: source.publicKey,
             destination: options.to,
+            amount: options.amount,
             asset: options.asset,
-            amount: request.amount,
-            ...(options.memo === undefined ? {} : { memo: options.memo })
-          },
-          policyDecision: decision,
-          transaction,
-          ...(transaction.ledger === undefined ? {} : { ledger: { confirmedLedger: transaction.ledger } }),
-          eventLog
-        });
-        await appendEvent(eventLog, {
-          event: "receipt_written",
-          status: "success",
-          command: "pay send",
-          profile: "testnet",
-          data: { receiptPath }
-        });
-        return {
-          request,
-          policyDecision: decision,
-          transaction,
-          receiptPath
-        };
-      }, "Payment send complete.")
+            memo: options.memo,
+            network: "testnet"
+          });
+          const boundApproval = options.approvalId ? await (await import("@stellar-agent/freighter-bridge")).readApprovalRequest(context.config.storage.approvalsDir, options.approvalId) : undefined;
+          const intentResult = boundApproval?.boundIntentId
+            ? { intent: await readExecutionIntent(context.config.storage.intentsDir, boundApproval.boundIntentId), created: false }
+            : await createExecutionIntent(context.config.storage.intentsDir, {
+            command: "pay send",
+            profile: "testnet",
+            networkPassphrase: context.config.profiles.testnet.networkPassphrase,
+            realFunds: false,
+            operation: {
+              type: "payment",
+              source: source.publicKey,
+              destination: request.destination,
+              asset: request.asset,
+              amount: request.amount,
+              details: { memo: request.memo }
+            },
+            ...(options.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey }),
+            spendReservation: {
+              asset: request.asset,
+              amount: request.amount,
+              destination: request.destination
+            }
+              });
+          const { intent, created } = intentResult;
+          if (boundApproval?.boundIntentId && (intent.command !== "pay send" || intent.operation.source !== source.publicKey || intent.operation.destination !== request.destination || intent.operation.asset !== request.asset || intent.operation.amount !== request.amount)) {
+            throw new StellarAgentError({ code: "APPROVAL_REQUIRED", message: "Approval is not bound to this exact payment request.", details: { approvalId: options.approvalId, intentId: intent.id } });
+          }
+          if (!created) {
+            if (intent.status === "confirmed") {
+              return {
+                request,
+                intent,
+                transaction: intent.transaction,
+                receiptPath: intent.receiptPath,
+                idempotentReplay: true
+              };
+            }
+            if (["signed", "submitted", "confirmation_unknown"].includes(intent.status)) {
+              throw new StellarAgentError({
+                code: "TRANSACTION_TIMEOUT",
+                message: "A prior attempt may already be on chain; reconcile its durable intent before retrying.",
+                details: {
+                  intentId: intent.id,
+                  hash: intent.transaction?.hash,
+                  changedOnChain: "unknown",
+                  safeToRetry: false
+                }
+              });
+            }
+          }
+          const history = await loadSpendHistory(context, request, intent.id);
+          const decision = evaluatePaymentRequest(policy, request, history);
+          if (options.dryRun) {
+            const cancelled = await transitionExecutionIntent(context.config.storage.intentsDir, intent.id, "cancelled", {
+              policy: { status: decision.status, matchedRules: decision.matchedRules },
+              spendReservation: { ...intent.spendReservation!, active: false },
+              outcome: { changedOnChain: false, safeToRetry: false, reason: "dry_run" }
+            });
+            return {
+              request,
+              policyDecision: decision,
+              spendHistory: history,
+              dryRun: true,
+              intent: cancelled
+            };
+          }
+          let executionIntent = ["policy_checked", "awaiting_approval", "approved"].includes(intent.status)
+            ? intent
+            : await transitionExecutionIntent(context.config.storage.intentsDir, intent.id, "policy_checked", {
+                policy: {
+                  status: decision.status,
+                  fingerprint: createHash("sha256").update(JSON.stringify(policy)).digest("hex"),
+                  matchedRules: decision.matchedRules
+                }
+              });
+          if (decision.status === "denied") {
+            await transitionExecutionIntent(context.config.storage.intentsDir, intent.id, "denied", {
+              spendReservation: { ...executionIntent.spendReservation!, active: false },
+              outcome: { changedOnChain: false, safeToRetry: false, reason: "policy_denied" }
+            });
+            throw new StellarAgentError({
+              code: "POLICY_DENIED",
+              message: "Payment request was denied by policy.",
+              hint: "Run policy explain to inspect the matched rules.",
+              docs: "docs/troubleshooting.md#policy-denied"
+            });
+          }
+          if (decision.status === "requires_approval") {
+            const { claimPaymentApproval, createPaymentApprovalRequest } = await import("@stellar-agent/freighter-bridge");
+            if (options.approvalId) {
+              const approval = await claimPaymentApproval({
+                approvalsDir: context.config.storage.approvalsDir,
+                approvalId: options.approvalId,
+                payment: request,
+                intentId: intent.id
+              });
+              executionIntent = await claimExecutionIntent(context.config.storage.intentsDir, intent.id);
+              executionIntent = await transitionExecutionIntent(context.config.storage.intentsDir, intent.id, "approved", {
+                approval: {
+                  id: approval.id,
+                  status: "claimed",
+                  requestHash: approval.requestHash,
+                  ...(executionIntent.policy?.fingerprint === undefined ? {} : { policyFingerprint: executionIntent.policy.fingerprint }),
+                  ...(approval.expiresAt === undefined ? {} : { expiresAt: approval.expiresAt })
+                }
+              });
+            } else {
+              if (executionIntent.status === "awaiting_approval" && executionIntent.approval?.status === "pending") {
+                throw new StellarAgentError({
+                  code: "APPROVAL_REQUIRED",
+                  message: "Payment is still waiting for its existing approval.",
+                  hint: `Review approval '${executionIntent.approval.id}', then rerun with --approval-id ${executionIntent.approval.id}.`,
+                  details: { approvalId: executionIntent.approval.id, intentId: intent.id, changedOnChain: false, safeToRetry: false }
+                });
+              }
+              executionIntent = await transitionExecutionIntent(context.config.storage.intentsDir, intent.id, "awaiting_approval");
+              const approval = await createPaymentApprovalRequest({
+                approvalsDir: context.config.storage.approvalsDir,
+                payment: request,
+                intentId: intent.id
+              });
+              executionIntent = await updateExecutionIntent(context.config.storage.intentsDir, intent.id, (current) => ({
+                ...current,
+                approval: { id: approval.id, status: "pending", requestHash: approval.requestHash, ...(approval.expiresAt ? { expiresAt: approval.expiresAt } : {}) }
+              }));
+              await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
+                event: "approval_requested",
+                status: "pending",
+                command: "pay send",
+                profile: "testnet",
+                requestId: approval.id,
+                data: approval
+              });
+              throw new StellarAgentError({
+                code: "APPROVAL_REQUIRED",
+                message: "Payment requires approval.",
+                hint: `Review approval '${approval.id}', then rerun with --approval-id ${approval.id}.`,
+                docs: "docs/mainnet-safety.md#local-approval-bridge",
+                details: {
+                  approvalId: approval.id,
+                  approval,
+                  intentId: intent.id,
+                  changedOnChain: false,
+                  safeToRetry: false
+                }
+              });
+            }
+          } else {
+            executionIntent = await claimExecutionIntent(context.config.storage.intentsDir, intent.id);
+            executionIntent = await transitionExecutionIntent(context.config.storage.intentsDir, intent.id, "approved");
+          }
+          const { sendPayment } = await import("@stellar-agent/stellar");
+          let transaction;
+          try {
+            transaction = await sendPayment({
+              source,
+              destination: options.to,
+              amount: options.amount,
+              asset: options.asset,
+              ...(options.memo === undefined ? {} : { memo: options.memo }),
+              profile: context.config.profiles.testnet,
+              feeStrategy: parseFeeStrategy(options.feeStrategy),
+              noCache: context.options.noCache,
+              lifecycle: {
+                onBuilt: async (built) => {
+                  executionIntent = await transitionExecutionIntent(context.config.storage.intentsDir, intent.id, "signed", {
+                    transaction: {
+                      ...(built.source === undefined ? {} : { source: built.source }),
+                      ...(built.sequence === undefined ? {} : { sequence: built.sequence }),
+                      signedXdr: built.signedXdr,
+                      bodyHash: executionIntent.semanticHash,
+                      envelopeHash: built.hash,
+                      hash: built.hash,
+                      ...(built.expiresAt === undefined ? {} : { expiresAt: built.expiresAt })
+                    },
+                    outcome: { changedOnChain: false, safeToRetry: false }
+                  });
+                  if (options.approvalId) {
+                    const { consumeApprovalRequest } = await import("@stellar-agent/freighter-bridge");
+                    await consumeApprovalRequest({
+                      approvalsDir: context.config.storage.approvalsDir,
+                      approvalId: options.approvalId,
+                      intentId: intent.id
+                    });
+                  }
+                },
+                onSubmission: async (attempt) => {
+                  executionIntent = await updateExecutionIntent(context.config.storage.intentsDir, intent.id, (current) => ({
+                    ...current,
+                    status: attempt.status === "transport_unknown" ? "confirmation_unknown" : "submitted",
+                    submission: {
+                      attempts: [...(current.submission?.attempts ?? []), { ...attempt, at: new Date().toISOString() }]
+                    },
+                    outcome: {
+                      changedOnChain: attempt.status === "transport_unknown" ? "unknown" : (current.outcome?.changedOnChain ?? "unknown"),
+                      safeToRetry: false
+                    }
+                  }));
+                }
+              },
+              executionLockPath: sequenceExecutionLockPath(context, "testnet", source.publicKey)
+            });
+          } catch (error) {
+            const serialized = serializeError(error);
+            const details = serialized.details && typeof serialized.details === "object" ? (serialized.details as Record<string, unknown>) : {};
+            const current = await readExecutionIntent(context.config.storage.intentsDir, intent.id);
+            if (current.status !== "confirmation_unknown" && current.status !== "submitted") {
+              await transitionExecutionIntent(context.config.storage.intentsDir, intent.id, "failed", {
+                spendReservation: { ...current.spendReservation!, active: false },
+                outcome: {
+                  changedOnChain: details.changedOnChain === true ? true : false,
+                  safeToRetry: false,
+                  reason: serialized.code
+                }
+              });
+            }
+            if (error instanceof StellarAgentError) {
+              throw new StellarAgentError({
+                code: error.code,
+                message: error.message,
+                ...(error.hint === undefined ? {} : { hint: error.hint }),
+                ...(error.docs === undefined ? {} : { docs: error.docs }),
+                details: { ...(details ?? {}), intentId: intent.id },
+                exitCode: error.exitCode
+              });
+            }
+            throw error;
+          }
+          executionIntent = await transitionExecutionIntent(context.config.storage.intentsDir, intent.id, "confirmed", {
+            spendReservation: { ...executionIntent.spendReservation!, active: false },
+            outcome: { changedOnChain: true, safeToRetry: false }
+          });
+          const eventLog = join(context.config.storage.logsDir, "events.jsonl");
+          await appendEvent(eventLog, {
+            event: "transaction_confirmed",
+            status: "successful",
+            command: "pay send",
+            profile: "testnet",
+            data: {
+              transaction,
+              source: options.from,
+              destination: options.to,
+              asset: options.asset
+            }
+          });
+          const { path: receiptPath } = await writeReceipt(context.config.storage.receiptsDir, {
+            command: "pay send",
+            profile: "testnet",
+            networkPassphrase: context.config.profiles.testnet.networkPassphrase,
+            realFunds: false,
+            payment: {
+              source: source.publicKey,
+              destination: options.to,
+              asset: options.asset,
+              amount: request.amount,
+              ...(options.memo === undefined ? {} : { memo: options.memo })
+            },
+            policyDecision: decision,
+            transaction: {
+              ...transaction,
+              ...(executionIntent.transaction?.bodyHash === undefined ? {} : { bodyHash: executionIntent.transaction.bodyHash }),
+              ...(executionIntent.transaction?.envelopeHash === undefined ? {} : { envelopeHash: executionIntent.transaction.envelopeHash })
+            },
+            ...(transaction.ledger === undefined ? {} : { ledger: { confirmedLedger: transaction.ledger } }),
+            eventLog,
+            intentId: intent.id,
+            ...(executionIntent.idempotencyKeyHash === undefined ? {} : { idempotencyKeyHash: executionIntent.idempotencyKeyHash }),
+            outcome: { status: "confirmed", changedOnChain: true, safeToRetry: false },
+            ...(executionIntent.submission?.attempts === undefined ? {} : { attempts: executionIntent.submission.attempts })
+          });
+          executionIntent = await updateExecutionIntent(context.config.storage.intentsDir, intent.id, (current) => ({
+            ...current,
+            receiptPath
+          }));
+          await appendEvent(eventLog, {
+            event: "receipt_written",
+            status: "success",
+            command: "pay send",
+            profile: "testnet",
+            data: { receiptPath }
+          });
+          return {
+            request,
+            policyDecision: decision,
+            transaction,
+            receiptPath,
+            intent: executionIntent
+          };
+        },
+        "Payment send complete."
+      )
     );
   pay
     .command("batch")
@@ -1608,85 +1957,97 @@ function addPayCommands(program: Command): void {
     .option("--fee-strategy <strategy>", "Fee strategy: base, low, medium, high, p95", "medium")
     .option("--dry-run", "Evaluate locally without submitting")
     .action(
-      withContext(async (context, options: { file: string; from: string; memo?: string; feeStrategy: string; dryRun?: boolean }) => {
-        if (context.profileName === "mainnet") {
-          throw new StellarAgentError({
-            code: "MAINNET_NOT_ENABLED",
-            message: "Mainnet batch payment submission is blocked in v0.",
-            hint: "Use guarded signed-XDR flows for Mainnet; stellar-agent will not auto-sign Mainnet payments.",
-            docs: "docs/mainnet-safety.md"
-          });
-        }
-        const source = await loadWallet(context.config, options.from);
-        const payments = parseBatchPaymentsFile(await readFile(resolvePath(options.file), "utf8"));
-        const policy = await loadPolicy(context);
-        const checked = await evaluateBatchPaymentPolicy(context, {
-          source: source.publicKey,
-          payments,
-          policy,
-          ...(options.memo === undefined ? {} : { memo: options.memo })
-        });
-        if (checked.aggregate.status === "denied") {
-          throw new StellarAgentError({
-            code: "POLICY_DENIED",
-            message: "One or more batch payments were denied by policy.",
-            hint: "Run pay quote for each denied destination and adjust the batch or policy intentionally.",
-            docs: "docs/troubleshooting.md#policy-denied",
-            details: checked
-          });
-        }
-        if (checked.aggregate.status === "requires_approval") {
-          throw new StellarAgentError({
-            code: "APPROVAL_REQUIRED",
-            message: "One or more batch payments require approval.",
-            hint: "Split approval-required payments into explicit pay send approval flows.",
-            docs: "docs/mainnet-safety.md#local-approval-bridge",
-            details: checked
-          });
-        }
-        if (options.dryRun) return { ...checked, dryRun: true };
-        const { sendPaymentBatch } = await import("@stellar-agent/stellar");
-        const transaction = await sendPaymentBatch({
-          source,
-          payments,
-          ...(options.memo === undefined ? {} : { memo: options.memo }),
-          profile: context.config.profiles.testnet,
-          feeStrategy: parseFeeStrategy(options.feeStrategy),
-          noCache: context.options.noCache
-        });
-        const receiptPath = await writeOperationReceipt(context, {
-          command: "pay batch",
-          operation: {
-            type: "pay.batch",
+      withContext(
+        async (
+          context,
+          options: {
+            file: string;
+            from: string;
+            memo?: string;
+            feeStrategy: string;
+            dryRun?: boolean;
+          }
+        ) => {
+          if (context.profileName === "mainnet") {
+            throw new StellarAgentError({
+              code: "MAINNET_NOT_ENABLED",
+              message: "Mainnet batch payment submission is blocked in v0.",
+              hint: "Use guarded signed-XDR flows for Mainnet; stellar-agent will not auto-sign Mainnet payments.",
+              docs: "docs/mainnet-safety.md"
+            });
+          }
+          const source = await loadWallet(context.config, options.from);
+          const payments = parseBatchPaymentsFile(await readFile(resolvePath(options.file), "utf8"));
+          const policy = await loadPolicy(context);
+          const checked = await evaluateBatchPaymentPolicy(context, {
             source: source.publicKey,
-            details: {
-              operationCount: transaction.operationCount,
-              payments: transaction.payments,
-              aggregatePolicyDecision: checked.aggregate
-            }
-          },
-          policyDecision: {
-            status: checked.aggregate.status,
-            network: "testnet",
-            realFunds: false,
-            matchedRules: checked.aggregate.matchedRules,
-            reasons: ["Batch payment policy aggregate."]
-          },
-          transaction
-        });
-        await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
-          event: "transaction_confirmed",
-          status: "batch_successful",
-          command: "pay batch",
-          profile: "testnet",
-          data: { transaction, receiptPath }
-        });
-        return {
-          ...checked,
-          transaction,
-          receiptPath
-        };
-      }, "Batch payment transaction submitted.")
+            payments,
+            policy,
+            ...(options.memo === undefined ? {} : { memo: options.memo })
+          });
+          if (checked.aggregate.status === "denied") {
+            throw new StellarAgentError({
+              code: "POLICY_DENIED",
+              message: "One or more batch payments were denied by policy.",
+              hint: "Run pay quote for each denied destination and adjust the batch or policy intentionally.",
+              docs: "docs/troubleshooting.md#policy-denied",
+              details: checked
+            });
+          }
+          if (checked.aggregate.status === "requires_approval") {
+            throw new StellarAgentError({
+              code: "APPROVAL_REQUIRED",
+              message: "One or more batch payments require approval.",
+              hint: "Split approval-required payments into explicit pay send approval flows.",
+              docs: "docs/mainnet-safety.md#local-approval-bridge",
+              details: checked
+            });
+          }
+          if (options.dryRun) return { ...checked, dryRun: true };
+          const { sendPaymentBatch } = await import("@stellar-agent/stellar");
+          const transaction = await sendPaymentBatch({
+            source,
+            payments,
+            ...(options.memo === undefined ? {} : { memo: options.memo }),
+            profile: context.config.profiles.testnet,
+            feeStrategy: parseFeeStrategy(options.feeStrategy),
+            noCache: context.options.noCache
+          });
+          const receiptPath = await writeOperationReceipt(context, {
+            command: "pay batch",
+            operation: {
+              type: "pay.batch",
+              source: source.publicKey,
+              details: {
+                operationCount: transaction.operationCount,
+                payments: transaction.payments,
+                aggregatePolicyDecision: checked.aggregate
+              }
+            },
+            policyDecision: {
+              status: checked.aggregate.status,
+              network: "testnet",
+              realFunds: false,
+              matchedRules: checked.aggregate.matchedRules,
+              reasons: ["Batch payment policy aggregate."]
+            },
+            transaction
+          });
+          await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
+            event: "transaction_confirmed",
+            status: "batch_successful",
+            command: "pay batch",
+            profile: "testnet",
+            data: { transaction, receiptPath }
+          });
+          return {
+            ...checked,
+            transaction,
+            receiptPath
+          };
+        },
+        "Batch payment transaction submitted."
+      )
     );
   pay
     .command("x402")
@@ -1694,13 +2055,19 @@ function addPayCommands(program: Command): void {
     .argument("<url>", "Paid URL")
     .option("--from <account>", "Local source wallet name", "agent")
     .option("--allow-localhost-demo", "Temporarily allow localhost x402 requirements without editing policy")
+    .option("--idempotency-key <key>", "Stable caller-provided key for safe payment retries")
     .option("--dry-run", "Evaluate the 402 requirement without submitting payment")
     .action(
       withContext(
         async (
           context,
           url: string,
-          options: { from: string; allowLocalhostDemo?: boolean; dryRun?: boolean }
+          options: {
+            from: string;
+            allowLocalhostDemo?: boolean;
+            idempotencyKey?: string;
+            dryRun?: boolean;
+          }
         ) => {
           const { runX402Payment } = await import("@stellar-agent/x402-client");
           const source = await loadWallet(context.config, options.from);
@@ -1714,7 +2081,9 @@ function addPayCommands(program: Command): void {
             receiptsDir: context.config.storage.receiptsDir,
             eventLog: join(context.config.storage.logsDir, "events.jsonl"),
             command: "pay x402",
-            loadSpendHistory: (request) => loadSpendHistory(context, request),
+            intentsDir: context.config.storage.intentsDir,
+            ...(options.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey }),
+            loadSpendHistory: (request, excludeIntentId) => loadSpendHistory(context, request, excludeIntentId),
             ...(options.dryRun === undefined ? {} : { dryRun: options.dryRun })
           });
         },
@@ -1727,13 +2096,19 @@ function addPayCommands(program: Command): void {
     .argument("<url>", "MPP URL")
     .option("--from <account>", "Local source wallet name", "agent")
     .option("--allow-localhost-demo", "Temporarily allow localhost MPP charges without editing policy")
+    .option("--idempotency-key <key>", "Stable caller-provided key for safe payment retries")
     .option("--dry-run", "Evaluate the MPP charge without submitting payment")
     .action(
       withContext(
         async (
           context,
           url: string,
-          options: { from: string; allowLocalhostDemo?: boolean; dryRun?: boolean }
+          options: {
+            from: string;
+            allowLocalhostDemo?: boolean;
+            idempotencyKey?: string;
+            dryRun?: boolean;
+          }
         ) => {
           const { runMppPayment } = await import("@stellar-agent/mpp-client");
           const source = await loadWallet(context.config, options.from);
@@ -1747,7 +2122,9 @@ function addPayCommands(program: Command): void {
             receiptsDir: context.config.storage.receiptsDir,
             eventLog: join(context.config.storage.logsDir, "events.jsonl"),
             command: "pay mpp",
-            loadSpendHistory: (request) => loadSpendHistory(context, request),
+            intentsDir: context.config.storage.intentsDir,
+            ...(options.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey }),
+            loadSpendHistory: (request, excludeIntentId) => loadSpendHistory(context, request, excludeIntentId),
             ...(options.dryRun === undefined ? {} : { dryRun: options.dryRun })
           });
         },
@@ -1761,13 +2138,20 @@ function addPayCommands(program: Command): void {
     .option("--from <account>", "Local source wallet name", "agent")
     .option("--requests <n>", "Number of session requests to perform", parsePositiveIntegerOption, 2)
     .option("--allow-localhost-demo", "Temporarily allow localhost MPP session charges without editing policy")
+    .option("--idempotency-key <key>", "Stable caller-provided key for safe payment retries")
     .option("--dry-run", "Evaluate the MPP session budget without submitting payment")
     .action(
       withContext(
         async (
           context,
           url: string,
-          options: { from: string; requests: number; allowLocalhostDemo?: boolean; dryRun?: boolean }
+          options: {
+            from: string;
+            requests: number;
+            allowLocalhostDemo?: boolean;
+            idempotencyKey?: string;
+            dryRun?: boolean;
+          }
         ) => {
           const { runMppSession } = await import("@stellar-agent/mpp-client");
           const source = await loadWallet(context.config, options.from);
@@ -1782,13 +2166,237 @@ function addPayCommands(program: Command): void {
             eventLog: join(context.config.storage.logsDir, "events.jsonl"),
             command: "pay mpp-session",
             requestCount: options.requests,
-            loadSpendHistory: (request) => loadSpendHistory(context, request),
+            intentsDir: context.config.storage.intentsDir,
+            sessionStateDir: join(context.config.storage.intentsDir, "mpp-sessions"),
+            ...(options.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey }),
+            loadSpendHistory: (request, excludeIntentId) => loadSpendHistory(context, request, excludeIntentId),
             ...(options.dryRun === undefined ? {} : { dryRun: options.dryRun })
           });
         },
         "MPP session complete."
       )
     );
+}
+
+function addIntentCommands(program: Command): void {
+  const intent = program.command("intent").description("Inspect and reconcile durable transaction execution intents.");
+  intent
+    .command("list")
+    .description("List durable execution intents.")
+    .action(
+      withContext(
+        async (context) => ({
+          intents: await listExecutionIntents(context.config.storage.intentsDir)
+        }),
+        "Execution intents listed."
+      )
+    );
+  intent
+    .command("show")
+    .description("Inspect one durable execution intent.")
+    .argument("<id>", "Execution intent id")
+    .action(
+      withContext(
+        async (context, id: string) => ({
+          intent: await readExecutionIntent(context.config.storage.intentsDir, id)
+        }),
+        "Execution intent loaded."
+      )
+    );
+  intent
+    .command("reconcile")
+    .description("Reconcile a signed or submitted intent by transaction hash without resubmitting it.")
+    .argument("<id>", "Execution intent id")
+    .action(
+      withContext(async (context, id: string) => {
+        const current = await readExecutionIntent(context.config.storage.intentsDir, id);
+        const hash = current.transaction?.hash ?? current.transaction?.envelopeHash;
+        if (!hash) {
+          throw new StellarAgentError({
+            code: "INVALID_INPUT",
+            message: "Execution intent has no transaction hash to reconcile.",
+            details: { intentId: id }
+          });
+        }
+        const profile = resolveNetworkProfile(current.profile, context.config.profiles);
+        const { reconcileTransaction } = await import("@stellar-agent/stellar");
+        const reconciliation = await reconcileTransaction({ hash, profile });
+        let updated = current;
+        if (reconciliation.status === "confirmed") {
+          if (updated.status === "signed") {
+            updated = await transitionExecutionIntent(context.config.storage.intentsDir, id, "submitted");
+          }
+          updated = await transitionExecutionIntent(context.config.storage.intentsDir, id, "confirmed", {
+            ...(updated.spendReservation ? { spendReservation: { ...updated.spendReservation, active: false } } : {}),
+            outcome: { changedOnChain: true, safeToRetry: false },
+            submission: {
+              attempts: updated.submission?.attempts ?? [],
+              lastReconciledAt: new Date().toISOString()
+            }
+          });
+          if (!updated.receiptPath) updated = await writeReconciledIntentReceipt(context, updated, reconciliation);
+        } else if (reconciliation.status === "failed") {
+          updated = await transitionExecutionIntent(context.config.storage.intentsDir, id, "failed", {
+            ...(updated.spendReservation ? { spendReservation: { ...updated.spendReservation, active: false } } : {}),
+            outcome: { changedOnChain: true, safeToRetry: false, reason: "ledger_failed" },
+            submission: {
+              attempts: updated.submission?.attempts ?? [],
+              lastReconciledAt: new Date().toISOString()
+            }
+          });
+        } else if (reconciliation.status === "not_found" && updated.transaction?.expiresAt !== undefined && Date.parse(updated.transaction.expiresAt) < Date.now()) {
+          updated = await transitionExecutionIntent(context.config.storage.intentsDir, id, "expired", {
+            ...(updated.spendReservation ? { spendReservation: { ...updated.spendReservation, active: false } } : {}),
+            outcome: {
+              changedOnChain: false,
+              safeToRetry: false,
+              reason: "transaction_expired_not_found"
+            },
+            submission: {
+              attempts: updated.submission?.attempts ?? [],
+              lastReconciledAt: new Date().toISOString()
+            }
+          });
+        } else if (updated.status !== "confirmation_unknown") {
+          updated = await transitionExecutionIntent(context.config.storage.intentsDir, id, "confirmation_unknown", {
+            outcome: {
+              changedOnChain: "unknown",
+              safeToRetry: false,
+              reason: reconciliation.status
+            }
+          });
+        }
+        return {
+          intent: updated,
+          reconciliation,
+          nextActions: updated.status === "confirmation_unknown" ? ["intent.reconcile"] : []
+        };
+      }, "Execution intent reconciled.")
+    );
+  intent
+    .command("resume")
+    .description("Resume a recoverable intent; ambiguous transactions are reconciled without automatic resubmission.")
+    .argument("<id>", "Execution intent id")
+    .action(
+      withContext(async (context, id: string) => {
+        const current = await readExecutionIntent(context.config.storage.intentsDir, id);
+        if (["signed", "submitted", "confirmation_unknown"].includes(current.status) && (current.transaction?.hash || current.transaction?.envelopeHash)) {
+          const profile = resolveNetworkProfile(current.profile, context.config.profiles);
+          const { reconcileTransaction } = await import("@stellar-agent/stellar");
+          const reconciliation = await reconcileTransaction({
+            hash: current.transaction?.hash ?? current.transaction!.envelopeHash!,
+            profile
+          });
+          let updated = current;
+          if (reconciliation.status === "confirmed") {
+            if (updated.status === "signed") updated = await transitionExecutionIntent(context.config.storage.intentsDir, id, "submitted");
+            updated = await transitionExecutionIntent(context.config.storage.intentsDir, id, "confirmed", {
+              ...(updated.spendReservation ? { spendReservation: { ...updated.spendReservation, active: false } } : {}),
+              outcome: { changedOnChain: true, safeToRetry: false }
+            });
+            if (!updated.receiptPath) updated = await writeReconciledIntentReceipt(context, updated, reconciliation);
+          } else if (reconciliation.status === "failed") {
+            updated = await transitionExecutionIntent(context.config.storage.intentsDir, id, "failed", {
+              ...(updated.spendReservation ? { spendReservation: { ...updated.spendReservation, active: false } } : {}),
+              outcome: { changedOnChain: true, safeToRetry: false, reason: "ledger_failed" }
+            });
+          } else if (updated.status !== "confirmation_unknown") {
+            updated = await transitionExecutionIntent(context.config.storage.intentsDir, id, "confirmation_unknown", {
+              outcome: {
+                changedOnChain: "unknown",
+                safeToRetry: false,
+                reason: reconciliation.status
+              }
+            });
+          }
+          return {
+            intent: updated,
+            reconciliation,
+            nextActions: updated.status === "confirmation_unknown" ? ["intent.reconcile"] : []
+          };
+        }
+        return {
+          intent: current,
+          nextActions: current.status === "awaiting_approval" ? ["approval.review"] : current.status === "approved" ? ["signer.sign"] : []
+        };
+      }, "Execution intent resume state inspected.")
+    );
+  intent
+    .command("cancel")
+    .description("Cancel an intent that has not been signed or submitted.")
+    .argument("<id>", "Execution intent id")
+    .action(
+      withContext(async (context, id: string) => {
+        const current = await readExecutionIntent(context.config.storage.intentsDir, id);
+        if (["signed", "submitted", "confirmation_unknown", "confirmed"].includes(current.status)) {
+          throw new StellarAgentError({
+            code: "INVALID_INPUT",
+            message: "Signed or submitted intents cannot be cancelled; reconcile them instead.",
+            details: { intentId: id, status: current.status }
+          });
+        }
+        const updated = await transitionExecutionIntent(context.config.storage.intentsDir, id, "cancelled", {
+          ...(current.spendReservation ? { spendReservation: { ...current.spendReservation, active: false } } : {}),
+          outcome: { changedOnChain: false, safeToRetry: false, reason: "cancelled" }
+        });
+        return { intent: updated };
+      }, "Execution intent cancelled.")
+    );
+}
+
+async function writeReconciledIntentReceipt(context: CliContext, intent: Awaited<ReturnType<typeof readExecutionIntent>>, reconciliation: { hash: string; ledger?: number; transport: "rpc" | "horizon" }) {
+  const existing = await findReceiptForIntent(context.config.storage.receiptsDir, intent.id, reconciliation.hash);
+  if (existing) {
+    return updateExecutionIntent(context.config.storage.intentsDir, intent.id, (current) => ({ ...current, receiptPath: existing.path }));
+  }
+  const eventLog = join(context.config.storage.logsDir, "events.jsonl");
+  const { path } = await writeReceipt(context.config.storage.receiptsDir, {
+    command: `${intent.command} (reconciled)`,
+    profile: intent.profile,
+    networkPassphrase: intent.network.passphrase,
+    realFunds: intent.network.realFunds,
+    operation: intent.operation,
+    policyDecision: {
+      status: intent.policy?.status ?? "allowed",
+      matchedRules: intent.policy?.matchedRules ?? ["reconciled_intent"]
+    },
+    transaction: {
+      hash: reconciliation.hash,
+      successful: true,
+      transport: reconciliation.transport,
+      ...(reconciliation.ledger === undefined ? {} : { ledger: reconciliation.ledger })
+    },
+    ...(reconciliation.ledger === undefined ? {} : { ledger: { confirmedLedger: reconciliation.ledger } }),
+    eventLog,
+    intentId: intent.id,
+    ...(intent.idempotencyKeyHash === undefined ? {} : { idempotencyKeyHash: intent.idempotencyKeyHash }),
+    outcome: { status: "confirmed", changedOnChain: true, safeToRetry: false },
+    ...(intent.submission?.attempts === undefined ? {} : { attempts: intent.submission.attempts })
+  });
+  return updateExecutionIntent(context.config.storage.intentsDir, intent.id, (current) => ({
+    ...current,
+    receiptPath: path
+  }));
+}
+
+async function verifyClaimedApprovalThreshold(profile: NetworkProfile, approval: { payment?: PaymentRequest; decision?: { signedTransactionXdr?: string } }): Promise<void> {
+  const source = approval.payment?.source;
+  const signedTransactionXdr = approval.decision?.signedTransactionXdr;
+  if (!source || !signedTransactionXdr || !profile.horizonUrl) {
+    throw new StellarAgentError({ code: "APPROVAL_DENIED", message: "Mainnet approval threshold verification requires payment source metadata, signed XDR, and Horizon." });
+  }
+  const response = await fetch(`${profile.horizonUrl.replace(/\/$/, "")}/accounts/${source}`, { signal: AbortSignal.timeout(15_000) });
+  if (!response.ok) throw new StellarAgentError({ code: "APPROVAL_DENIED", message: "Could not load the Mainnet source account to verify its signer threshold." });
+  const account = (await response.json()) as { signers?: Array<{ key?: string; weight?: number; type?: string }>; thresholds?: { med_threshold?: number } };
+  const signerWeights = (account.signers ?? [])
+    .filter((signer) => signer.type === "ed25519_public_key" && typeof signer.key === "string" && Number.isInteger(signer.weight))
+    .map((signer) => ({ publicKey: signer.key!, weight: signer.weight! }));
+  const requiredWeight = account.thresholds?.med_threshold;
+  if (!Number.isInteger(requiredWeight) || requiredWeight! < 1 || signerWeights.length === 0) {
+    throw new StellarAgentError({ code: "APPROVAL_DENIED", message: "Mainnet source account signer thresholds are missing or unsupported." });
+  }
+  const { assertSignedTransactionMeetsThreshold } = await import("@stellar-agent/freighter-bridge");
+  assertSignedTransactionMeetsThreshold({ signedTransactionXdr, network: profile.name, signerWeights, requiredWeight: requiredWeight! });
 }
 
 function addX402Commands(program: Command): void {
@@ -1849,16 +2457,8 @@ function addDemoCommands(program: Command): void {
           files: Object.keys(files),
           network: "testnet",
           realFunds: false,
-          commands: [
-            `X402_DESTINATION=G... npm --prefix ${outDir} start`,
-            "stellar-agent pay x402 http://127.0.0.1:8787/paid-report --allow-localhost-demo --json",
-            "stellar-agent receipts latest --json"
-          ],
-          safety: [
-            "Uses Testnet payment requirements only.",
-            "The generated server verifies X-Payment proofs through Testnet Horizon.",
-            "Production facilitator-backed x402 remains future work."
-          ]
+          commands: [`X402_DESTINATION=G... npm --prefix ${outDir} start`, "stellar-agent pay x402 http://127.0.0.1:8787/paid-report --allow-localhost-demo --json", "stellar-agent receipts latest --json"],
+          safety: ["Uses Testnet payment requirements only.", "The generated server verifies X-Payment proofs through Testnet Horizon.", "Production facilitator-backed x402 remains future work."]
         };
       }, "x402 demo bundle created.")
     );
@@ -1871,56 +2471,45 @@ function addDemoCommands(program: Command): void {
     .option("--amount <amount>", "Payment amount", "1")
     .option("--asset <asset>", "Payment asset", "XLM")
     .action(
-      withContext(
-        async (context, options: { from: string; to: string; amount: string; asset: string }) => {
-          if (context.profileName !== "testnet") {
-            throw new StellarAgentError({
-              code: "MAINNET_NOT_ENABLED",
-              message: "Demo approval flow runs only on the Testnet profile.",
-              docs: "docs/mainnet-safety.md"
-            });
-          }
-          const { createPaymentApprovalRequest } = await import("@stellar-agent/freighter-bridge");
-          const source = await loadWalletPublic(context.config, options.from);
-          const payment = paymentRequestSchema.parse({
-            source: source.publicKey,
-            destination: options.to,
-            amount: options.amount,
-            asset: options.asset,
-            network: "testnet"
+      withContext(async (context, options: { from: string; to: string; amount: string; asset: string }) => {
+        if (context.profileName !== "testnet") {
+          throw new StellarAgentError({
+            code: "MAINNET_NOT_ENABLED",
+            message: "Demo approval flow runs only on the Testnet profile.",
+            docs: "docs/mainnet-safety.md"
           });
-          const approval = await createPaymentApprovalRequest({
-            approvalsDir: context.config.storage.approvalsDir,
-            payment,
-            summary: `Demo approval for ${payment.amount} ${payment.asset}`
-          });
-          await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
-            event: "approval_requested",
-            status: "pending",
-            command: "demo approval-flow",
-            profile: "testnet",
-            requestId: approval.id,
-            data: approval
-          });
-          return {
-            demo: "approval-flow",
-            network: "testnet",
-            realFunds: false,
-            approval,
-            commands: [
-              "stellar-agent approval serve",
-              `stellar-agent approval decide ${approval.id} --approve --json`,
-              `stellar-agent pay send --to ${payment.destination} --amount ${payment.amount} --asset ${payment.asset} --approval-id ${approval.id} --json`,
-              "stellar-agent receipts latest --json"
-            ],
-            safety: [
-              "Creates an approval request only; it does not sign or submit a transaction.",
-              "Payment submission still runs policy checks and requires the explicit approval id."
-            ]
-          };
-        },
-        "Approval-flow demo request created."
-      )
+        }
+        const { createPaymentApprovalRequest } = await import("@stellar-agent/freighter-bridge");
+        const source = await loadWalletPublic(context.config, options.from);
+        const payment = paymentRequestSchema.parse({
+          source: source.publicKey,
+          destination: options.to,
+          amount: options.amount,
+          asset: options.asset,
+          network: "testnet"
+        });
+        const approval = await createPaymentApprovalRequest({
+          approvalsDir: context.config.storage.approvalsDir,
+          payment,
+          summary: `Demo approval for ${payment.amount} ${payment.asset}`
+        });
+        await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
+          event: "approval_requested",
+          status: "pending",
+          command: "demo approval-flow",
+          profile: "testnet",
+          requestId: approval.id,
+          data: approval
+        });
+        return {
+          demo: "approval-flow",
+          network: "testnet",
+          realFunds: false,
+          approval,
+          commands: ["stellar-agent approval serve", `stellar-agent approval decide ${approval.id} --approve --json`, `stellar-agent pay send --to ${payment.destination} --amount ${payment.amount} --asset ${payment.asset} --approval-id ${approval.id} --json`, "stellar-agent receipts latest --json"],
+          safety: ["Creates an approval request only; it does not sign or submit a transaction.", "Payment submission still runs policy checks and requires the explicit approval id."]
+        };
+      }, "Approval-flow demo request created.")
     );
 
   demo
@@ -1953,17 +2542,8 @@ function addDemoCommands(program: Command): void {
               contractId: asset.contractId
             }))
           },
-          commands: [
-            "stellar-agent market pools list --network testnet --limit 5 --json",
-            "stellar-agent market lp preflight --pool <pool-id> --action deposit --max-a 0.01 --max-b 0.01 --min-price 0.9 --max-price 1.1 --json",
-            "stellar-agent defi aquarius deployments --network testnet --pools --limit 5 --json",
-            "stellar-agent defi aquarius swap preflight --from XLM --to AQUA --amount 0.01 --slippage-bps 100 --json"
-          ],
-          safety: [
-            "The bundle is preflight-oriented and does not sign or submit liquidity or Aquarius transactions.",
-            "Re-run preflight immediately before any later human-approved mutation.",
-            "Aquarius commands remain read-only or preflight-only in this release."
-          ]
+          commands: ["stellar-agent market pools list --network testnet --limit 5 --json", "stellar-agent market lp preflight --pool <pool-id> --action deposit --max-a 0.01 --max-b 0.01 --min-price 0.9 --max-price 1.1 --json", "stellar-agent defi aquarius deployments --network testnet --pools --limit 5 --json", "stellar-agent defi aquarius swap preflight --from XLM --to AQUA --amount 0.01 --slippage-bps 100 --json"],
+          safety: ["The bundle is preflight-oriented and does not sign or submit liquidity or Aquarius transactions.", "Re-run preflight immediately before any later human-approved mutation.", "Aquarius commands remain read-only or preflight-only in this release."]
         };
       }, "Market and Aquarius demo bundle loaded.")
     );
@@ -1982,41 +2562,55 @@ function addClaimableCommands(program: Command): void {
     .option("--claimable-after <time>", "Only allow claiming at or after this Unix timestamp or ISO date/time")
     .option("--claimable-before <time>", "Only allow claiming before this Unix timestamp or ISO date/time")
     .action(
-      withContext(async (context, options: { to: string; amount: string; asset: string; from: string; claimant: string[]; claimableAfter?: string; claimableBefore?: string }) => {
-        const { createClaimableBalance } = await import("@stellar-agent/stellar");
-        const source = await loadWallet(context.config, options.from);
-        const result = await createClaimableBalance({
-          source,
-          claimant: options.to,
-          claimants: options.claimant,
-          amount: options.amount,
-          asset: options.asset,
-          ...(options.claimableAfter === undefined ? {} : { claimableAfter: options.claimableAfter }),
-          ...(options.claimableBefore === undefined ? {} : { claimableBefore: options.claimableBefore }),
-          profile: context.config.profiles.testnet
-        });
-        await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
-          event: "transaction_confirmed",
-          status: "claimable_created",
-          command: "claimable create",
-          profile: "testnet",
-          data: result
-        });
-        const receiptPath = await writeOperationReceipt(context, {
-          command: "claimable create",
-          operation: {
-            type: "claimable.create",
-            source: source.publicKey,
-            claimant: result.claimant,
-            claimants: result.claimants,
-            asset: result.asset,
-            amount: result.amount,
-            predicate: result.predicate
-          },
-          transaction: result
-        });
-        return { ...result, receiptPath };
-      }, "Claimable balance created.")
+      withContext(
+        async (
+          context,
+          options: {
+            to: string;
+            amount: string;
+            asset: string;
+            from: string;
+            claimant: string[];
+            claimableAfter?: string;
+            claimableBefore?: string;
+          }
+        ) => {
+          const { createClaimableBalance } = await import("@stellar-agent/stellar");
+          const source = await loadWallet(context.config, options.from);
+          const result = await createClaimableBalance({
+            source,
+            claimant: options.to,
+            claimants: options.claimant,
+            amount: options.amount,
+            asset: options.asset,
+            ...(options.claimableAfter === undefined ? {} : { claimableAfter: options.claimableAfter }),
+            ...(options.claimableBefore === undefined ? {} : { claimableBefore: options.claimableBefore }),
+            profile: context.config.profiles.testnet
+          });
+          await appendEvent(join(context.config.storage.logsDir, "events.jsonl"), {
+            event: "transaction_confirmed",
+            status: "claimable_created",
+            command: "claimable create",
+            profile: "testnet",
+            data: result
+          });
+          const receiptPath = await writeOperationReceipt(context, {
+            command: "claimable create",
+            operation: {
+              type: "claimable.create",
+              source: source.publicKey,
+              claimant: result.claimant,
+              claimants: result.claimants,
+              asset: result.asset,
+              amount: result.amount,
+              predicate: result.predicate
+            },
+            transaction: result
+          });
+          return { ...result, receiptPath };
+        },
+        "Claimable balance created."
+      )
     );
   claimable
     .command("list")
@@ -2034,7 +2628,10 @@ function addClaimableCommands(program: Command): void {
             docs: "docs/claimable-balances.md"
           });
         }
-        return { address, claimableBalances: await listClaimableBalances(address, context.config.profiles.testnet) };
+        return {
+          address,
+          claimableBalances: await listClaimableBalances(address, context.config.profiles.testnet)
+        };
       }, "Claimable balances listed.")
     );
   claimable
@@ -2121,7 +2718,9 @@ function addContractCommands(program: Command): void {
             allowRealFunds: Boolean(options.allowRealFunds),
             acknowledgeRealFunds: Boolean(options.iUnderstandRealFunds)
           });
-          const source = await resolveContractSource(context, options.source, { realFunds: contractContext.realFunds });
+          const source = await resolveContractSource(context, options.source, {
+            realFunds: contractContext.realFunds
+          });
           const contractArgs = parseKeyValueArgs(options.arg);
           const result = await invokeContractWithStellarCli({
             contractId: options.id,
@@ -2198,7 +2797,9 @@ function addContractCommands(program: Command): void {
             allowRealFunds: Boolean(options.allowRealFunds),
             acknowledgeRealFunds: Boolean(options.iUnderstandRealFunds)
           });
-          const source = await resolveContractSource(context, options.source, { realFunds: contractContext.realFunds });
+          const source = await resolveContractSource(context, options.source, {
+            realFunds: contractContext.realFunds
+          });
           const constructorArgs = parseKeyValueArgs(options.arg);
           const result = await deployContractWithStellarCli({
             source,
@@ -2246,14 +2847,28 @@ function addContractCommands(program: Command): void {
     .option("--stellar-no-cache", "Pass --no-cache to Stellar CLI")
     .action(
       withContext(
-        async (context, options: { source: string; wasm: string; network: string; allowRealFunds?: boolean; iUnderstandRealFunds?: boolean; stellarBinary: string; stellarConfigDir?: string; stellarNoCache?: boolean }) => {
+        async (
+          context,
+          options: {
+            source: string;
+            wasm: string;
+            network: string;
+            allowRealFunds?: boolean;
+            iUnderstandRealFunds?: boolean;
+            stellarBinary: string;
+            stellarConfigDir?: string;
+            stellarNoCache?: boolean;
+          }
+        ) => {
           const { uploadContractWasmWithStellarCli } = await import("@stellar-agent/stellar");
           const contractContext = resolveContractExecutionContext(context, options.network, {
             mutating: true,
             allowRealFunds: Boolean(options.allowRealFunds),
             acknowledgeRealFunds: Boolean(options.iUnderstandRealFunds)
           });
-          const source = await resolveContractSource(context, options.source, { realFunds: contractContext.realFunds });
+          const source = await resolveContractSource(context, options.source, {
+            realFunds: contractContext.realFunds
+          });
           const result = await uploadContractWasmWithStellarCli({
             source,
             wasm: options.wasm,
@@ -2297,7 +2912,17 @@ function addContractCommands(program: Command): void {
       withContext(
         async (
           context,
-          options: { source: string; asset: string; alias?: string; network: string; allowRealFunds?: boolean; iUnderstandRealFunds?: boolean; stellarBinary: string; stellarConfigDir?: string; stellarNoCache?: boolean }
+          options: {
+            source: string;
+            asset: string;
+            alias?: string;
+            network: string;
+            allowRealFunds?: boolean;
+            iUnderstandRealFunds?: boolean;
+            stellarBinary: string;
+            stellarConfigDir?: string;
+            stellarNoCache?: boolean;
+          }
         ) => {
           const { deployAssetContractWithStellarCli } = await import("@stellar-agent/stellar");
           const contractContext = resolveContractExecutionContext(context, options.network, {
@@ -2305,7 +2930,9 @@ function addContractCommands(program: Command): void {
             allowRealFunds: Boolean(options.allowRealFunds),
             acknowledgeRealFunds: Boolean(options.iUnderstandRealFunds)
           });
-          const source = await resolveContractSource(context, options.source, { realFunds: contractContext.realFunds });
+          const source = await resolveContractSource(context, options.source, {
+            realFunds: contractContext.realFunds
+          });
           const result = await deployAssetContractWithStellarCli({
             source,
             asset: options.asset,
@@ -2347,10 +2974,18 @@ function addContractCommands(program: Command): void {
       withContext(
         async (
           context,
-          options: { asset: string; network: string; stellarBinary: string; stellarConfigDir?: string; stellarNoCache?: boolean }
+          options: {
+            asset: string;
+            network: string;
+            stellarBinary: string;
+            stellarConfigDir?: string;
+            stellarNoCache?: boolean;
+          }
         ) => {
           const { assetContractIdWithStellarCli } = await import("@stellar-agent/stellar");
-          const contractContext = resolveContractExecutionContext(context, options.network, { mutating: false });
+          const contractContext = resolveContractExecutionContext(context, options.network, {
+            mutating: false
+          });
           return assetContractIdWithStellarCli({
             asset: options.asset,
             network: options.network,
@@ -2405,7 +3040,9 @@ function addContractCommands(program: Command): void {
             });
           }
           const { contractInfoWithStellarCli } = await import("@stellar-agent/stellar");
-          const contractContext = resolveContractExecutionContext(context, options.network, { mutating: false });
+          const contractContext = resolveContractExecutionContext(context, options.network, {
+            mutating: false
+          });
           return contractInfoWithStellarCli({
             kind: options.kind,
             ...(options.id === undefined ? {} : { contractId: options.id }),
@@ -2457,7 +3094,9 @@ function addContractCommands(program: Command): void {
           validateDurability(options.durability);
           validateContractReadOutput(options.output);
           const { readContractWithStellarCli } = await import("@stellar-agent/stellar");
-          const contractContext = resolveContractExecutionContext(context, options.network, { mutating: false });
+          const contractContext = resolveContractExecutionContext(context, options.network, {
+            mutating: false
+          });
           return readContractWithStellarCli({
             ...(options.id === undefined ? {} : { contractId: options.id }),
             ...(options.key === undefined ? {} : { key: options.key }),
@@ -2509,7 +3148,9 @@ function addContractCommands(program: Command): void {
             });
           }
           const { fetchContractWasmWithStellarCli } = await import("@stellar-agent/stellar");
-          const contractContext = resolveContractExecutionContext(context, options.network, { mutating: false });
+          const contractContext = resolveContractExecutionContext(context, options.network, {
+            mutating: false
+          });
           return fetchContractWasmWithStellarCli({
             ...(options.id === undefined ? {} : { contractId: options.id }),
             ...(options.wasmHash === undefined ? {} : { wasmHash: options.wasmHash }),
@@ -2572,7 +3213,9 @@ function addContractCommands(program: Command): void {
             allowRealFunds: Boolean(options.allowRealFunds),
             acknowledgeRealFunds: Boolean(options.iUnderstandRealFunds)
           });
-          const source = await resolveContractSource(context, options.source, { realFunds: contractContext.realFunds });
+          const source = await resolveContractSource(context, options.source, {
+            realFunds: contractContext.realFunds
+          });
           const result = await extendContractWithStellarCli({
             source,
             ledgersToExtend: options.ledgersToExtend,
@@ -2656,7 +3299,9 @@ function addContractCommands(program: Command): void {
             allowRealFunds: Boolean(options.allowRealFunds),
             acknowledgeRealFunds: Boolean(options.iUnderstandRealFunds)
           });
-          const source = await resolveContractSource(context, options.source, { realFunds: contractContext.realFunds });
+          const source = await resolveContractSource(context, options.source, {
+            realFunds: contractContext.realFunds
+          });
           const result = await restoreContractWithStellarCli({
             source,
             ...(options.id === undefined ? {} : { contractId: options.id }),
@@ -2708,24 +3353,36 @@ function addMarketCommands(program: Command): void {
     .option("--network <name>", "Network profile to inspect: testnet or mainnet")
     .option("--limit <n>", "Number of records", parseIntegerOption, 10)
     .action(
-      withContext(async (context, options: { assetA?: string; assetB?: string; account?: string; network?: string; limit: number }) => {
-        if (Boolean(options.assetA) !== Boolean(options.assetB)) {
-          throw new StellarAgentError({
-            code: "INVALID_INPUT",
-            message: "Pool asset filtering requires both --asset-a and --asset-b.",
-            docs: "docs/market-liquidity.md#core-pool-inspection"
+      withContext(
+        async (
+          context,
+          options: {
+            assetA?: string;
+            assetB?: string;
+            account?: string;
+            network?: string;
+            limit: number;
+          }
+        ) => {
+          if (Boolean(options.assetA) !== Boolean(options.assetB)) {
+            throw new StellarAgentError({
+              code: "INVALID_INPUT",
+              message: "Pool asset filtering requires both --asset-a and --asset-b.",
+              docs: "docs/market-liquidity.md#core-pool-inspection"
+            });
+          }
+          const { listLiquidityPools } = await import("@stellar-agent/stellar");
+          const profile = resolveMarketProfile(context, options.network);
+          return listLiquidityPools({
+            profile,
+            ...(options.assetA === undefined ? {} : { assetA: options.assetA }),
+            ...(options.assetB === undefined ? {} : { assetB: options.assetB }),
+            ...(options.account === undefined ? {} : { account: await resolvePublicAccount(context, options.account) }),
+            limit: options.limit
           });
-        }
-        const { listLiquidityPools } = await import("@stellar-agent/stellar");
-        const profile = resolveMarketProfile(context, options.network);
-        return listLiquidityPools({
-          profile,
-          ...(options.assetA === undefined ? {} : { assetA: options.assetA }),
-          ...(options.assetB === undefined ? {} : { assetB: options.assetB }),
-          ...(options.account === undefined ? {} : { account: await resolvePublicAccount(context, options.account) }),
-          limit: options.limit
-        });
-      }, "Liquidity pools listed.")
+        },
+        "Liquidity pools listed."
+      )
     );
 
   const pool = market.command("pool").description("Inspect one core Stellar AMM liquidity pool.");
@@ -2737,7 +3394,10 @@ function addMarketCommands(program: Command): void {
     .action(
       withContext(async (context, options: { pool: string; network?: string }) => {
         const { inspectLiquidityPool } = await import("@stellar-agent/stellar");
-        return inspectLiquidityPool({ poolId: options.pool, profile: resolveMarketProfile(context, options.network) });
+        return inspectLiquidityPool({
+          poolId: options.pool,
+          profile: resolveMarketProfile(context, options.network)
+        });
       }, "Liquidity pool inspected.")
     );
   pool
@@ -2749,7 +3409,11 @@ function addMarketCommands(program: Command): void {
     .action(
       withContext(async (context, options: { pool: string; network?: string; limit: number }) => {
         const { liquidityPoolTrades } = await import("@stellar-agent/stellar");
-        return liquidityPoolTrades({ poolId: options.pool, profile: resolveMarketProfile(context, options.network), limit: options.limit });
+        return liquidityPoolTrades({
+          poolId: options.pool,
+          profile: resolveMarketProfile(context, options.network),
+          limit: options.limit
+        });
       }, "Liquidity pool trades loaded.")
     );
   pool
@@ -2770,8 +3434,7 @@ function addMarketCommands(program: Command): void {
     );
 
   const lp = market.command("lp").description("Preflight and submit guarded core Stellar liquidity pool actions.");
-  lp
-    .command("preflight")
+  lp.command("preflight")
     .description("Preflight a core liquidity pool deposit or withdrawal with policy context.")
     .requiredOption("--pool <poolId>", "Liquidity pool id")
     .option("--account <account>", "Local wallet name or public key", "agent")
@@ -2793,8 +3456,7 @@ function addMarketCommands(program: Command): void {
         return { policyDecision, preflight };
       }, "Liquidity pool preflight complete.")
     );
-  lp
-    .command("deposit")
+  lp.command("deposit")
     .description("Submit a guarded Testnet core liquidity pool deposit.")
     .requiredOption("--pool <poolId>", "Liquidity pool id")
     .requiredOption("--max-a <amount>", "Deposit max amount for reserve A")
@@ -2805,11 +3467,14 @@ function addMarketCommands(program: Command): void {
     .option("--fee-strategy <strategy>", "Fee strategy: base, low, medium, high, p95", parseFeeStrategy, "medium")
     .action(
       withContext(async (context, options: LiquidityDepositOptions) => {
-        return runLiquiditySubmitCommand(context, { command: "market lp deposit", action: "deposit", ...options });
+        return runLiquiditySubmitCommand(context, {
+          command: "market lp deposit",
+          action: "deposit",
+          ...options
+        });
       }, "Liquidity pool deposit submitted.")
     );
-  lp
-    .command("withdraw")
+  lp.command("withdraw")
     .description("Submit a guarded Testnet core liquidity pool withdrawal.")
     .requiredOption("--pool <poolId>", "Liquidity pool id")
     .requiredOption("--shares <amount>", "Pool shares to withdraw")
@@ -2819,7 +3484,11 @@ function addMarketCommands(program: Command): void {
     .option("--fee-strategy <strategy>", "Fee strategy: base, low, medium, high, p95", parseFeeStrategy, "medium")
     .action(
       withContext(async (context, options: LiquidityWithdrawOptions) => {
-        return runLiquiditySubmitCommand(context, { command: "market lp withdraw", action: "withdraw", ...options });
+        return runLiquiditySubmitCommand(context, {
+          command: "market lp withdraw",
+          action: "withdraw",
+          ...options
+        });
       }, "Liquidity pool withdrawal submitted.")
     );
 
@@ -2834,38 +3503,56 @@ function addMarketCommands(program: Command): void {
     .option("--limit <amount>", "Pool share trustline limit")
     .option("--fee-strategy <strategy>", "Fee strategy: base, low, medium, high, p95", parseFeeStrategy, "medium")
     .action(
-      withContext(async (context, options: { pool?: string; assetA?: string; assetB?: string; account: string; limit?: string; feeStrategy: "base" | "low" | "medium" | "high" | "p95" }) => {
-        const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
-        if (profile.realFunds) {
-          throw new StellarAgentError({
-            code: "MAINNET_NOT_ENABLED",
-            message: "Mainnet liquidity pool trustline creation requires an external signer.",
-            docs: "docs/mainnet-safety.md#mainnet-liquidity"
+      withContext(
+        async (
+          context,
+          options: {
+            pool?: string;
+            assetA?: string;
+            assetB?: string;
+            account: string;
+            limit?: string;
+            feeStrategy: "base" | "low" | "medium" | "high" | "p95";
+          }
+        ) => {
+          const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
+          if (profile.realFunds) {
+            throw new StellarAgentError({
+              code: "MAINNET_NOT_ENABLED",
+              message: "Mainnet liquidity pool trustline creation requires an external signer.",
+              docs: "docs/mainnet-safety.md#mainnet-liquidity"
+            });
+          }
+          const wallet = await loadWallet(context.config, options.account);
+          const { changeLiquidityPoolTrustline } = await import("@stellar-agent/stellar");
+          const transaction = await changeLiquidityPoolTrustline({
+            source: wallet,
+            ...(options.pool === undefined ? {} : { poolId: options.pool }),
+            ...(options.assetA === undefined ? {} : { assetA: options.assetA }),
+            ...(options.assetB === undefined ? {} : { assetB: options.assetB }),
+            ...(options.limit === undefined ? {} : { limit: options.limit }),
+            profile,
+            feeStrategy: options.feeStrategy,
+            ...(context.options.noCache === undefined ? {} : { noCache: context.options.noCache })
           });
-        }
-        const wallet = await loadWallet(context.config, options.account);
-        const { changeLiquidityPoolTrustline } = await import("@stellar-agent/stellar");
-        const transaction = await changeLiquidityPoolTrustline({
-          source: wallet,
-          ...(options.pool === undefined ? {} : { poolId: options.pool }),
-          ...(options.assetA === undefined ? {} : { assetA: options.assetA }),
-          ...(options.assetB === undefined ? {} : { assetB: options.assetB }),
-          ...(options.limit === undefined ? {} : { limit: options.limit }),
-          profile,
-          feeStrategy: options.feeStrategy,
-          ...(context.options.noCache === undefined ? {} : { noCache: context.options.noCache })
-        });
-        const receiptPath = await writeOperationReceipt(context, {
-          command: "market lp trustline add",
-          operation: {
-            type: "market.lp.trustline.add",
-            account: wallet.publicKey,
-            details: { liquidityPool: { poolId: transaction.poolId, limit: transaction.limit } }
-          },
-          transaction
-        });
-        return { status: "trustline_added", poolId: transaction.poolId, transaction, receiptPath };
-      }, "Liquidity pool trustline added.")
+          const receiptPath = await writeOperationReceipt(context, {
+            command: "market lp trustline add",
+            operation: {
+              type: "market.lp.trustline.add",
+              account: wallet.publicKey,
+              details: { liquidityPool: { poolId: transaction.poolId, limit: transaction.limit } }
+            },
+            transaction
+          });
+          return {
+            status: "trustline_added",
+            poolId: transaction.poolId,
+            transaction,
+            receiptPath
+          };
+        },
+        "Liquidity pool trustline added."
+      )
     );
 
   const listen = market.command("listen").description("Evaluate one or more market alert checks and return JSON events.");
@@ -2900,8 +3587,7 @@ function addMarketCommands(program: Command): void {
           profile: resolveMarketProfile(context, options.network)
         });
         const shares = position.positions[0]?.shares ?? "0.0000000";
-        const sharesBelow =
-          options.sharesBelow === undefined ? undefined : parseNonnegativeDecimalInput(options.sharesBelow, "shares-below");
+        const sharesBelow = options.sharesBelow === undefined ? undefined : parseNonnegativeDecimalInput(options.sharesBelow, "shares-below");
         const triggered = sharesBelow === undefined ? false : Number(shares) < sharesBelow;
         return {
           type: "market.alert",
@@ -2937,28 +3623,40 @@ function addMarketCommands(program: Command): void {
     .option("--stellar-config-dir <path>", "Stellar CLI config directory")
     .option("--stellar-no-cache", "Pass --no-cache to stellar CLI")
     .action(
-      withContext(async (context, options: { id: string; network: string; stellarBinary?: string; stellarConfigDir?: string; stellarNoCache?: boolean }) => {
-        const profile = resolveContractExecutionContext(context, options.network, {
-          mutating: false
-        });
-        const { contractInfoWithStellarCli } = await import("@stellar-agent/stellar");
-        const result = await contractInfoWithStellarCli({
-          kind: "interface",
-          contractId: options.id,
-          network: options.network,
-          rpcUrl: profile.rpcUrl,
-          networkPassphrase: profile.networkPassphrase,
-          ...(options.stellarBinary === undefined ? {} : { stellarBinary: options.stellarBinary }),
-          ...(options.stellarConfigDir === undefined ? {} : { stellarConfigDir: options.stellarConfigDir }),
-          ...(options.stellarNoCache === undefined ? {} : { noCache: options.stellarNoCache })
-        });
-        return {
-          contractId: options.id,
-          boundary: "read_only",
-          mutationSupported: false,
-          result
-        };
-      }, "Soroban pool inspected.")
+      withContext(
+        async (
+          context,
+          options: {
+            id: string;
+            network: string;
+            stellarBinary?: string;
+            stellarConfigDir?: string;
+            stellarNoCache?: boolean;
+          }
+        ) => {
+          const profile = resolveContractExecutionContext(context, options.network, {
+            mutating: false
+          });
+          const { contractInfoWithStellarCli } = await import("@stellar-agent/stellar");
+          const result = await contractInfoWithStellarCli({
+            kind: "interface",
+            contractId: options.id,
+            network: options.network,
+            rpcUrl: profile.rpcUrl,
+            networkPassphrase: profile.networkPassphrase,
+            ...(options.stellarBinary === undefined ? {} : { stellarBinary: options.stellarBinary }),
+            ...(options.stellarConfigDir === undefined ? {} : { stellarConfigDir: options.stellarConfigDir }),
+            ...(options.stellarNoCache === undefined ? {} : { noCache: options.stellarNoCache })
+          });
+          return {
+            contractId: options.id,
+            boundary: "read_only",
+            mutationSupported: false,
+            result
+          };
+        },
+        "Soroban pool inspected."
+      )
     );
   sorobanPool
     .command("preflight")
@@ -2979,11 +3677,7 @@ function addMarketCommands(program: Command): void {
           action: options.action,
           status: "adapter_required",
           mutationSupported: false,
-          requirements: [
-            "Use a protocol-specific adapter with documented contract interfaces.",
-            "Add policy controls before mutation.",
-            "Require simulation, external Mainnet signing, and receipts for submitted transactions."
-          ]
+          requirements: ["Use a protocol-specific adapter with documented contract interfaces.", "Add policy controls before mutation.", "Require simulation, external Mainnet signing, and receipts for submitted transactions."]
         };
       }, "Soroban pool preflight boundary explained.")
     );
@@ -3008,7 +3702,10 @@ function addStrategyCommands(program: Command): void {
     .action(
       withContext(async (_context, file: string) => {
         const parsed = await readStrategyFile(file);
-        return { ...explainStrategy(parsed), simulation: { submitted: false, signing: false, mode: "dry_run" } };
+        return {
+          ...explainStrategy(parsed),
+          simulation: { submitted: false, signing: false, mode: "dry_run" }
+        };
       }, "Strategy simulation complete.")
     );
   const investigate = strategy.command("investigate").description("Investigate market options without execution.");
@@ -3025,7 +3722,11 @@ function addStrategyCommands(program: Command): void {
         const profile = resolveMarketProfile(context, options.network);
         if (options.pool) {
           const pool = await inspectLiquidityPool({ poolId: options.pool, profile });
-          const trades = await liquidityPoolTrades({ poolId: options.pool, profile, limit: options.limit });
+          const trades = await liquidityPoolTrades({
+            poolId: options.pool,
+            profile,
+            limit: options.limit
+          });
           return liquidityInvestigation({ pool, trades: trades.records, profile });
         }
         if (!options.pair) {
@@ -3121,15 +3822,15 @@ function addDefiCommands(program: Command): void {
       withContext(
         async (
           context,
-          options: { pool: string; account: string; request: string[]; network?: string; version?: string }
+          options: {
+            pool: string;
+            account: string;
+            request: string[];
+            network?: string;
+            version?: string;
+          }
         ) => {
-          const {
-            blendDeployment,
-            parseBlendRequest,
-            preflightBlendActions,
-            resolveBlendAsset,
-            resolveBlendPool
-          } = await loadDefi();
+          const { blendDeployment, parseBlendRequest, preflightBlendActions, resolveBlendAsset, resolveBlendPool } = await loadDefi();
           const profile = resolveBlendProfile(context, options.network);
           const deployment = blendDeployment(blendNetworkForProfile(profile));
           const poolDeployment = resolveBlendPool(deployment, options.pool);
@@ -3148,12 +3849,8 @@ function addDefiCommands(program: Command): void {
             ...(poolVersion === undefined ? {} : { poolVersion })
           });
           const policy = await loadPolicy(context);
-          const borrowValue = preflight.actions
-            .filter((action) => action.type === "borrow")
-            .reduce((total, action) => total + (action.value ?? 0), 0);
-          const protocolExposureValue =
-            (preflight.after?.totalSupplied ?? preflight.before?.totalSupplied ?? 0) +
-            (preflight.after?.totalBorrowed ?? preflight.before?.totalBorrowed ?? 0);
+          const borrowValue = preflight.actions.filter((action) => action.type === "borrow").reduce((total, action) => total + (action.value ?? 0), 0);
+          const protocolExposureValue = (preflight.after?.totalSupplied ?? preflight.before?.totalSupplied ?? 0) + (preflight.after?.totalBorrowed ?? preflight.before?.totalBorrowed ?? 0);
           const policyDecision = evaluateDefiBlendRequest(policy, {
             network: profile.realFunds ? "mainnet" : "testnet",
             pool: poolDeployment.contractId,
@@ -3184,20 +3881,32 @@ function addDefiCommands(program: Command): void {
     .option("--source <account>", "Local Testnet wallet name", "agent")
     .option("--collateral", "Supply as collateral")
     .action(
-      withContext(async (context, options: { pool: string; asset: string; amount: string; source: string; collateral?: boolean }) => {
-        return runBlendSubmitCommand(context, {
-          command: "defi blend supply",
-          pool: options.pool,
-          source: options.source,
-          actions: [
-            {
-              type: options.collateral ? "supply_collateral" : "supply",
-              asset: options.asset,
-              amount: options.amount
-            }
-          ]
-        });
-      }, "Blend supply submitted.")
+      withContext(
+        async (
+          context,
+          options: {
+            pool: string;
+            asset: string;
+            amount: string;
+            source: string;
+            collateral?: boolean;
+          }
+        ) => {
+          return runBlendSubmitCommand(context, {
+            command: "defi blend supply",
+            pool: options.pool,
+            source: options.source,
+            actions: [
+              {
+                type: options.collateral ? "supply_collateral" : "supply",
+                asset: options.asset,
+                amount: options.amount
+              }
+            ]
+          });
+        },
+        "Blend supply submitted."
+      )
     );
 
   blend
@@ -3245,20 +3954,32 @@ function addDefiCommands(program: Command): void {
     .option("--source <account>", "Local Testnet wallet name", "agent")
     .option("--collateral", "Withdraw from collateral")
     .action(
-      withContext(async (context, options: { pool: string; asset: string; amount: string; source: string; collateral?: boolean }) => {
-        return runBlendSubmitCommand(context, {
-          command: "defi blend withdraw",
-          pool: options.pool,
-          source: options.source,
-          actions: [
-            {
-              type: options.collateral ? "withdraw_collateral" : "withdraw",
-              asset: options.asset,
-              amount: options.amount
-            }
-          ]
-        });
-      }, "Blend withdraw submitted.")
+      withContext(
+        async (
+          context,
+          options: {
+            pool: string;
+            asset: string;
+            amount: string;
+            source: string;
+            collateral?: boolean;
+          }
+        ) => {
+          return runBlendSubmitCommand(context, {
+            command: "defi blend withdraw",
+            pool: options.pool,
+            source: options.source,
+            actions: [
+              {
+                type: options.collateral ? "withdraw_collateral" : "withdraw",
+                asset: options.asset,
+                amount: options.amount
+              }
+            ]
+          });
+        },
+        "Blend withdraw submitted."
+      )
     );
 
   blend
@@ -3313,28 +4034,25 @@ function addDefiCommands(program: Command): void {
     .option("--search <term>", "Filter fetched pools by token, pool address, or symbol")
     .option("--limit <count>", "Limit fetched pool records", parseIntegerOption)
     .action(
-      withContext(
-        async (context, options: { network?: string; pools?: boolean; search?: string; limit?: number }) => {
-          const { aquariusDeployment, fetchAquariusPools } = await loadDefi();
-          const network = resolveAquariusNetworkOption(context, options.network);
-          const deployment = aquariusDeployment(network);
-          return {
-            ...deployment,
-            ...(options.pools
-              ? {
-                  pools: (
-                    await fetchAquariusPools({
-                      network,
-                      ...(options.search === undefined ? {} : { search: options.search }),
-                      limit: options.limit ?? 10
-                    })
-                  ).pools
-                }
-              : {})
-          };
-        },
-        "Aquarius deployments loaded."
-      )
+      withContext(async (context, options: { network?: string; pools?: boolean; search?: string; limit?: number }) => {
+        const { aquariusDeployment, fetchAquariusPools } = await loadDefi();
+        const network = resolveAquariusNetworkOption(context, options.network);
+        const deployment = aquariusDeployment(network);
+        return {
+          ...deployment,
+          ...(options.pools
+            ? {
+                pools: (
+                  await fetchAquariusPools({
+                    network,
+                    ...(options.search === undefined ? {} : { search: options.search }),
+                    limit: options.limit ?? 10
+                  })
+                ).pools
+              }
+            : {})
+        };
+      }, "Aquarius deployments loaded.")
     );
 
   const aquariusPool = aquarius.command("pool").description("Inspect Aquarius pools.");
@@ -3456,7 +4174,14 @@ function addDefiCommands(program: Command): void {
       withContext(
         async (
           context,
-          options: { from: string; to: string; amount: string; mode: string; slippageBps: number; network?: string }
+          options: {
+            from: string;
+            to: string;
+            amount: string;
+            mode: string;
+            slippageBps: number;
+            network?: string;
+          }
         ) => {
           const { preflightAquariusSwap } = await loadDefi();
           const network = resolveAquariusNetworkOption(context, options.network);
@@ -3506,9 +4231,7 @@ function addPolicyCommands(program: Command): void {
     .action(
       withContext(async (context, options: { network: "testnet" | "mainnet" | "local"; output?: string }) => {
         const target = defaultPolicyForNetwork(options.network);
-        const path =
-          options.output ??
-          join(context.config.storage.policiesDir, defaultPolicyFilename(options.network));
+        const path = options.output ?? join(context.config.storage.policiesDir, defaultPolicyFilename(options.network));
         const resolvedPath = resolvePath(path);
         await writeFileAtomic(resolvedPath, policyToYaml(target), { mode: 0o600 });
         return { path: resolvedPath, policy: target };
@@ -3537,7 +4260,13 @@ function addPolicyCommands(program: Command): void {
         const policy = await loadPolicy(context);
         const raw = options.request
           ? JSON.parse(await readFile(resolvePath(options.request), "utf8"))
-          : { destination: options.to, amount: options.amount, asset: options.asset, memo: options.memo, network: context.profileName };
+          : {
+              destination: options.to,
+              amount: options.amount,
+              asset: options.asset,
+              memo: options.memo,
+              network: context.profileName
+            };
         const request = paymentRequestSchema.parse(raw);
         const history = await loadSpendHistory(context, request);
         return { ...evaluatePaymentRequest(policy, request, history), spendHistory: history };
@@ -3552,7 +4281,10 @@ function addPolicyCommands(program: Command): void {
           evaluatePaymentRequest(DEFAULT_TESTNET_POLICY, fixtureRequest("1")),
           evaluatePaymentRequest(DEFAULT_TESTNET_POLICY, fixtureRequest("11")),
           evaluatePaymentRequest(DEFAULT_TESTNET_POLICY, fixtureRequest("6")),
-          evaluatePaymentRequest(DEFAULT_MAINNET_POLICY, { ...fixtureRequest("0.01"), network: "mainnet" })
+          evaluatePaymentRequest(DEFAULT_MAINNET_POLICY, {
+            ...fixtureRequest("0.01"),
+            network: "mainnet"
+          })
         ];
         return { passed: fixtures.length, decisions: fixtures.map((fixture) => fixture.status) };
       }, "Policy fixtures passed.")
@@ -3564,25 +4296,24 @@ function addLedgerCommands(program: Command): void {
   ledger
     .command("latest")
     .description("Fetch the latest ledger from Horizon.")
-    .action(
-      withContext(async (context) => latestLedger(resolveNetworkProfile(context.profileName, context.config.profiles)), "Latest ledger loaded.")
-    );
+    .action(withContext(async (context) => latestLedger(resolveNetworkProfile(context.profileName, context.config.profiles)), "Latest ledger loaded."));
   ledger
     .command("tx")
     .description("Fetch a transaction by hash.")
     .argument("<hash>", "Transaction hash")
-    .action(
-      withContext(async (context, hash: string) => lookupTransaction(hash, resolveNetworkProfile(context.profileName, context.config.profiles)), "Transaction loaded.")
-    );
+    .action(withContext(async (context, hash: string) => lookupTransaction(hash, resolveNetworkProfile(context.profileName, context.config.profiles)), "Transaction loaded."));
   ledger
     .command("account")
     .description("Show local account balances.")
     .argument("[name]", "Wallet name", "agent")
     .action(
-      withContext(async (context, name: string) => ({
-        account: name,
-        balances: await walletBalances(context.config, name)
-      }), "Account ledger data loaded.")
+      withContext(
+        async (context, name: string) => ({
+          account: name,
+          balances: await walletBalances(context.config, name)
+        }),
+        "Account ledger data loaded."
+      )
     );
   ledger
     .command("payments")
@@ -3612,24 +4343,21 @@ function addLedgerCommands(program: Command): void {
     .option("--tx <hash>", "Transaction hash")
     .option("--limit <n>", "Number of records", parseIntegerOption, 10)
     .action(
-      withContext(
-        async (context, options: { account: string; address?: string; tx?: string; limit: number }) => {
-          const { accountEffects, transactionEffects } = await import("@stellar-agent/stellar");
-          const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
-          if (options.tx) {
-            return {
-              transaction: options.tx,
-              ...(await transactionEffects({ hash: options.tx, profile, limit: options.limit }))
-            };
-          }
-          const address = options.address ?? (await loadWallet(context.config, options.account)).publicKey;
+      withContext(async (context, options: { account: string; address?: string; tx?: string; limit: number }) => {
+        const { accountEffects, transactionEffects } = await import("@stellar-agent/stellar");
+        const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
+        if (options.tx) {
           return {
-            address,
-            ...(await accountEffects({ address, profile, limit: options.limit }))
+            transaction: options.tx,
+            ...(await transactionEffects({ hash: options.tx, profile, limit: options.limit }))
           };
-        },
-        "Ledger effects loaded."
-      )
+        }
+        const address = options.address ?? (await loadWallet(context.config, options.account)).publicKey;
+        return {
+          address,
+          ...(await accountEffects({ address, profile, limit: options.limit }))
+        };
+      }, "Ledger effects loaded.")
     );
   ledger
     .command("export")
@@ -3647,9 +4375,7 @@ function addReceiptCommands(program: Command): void {
   receipts
     .command("list")
     .description("List local receipts.")
-    .action(
-      withContext(async (context) => ({ receipts: await listReceipts(context.config.storage.receiptsDir) }), "Receipts listed.")
-    );
+    .action(withContext(async (context) => ({ receipts: await listReceipts(context.config.storage.receiptsDir) }), "Receipts listed."));
   receipts
     .command("latest")
     .description("Show the latest local receipt.")
@@ -3690,15 +4416,29 @@ function addReceiptCommands(program: Command): void {
         const receipt = await readReceipt(path);
         verifyReceipt(receipt);
         const ledger = options.ledger ? await verifyReceiptAgainstLedger(context, receipt) : undefined;
-        return { valid: true, path: resolvePath(path), ...(ledger === undefined ? {} : { ledger }) };
+        return {
+          valid: true,
+          path: resolvePath(path),
+          ...(ledger === undefined ? {} : { ledger })
+        };
       }, "Receipt valid.")
+    );
+  receipts
+    .command("verify-chain")
+    .description("Verify the complete receipt hash chain and the append-only event log chain.")
+    .action(
+      withContext(
+        async (context) => ({
+          receipts: await verifyReceiptChain(context.config.storage.receiptsDir),
+          events: await verifyEventLogChain(join(context.config.storage.logsDir, "events.jsonl"))
+        }),
+        "Receipt and event chains valid."
+      )
     );
   receipts
     .command("export")
     .description("Export receipt paths.")
-    .action(
-      withContext(async (context) => ({ receipts: await listReceipts(context.config.storage.receiptsDir) }), "Receipts exported.")
-    );
+    .action(withContext(async (context) => ({ receipts: await listReceipts(context.config.storage.receiptsDir) }), "Receipts exported."));
 }
 
 function addMainnetCommands(program: Command): void {
@@ -3707,11 +4447,14 @@ function addMainnetCommands(program: Command): void {
     .command("status")
     .description("Show Mainnet guard status.")
     .action(
-      withContext(async (context) => ({
-        realFunds: true,
-        enabled: Boolean(context.config.profiles.mainnet?.enabled),
-        requiresExplicitApproval: true
-      }), "Mainnet status loaded.")
+      withContext(
+        async (context) => ({
+          realFunds: true,
+          enabled: Boolean(context.config.profiles.mainnet?.enabled),
+          requiresExplicitApproval: true
+        }),
+        "Mainnet status loaded."
+      )
     );
   mainnet
     .command("enable")
@@ -3747,16 +4490,14 @@ function addMainnetCommands(program: Command): void {
     .command("readiness")
     .description("Show a Mainnet readiness checklist.")
     .action(
-      withContext(async (context) => ({
-        realFunds: true,
-        enabled: Boolean(context.config.profiles.mainnet?.enabled),
-        checklist: [
-          "Freighter or another human approval flow is required.",
-          "Mainnet auto-approval is disabled.",
-          "Policy must require explicit approval.",
-          "Receipts must mark realFunds: true."
-        ]
-      }), "Mainnet readiness checked.")
+      withContext(
+        async (context) => ({
+          realFunds: true,
+          enabled: Boolean(context.config.profiles.mainnet?.enabled),
+          checklist: ["Freighter or another human approval flow is required.", "Mainnet auto-approval is disabled.", "Policy must require explicit approval.", "Receipts must mark realFunds: true."]
+        }),
+        "Mainnet readiness checked."
+      )
     );
   const agentWallet = mainnet.command("agent-wallet").description("Manage a risk-budgeted Mainnet agent wallet for guarded external-signing workflows.");
   agentWallet
@@ -3927,7 +4668,14 @@ function addMainnetCommands(program: Command): void {
           ...wallet,
           status: "disarmed",
           updatedAt: new Date().toISOString(),
-          autosign: { ...(wallet.autosign ?? mainnetAgentWalletAutosignConfig({ secretKeyEnvVar: "STELLAR_AGENT_MAINNET_AGENT_SECRET_KEY", acknowledged: true })), enabled: false },
+          autosign: {
+            ...(wallet.autosign ??
+              mainnetAgentWalletAutosignConfig({
+                secretKeyEnvVar: "STELLAR_AGENT_MAINNET_AGENT_SECRET_KEY",
+                acknowledged: true
+              })),
+            enabled: false
+          },
           arming: undefined
         };
         await writeConfig(context.config, context.options);
@@ -3976,8 +4724,7 @@ function addMainnetCommands(program: Command): void {
             dailyLimit: options.dailyLimit ?? wallet.riskBudget.dailyLimit,
             monthlyLimit: options.monthlyLimit ?? wallet.riskBudget.monthlyLimit,
             asset: options.asset.length > 0 ? options.asset : wallet.riskBudget.allowedAssets,
-            allowDestination:
-              options.allowDestination.length > 0 ? options.allowDestination : wallet.riskBudget.allowedDestinations
+            allowDestination: options.allowDestination.length > 0 ? options.allowDestination : wallet.riskBudget.allowedDestinations
           });
           context.config.mainnetAgentWallet = {
             ...wallet,
@@ -4056,10 +4803,7 @@ function withContext(handler: (...args: any[]) => Promise<unknown>, humanMessage
     const options = command.optsWithGlobals() as CliOptions;
     try {
       const config = await loadConfig(options);
-      const profileName = (options.profile ??
-        process.env.STELLAR_AGENT_PROFILE ??
-        config.activeProfile ??
-        "testnet") as NetworkName;
+      const profileName = (options.profile ?? process.env.STELLAR_AGENT_PROFILE ?? config.activeProfile ?? "testnet") as NetworkName;
       const context: CliContext = { options, config, profileName };
       const data = await handler(context, ...args.slice(0, -1));
       printSuccess(options, data, humanMessage);
@@ -4112,11 +4856,7 @@ async function createTestnetWalletResult(context: CliContext, name: string, fund
 }
 
 async function loadPolicy(context: CliContext, explicitPath?: string, network: NetworkName = context.profileName) {
-  const policyPath =
-    explicitPath ??
-    context.options.policy ??
-    process.env.STELLAR_AGENT_POLICY ??
-    join(context.config.storage.policiesDir, defaultPolicyFilename(network));
+  const policyPath = explicitPath ?? context.options.policy ?? process.env.STELLAR_AGENT_POLICY ?? join(context.config.storage.policiesDir, defaultPolicyFilename(network));
   try {
     return parsePolicyYaml(await readFile(resolvePath(policyPath), "utf8"));
   } catch (error: any) {
@@ -4284,11 +5024,7 @@ function resolveMarketProfile(context: CliContext, network?: string): NetworkPro
   return resolveNetworkProfile(normalized, context.config.profiles);
 }
 
-async function runLiquidityPreflight(
-  context: CliContext,
-  profile: NetworkProfile,
-  options: LiquidityPreflightOptions
-): Promise<LiquidityPoolPreflight> {
+async function runLiquidityPreflight(context: CliContext, profile: NetworkProfile, options: LiquidityPreflightOptions): Promise<LiquidityPoolPreflight> {
   const action = parseLiquidityAction(options.action);
   const account = await resolvePublicAccount(context, options.account);
   const { preflightLiquidityPoolDeposit, preflightLiquidityPoolWithdraw } = await import("@stellar-agent/stellar");
@@ -4337,12 +5073,7 @@ function parseLiquidityAction(action: string): "deposit" | "withdraw" {
   });
 }
 
-async function runLiquiditySubmitCommand(
-  context: CliContext,
-  args:
-    | ({ command: string; action: "deposit" } & LiquidityDepositOptions)
-    | ({ command: string; action: "withdraw" } & LiquidityWithdrawOptions)
-): Promise<unknown> {
+async function runLiquiditySubmitCommand(context: CliContext, args: ({ command: string; action: "deposit" } & LiquidityDepositOptions) | ({ command: string; action: "withdraw" } & LiquidityWithdrawOptions)): Promise<unknown> {
   const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
   if (profile.realFunds) {
     throw new StellarAgentError({
@@ -4354,8 +5085,7 @@ async function runLiquiditySubmitCommand(
   }
   const wallet = await loadWallet(context.config, args.source);
   if (args.action === "deposit") validatePriceBounds(args.minPrice, args.maxPrice);
-  const { preflightLiquidityPoolDeposit, preflightLiquidityPoolWithdraw, submitLiquidityPoolDeposit, submitLiquidityPoolWithdraw } =
-    await import("@stellar-agent/stellar");
+  const { preflightLiquidityPoolDeposit, preflightLiquidityPoolWithdraw, submitLiquidityPoolDeposit, submitLiquidityPoolWithdraw } = await import("@stellar-agent/stellar");
   const preflight =
     args.action === "deposit"
       ? await preflightLiquidityPoolDeposit({
@@ -4495,10 +5225,7 @@ async function listenForPoolPrice(context: CliContext, options: MarketPriceListe
   return { events, triggered: events.some((event) => event.status === "triggered") };
 }
 
-async function listenForMarketAlertConfig(
-  context: CliContext,
-  options: { file: string; network?: string; polls: number; intervalMs: number }
-): Promise<unknown> {
+async function listenForMarketAlertConfig(context: CliContext, options: { file: string; network?: string; polls: number; intervalMs: number }): Promise<unknown> {
   const config = await readMarketAlertConfig(options.file);
   const results = [];
   for (const [index, alert] of config.alerts.entries()) {
@@ -4506,7 +5233,7 @@ async function listenForMarketAlertConfig(
       pool: alert.pool,
       ...(alert.above === undefined ? {} : { above: alert.above }),
       ...(alert.below === undefined ? {} : { below: alert.below }),
-      ...(alert.network ?? options.network ? { network: alert.network ?? options.network } : {}),
+      ...((alert.network ?? options.network) ? { network: alert.network ?? options.network } : {}),
       polls: options.polls,
       intervalMs: options.intervalMs
     })) as { events: Array<Record<string, unknown>>; triggered: boolean };
@@ -4687,17 +5414,8 @@ function explainStrategy(strategy: Record<string, unknown>) {
     actionCount: actions.length,
     submitted: false,
     signing: false,
-    requiredControls: [
-      "Run market lp preflight before any core LP mutation.",
-      "Require policy approval for any request outside configured market.liquidity limits.",
-      "Use external signing for Mainnet.",
-      "Write receipts for submitted Testnet liquidity actions."
-    ],
-    riskNotes: [
-      "Strategy files are proposals, not profitability guarantees.",
-      "Testnet liquidity does not prove Mainnet profitability.",
-      "Quotes and pool snapshots can change before submission."
-    ],
+    requiredControls: ["Run market lp preflight before any core LP mutation.", "Require policy approval for any request outside configured market.liquidity limits.", "Use external signing for Mainnet.", "Write receipts for submitted Testnet liquidity actions."],
+    riskNotes: ["Strategy files are proposals, not profitability guarantees.", "Testnet liquidity does not prove Mainnet profitability.", "Quotes and pool snapshots can change before submission."],
     strategy
   };
 }
@@ -4728,11 +5446,7 @@ function liquidityInvestigation(args: { pool: LiquidityPoolSummary; trades: unkn
       submitted: false,
       mutationSupported: args.profile.realFunds ? "external_signer_required" : "testnet_preflight_required"
     },
-    riskNotes: [
-      "Liquidity fees are not guaranteed profit.",
-      "LP positions can lose relative value versus holding reserve assets.",
-      "Inspect issuer risk and trustlines before depositing."
-    ]
+    riskNotes: ["Liquidity fees are not guaranteed profit.", "LP positions can lose relative value versus holding reserve assets.", "Inspect issuer risk and trustlines before depositing."]
   };
 }
 
@@ -4741,12 +5455,8 @@ function collectOption(value: string, previous: string[]): string[] {
   return previous;
 }
 
-async function runBlendSubmitCommand(
-  context: CliContext,
-  args: { command: string; pool: string; source: string; actions: BlendAction[] }
-): Promise<unknown> {
-  const { blendDeployment, preflightBlendActions, resolveBlendAsset, resolveBlendPool, submitBlendActions } =
-    await loadDefi();
+async function runBlendSubmitCommand(context: CliContext, args: { command: string; pool: string; source: string; actions: BlendAction[] }): Promise<unknown> {
+  const { blendDeployment, preflightBlendActions, resolveBlendAsset, resolveBlendPool, submitBlendActions } = await loadDefi();
   const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
   if (profile.realFunds) {
     throw new StellarAgentError({
@@ -4824,12 +5534,8 @@ async function runBlendSubmitCommand(
 }
 
 function blendPolicyRequest(profile: NetworkProfile, pool: string, preflight: BlendPreflight) {
-  const borrowValue = preflight.actions
-    .filter((action) => action.type === "borrow")
-    .reduce((total, action) => total + (action.value ?? 0), 0);
-  const protocolExposureValue =
-    (preflight.after?.totalSupplied ?? preflight.before?.totalSupplied ?? 0) +
-    (preflight.after?.totalBorrowed ?? preflight.before?.totalBorrowed ?? 0);
+  const borrowValue = preflight.actions.filter((action) => action.type === "borrow").reduce((total, action) => total + (action.value ?? 0), 0);
+  const protocolExposureValue = (preflight.after?.totalSupplied ?? preflight.before?.totalSupplied ?? 0) + (preflight.after?.totalBorrowed ?? preflight.before?.totalBorrowed ?? 0);
   return {
     network: profile.realFunds ? ("mainnet" as const) : ("testnet" as const),
     pool,
@@ -4874,40 +5580,26 @@ function defiPolicyDeniedError(decision: PolicyDecision): StellarAgentError {
   });
 }
 
-async function blendTrustlineGuide(
-  context: CliContext,
-  options: { asset: string; account: string; network?: string }
-): Promise<unknown> {
+async function blendTrustlineGuide(context: CliContext, options: { asset: string; account: string; network?: string }): Promise<unknown> {
   const { blendDeployment, resolveBlendAsset } = await loadDefi();
   const profile = resolveBlendProfile(context, options.network);
   const deployment = blendDeployment(blendNetworkForProfile(profile));
   const asset = resolveBlendAsset(deployment, options.asset);
   const account = await resolvePublicAccount(context, options.account);
   const rawPublicAccount = /^G[A-Z2-7]{55}$/.test(options.account);
-  const trustlines =
-    profile.realFunds || asset.classicAsset === undefined || rawPublicAccount
-      ? []
-      : await walletTrustlines(context.config, options.account);
-  const hasTrustline = asset.classicAsset
-    ? trustlines.some((trustline) => trustline.asset.toUpperCase() === asset.classicAsset!.toUpperCase())
-    : false;
+  const trustlines = profile.realFunds || asset.classicAsset === undefined || rawPublicAccount ? [] : await walletTrustlines(context.config, options.account);
+  const hasTrustline = asset.classicAsset ? trustlines.some((trustline) => trustline.asset.toUpperCase() === asset.classicAsset!.toUpperCase()) : false;
   return {
     network: deployment.network,
     account,
     asset,
     requiresTrustline: asset.classicAsset !== undefined,
     hasTrustline,
-    command:
-      asset.classicAsset === undefined || profile.realFunds || rawPublicAccount
-        ? null
-        : `stellar-agent defi blend trustline add --account ${options.account} --asset ${asset.symbol}`
+    command: asset.classicAsset === undefined || profile.realFunds || rawPublicAccount ? null : `stellar-agent defi blend trustline add --account ${options.account} --asset ${asset.symbol}`
   };
 }
 
-async function addBlendTrustline(
-  context: CliContext,
-  options: { asset: string; account: string; limit?: string }
-): Promise<unknown> {
+async function addBlendTrustline(context: CliContext, options: { asset: string; account: string; limit?: string }): Promise<unknown> {
   const { blendDeployment, resolveBlendAsset } = await loadDefi();
   const profile = resolveNetworkProfile(context.profileName, context.config.profiles);
   if (profile.realFunds) {
@@ -4954,16 +5646,37 @@ async function addBlendTrustline(
   };
 }
 
-async function loadSpendHistory(context: CliContext, request: PaymentRequest) {
-  return spendHistoryFromReceipts(context.config.storage.receiptsDir, {
+async function loadSpendHistory(context: CliContext, request: PaymentRequest, excludeIntentId?: string) {
+  const history = await spendHistoryFromReceipts(context.config.storage.receiptsDir, {
     profile: request.network,
     asset: request.asset
   });
+  const reservations = (
+    await activeSpendReservations(context.config.storage.intentsDir, {
+      profile: request.network,
+      asset: request.asset
+    })
+  ).filter((reservation) => reservation.intentId !== excludeIntentId);
+  const reserved = reservations.reduce((total, reservation) => total + parseAmount(reservation.amount, request.asset).stroops, 0n);
+  if (reserved === 0n) return history;
+  const addReserved = (value?: string) => formatStroops((value && !/^0(?:\.0+)?$/.test(value) ? parseAmount(value, request.asset).stroops : 0n) + reserved);
+  return {
+    ...history,
+    dailyTotal: addReserved(history.dailyTotal),
+    monthlyTotal: addReserved(history.monthlyTotal)
+  };
 }
 
-async function evaluateApprovedPaymentBeforeSubmission(context: CliContext, payment: PaymentRequest): Promise<{
+async function evaluateApprovedPaymentBeforeSubmission(
+  context: CliContext,
+  payment: PaymentRequest,
+  excludeIntentId?: string
+): Promise<{
   policyDecision: PolicyDecision;
-  mainnetAgentWallet?: { warning: string; spendHistory: Awaited<ReturnType<typeof loadSpendHistory>> };
+  mainnetAgentWallet?: {
+    warning: string;
+    spendHistory: Awaited<ReturnType<typeof loadSpendHistory>>;
+  };
 }> {
   if (payment.network !== context.profileName) {
     throw new StellarAgentError({
@@ -4973,24 +5686,17 @@ async function evaluateApprovedPaymentBeforeSubmission(context: CliContext, paym
     });
   }
   const policy = await loadPolicy(context, undefined, payment.network);
-  const history = await loadSpendHistory(context, payment);
+  const history = await loadSpendHistory(context, payment, excludeIntentId);
   const policyDecision = evaluatePaymentRequest(policy, payment, history);
   if (policyDecision.status === "denied") throw policyDeniedError();
-  const mainnetAgentWallet = await assertMainnetAgentWalletPaymentAllowed(context, payment);
+  const mainnetAgentWallet = await assertMainnetAgentWalletPaymentAllowed(context, payment, excludeIntentId);
   return {
     policyDecision,
     ...(mainnetAgentWallet === undefined ? {} : { mainnetAgentWallet })
   };
 }
 
-function parseMainnetAgentWalletRiskBudget(options: {
-  maxBalance: string;
-  perTxLimit: string;
-  dailyLimit: string;
-  monthlyLimit?: string | undefined;
-  asset: string[];
-  allowDestination: string[];
-}): MainnetAgentWalletConfig["riskBudget"] {
+function parseMainnetAgentWalletRiskBudget(options: { maxBalance: string; perTxLimit: string; dailyLimit: string; monthlyLimit?: string | undefined; asset: string[]; allowDestination: string[] }): MainnetAgentWalletConfig["riskBudget"] {
   const allowedAssets = options.asset.length > 0 ? options.asset : ["XLM"];
   for (const asset of allowedAssets) parseAssetForPolicy(asset);
   for (const destination of options.allowDestination) paymentRequestSchema.shape.destination.parse(destination);
@@ -5005,10 +5711,7 @@ function parseMainnetAgentWalletRiskBudget(options: {
   };
 }
 
-function mainnetAgentWalletAutosignConfig(options: {
-  secretKeyEnvVar: string;
-  acknowledged: boolean;
-}): NonNullable<MainnetAgentWalletConfig["autosign"]> {
+function mainnetAgentWalletAutosignConfig(options: { secretKeyEnvVar: string; acknowledged: boolean }): NonNullable<MainnetAgentWalletConfig["autosign"]> {
   if (!options.acknowledged) {
     throw new StellarAgentError({
       code: "MAINNET_NOT_ENABLED",
@@ -5033,10 +5736,7 @@ function mainnetAgentWalletAutosignConfig(options: {
   };
 }
 
-async function armMainnetAgentWallet(
-  context: CliContext,
-  options: { iUnderstandRealFunds: boolean }
-): Promise<MainnetAgentWalletConfig> {
+async function armMainnetAgentWallet(context: CliContext, options: { iUnderstandRealFunds: boolean }): Promise<MainnetAgentWalletConfig> {
   if (!options.iUnderstandRealFunds) {
     throw new StellarAgentError({
       code: "MAINNET_NOT_ENABLED",
@@ -5081,7 +5781,10 @@ async function armMainnetAgentWallet(
   armedWallet.arming = {
     armedAt: now,
     configPath: configFingerprintPath(context),
-    configFingerprint: coreMainnetAgentWalletConfigFingerprint({ ...context.config, mainnetAgentWallet: armedWallet }),
+    configFingerprint: coreMainnetAgentWalletConfigFingerprint({
+      ...context.config,
+      mainnetAgentWallet: armedWallet
+    }),
     policyPath: policyFingerprint.path,
     policyFingerprint: policyFingerprint.fingerprint
   };
@@ -5146,10 +5849,7 @@ async function mainnetAgentWalletIntegrity(context: CliContext, wallet: MainnetA
   return { integrity: { ok: failures.length === 0, checked: true, failures } };
 }
 
-async function mainnetAgentWalletIntegrityFailures(
-  context: CliContext,
-  wallet: MainnetAgentWalletConfig
-): Promise<string[]> {
+async function mainnetAgentWalletIntegrityFailures(context: CliContext, wallet: MainnetAgentWalletConfig): Promise<string[]> {
   if (!wallet.arming) {
     return ["arming_metadata_missing"];
   }
@@ -5163,13 +5863,10 @@ async function mainnetAgentWalletIntegrityFailures(
   });
 }
 
-async function assertMainnetAgentWalletPaymentAllowed(
-  context: CliContext,
-  request: PaymentRequest
-): Promise<{ warning: string; spendHistory: Awaited<ReturnType<typeof loadSpendHistory>> } | undefined> {
+async function assertMainnetAgentWalletPaymentAllowed(context: CliContext, request: PaymentRequest, excludeIntentId?: string): Promise<{ warning: string; spendHistory: Awaited<ReturnType<typeof loadSpendHistory>> } | undefined> {
   const wallet = context.config.mainnetAgentWallet;
   if (!wallet || wallet.publicKey !== request.source || request.network !== "mainnet") return undefined;
-  const spendHistory = await loadSpendHistory(context, request);
+  const spendHistory = await loadSpendHistory(context, request, excludeIntentId);
   const policyFingerprint = await mainnetAgentWalletPolicyFingerprint(context);
   assertMainnetAgentWalletPaymentPreflight({
     wallet,
@@ -5187,8 +5884,18 @@ async function assertMainnetAgentWalletPaymentAllowed(
 async function assertMainnetAgentWalletAutosignPayment(
   context: CliContext,
   request: PaymentRequest,
-  options: { allowRealFunds?: boolean; iUnderstandRealFunds?: boolean; iUnderstandAgentWalletAutosign?: boolean }
-): Promise<{ wallet: MainnetAgentWalletConfig; source: { publicKey: string; secretKey: string }; warning: string; spendHistory: Awaited<ReturnType<typeof loadSpendHistory>> }> {
+  options: {
+    allowRealFunds?: boolean;
+    iUnderstandRealFunds?: boolean;
+    iUnderstandAgentWalletAutosign?: boolean;
+  },
+  excludeIntentId?: string
+): Promise<{
+  wallet: MainnetAgentWalletConfig;
+  source: { publicKey: string; secretKey: string };
+  warning: string;
+  spendHistory: Awaited<ReturnType<typeof loadSpendHistory>>;
+}> {
   if (!options.allowRealFunds || !options.iUnderstandRealFunds || !options.iUnderstandAgentWalletAutosign) {
     throw new StellarAgentError({
       code: "MAINNET_NOT_ENABLED",
@@ -5206,7 +5913,7 @@ async function assertMainnetAgentWalletAutosignPayment(
       docs: "docs/mainnet-safety.md#agent-wallet-autosigning"
     });
   }
-  const allowed = await assertMainnetAgentWalletPaymentAllowed(context, request);
+  const allowed = await assertMainnetAgentWalletPaymentAllowed(context, request, excludeIntentId);
   if (!allowed) {
     throw new StellarAgentError({
       code: "MAINNET_NOT_ENABLED",
@@ -5261,6 +5968,7 @@ async function sendMainnetAgentWalletPayment(
     allowRealFunds?: boolean;
     iUnderstandRealFunds?: boolean;
     iUnderstandAgentWalletAutosign?: boolean;
+    idempotencyKey?: string;
     dryRun?: boolean;
   }
 ) {
@@ -5290,7 +5998,44 @@ async function sendMainnetAgentWalletPayment(
     network: "mainnet",
     agentWalletAutosign: true
   });
-  const history = await loadSpendHistory(context, request);
+  const mainnetProfile = resolveNetworkProfile("mainnet", context.config.profiles);
+  const { intent, created } = await createExecutionIntent(context.config.storage.intentsDir, {
+    command: "pay send",
+    profile: "mainnet",
+    networkPassphrase: mainnetProfile.networkPassphrase,
+    realFunds: true,
+    operation: {
+      type: "payment",
+      source: configured.publicKey,
+      destination: request.destination,
+      asset: request.asset,
+      amount: request.amount,
+      details: { memo: request.memo, mainnetAgentWalletAutosign: true }
+    },
+    ...(options.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey }),
+    spendReservation: {
+      asset: request.asset,
+      amount: request.amount,
+      destination: request.destination
+    }
+  });
+  let executionIntent = intent;
+  if (!created) {
+    if (intent.status === "confirmed") return { intent, idempotentReplay: true, receiptPath: intent.receiptPath };
+    if (["signed", "submitted", "confirmation_unknown"].includes(intent.status)) {
+      throw new StellarAgentError({
+        code: "TRANSACTION_TIMEOUT",
+        message: "This idempotent Mainnet payment may already have been submitted; reconcile it before retrying.",
+        details: {
+          intentId: intent.id,
+          transactionHash: intent.transaction?.hash,
+          changedOnChain: "unknown",
+          safeToRetry: false
+        }
+      });
+    }
+  }
+  const history = await loadSpendHistory(context, request, intent.id);
   if (history.unreadable) {
     throw new StellarAgentError({
       code: "POLICY_DENIED",
@@ -5299,10 +6044,38 @@ async function sendMainnetAgentWalletPayment(
     });
   }
   const policyDecision = evaluatePaymentRequest(policy, request, history);
-  if (options.dryRun) return { request, policyDecision, spendHistory: history, dryRun: true, autosign: mainnetAgentWalletAutosignView(configured) };
-  await assertMainnetAgentWalletPaymentAllowed(context, request);
-  if (policyDecision.status === "denied") throw policyDeniedError();
+  if (options.dryRun) {
+    executionIntent = await transitionExecutionIntent(context.config.storage.intentsDir, intent.id, "cancelled", {
+      spendReservation: { ...intent.spendReservation!, active: false },
+      outcome: { changedOnChain: false, safeToRetry: true, reason: "dry_run" }
+    });
+    return {
+      request,
+      policyDecision,
+      spendHistory: history,
+      dryRun: true,
+      autosign: mainnetAgentWalletAutosignView(configured),
+      intent: executionIntent
+    };
+  }
+  await assertMainnetAgentWalletPaymentAllowed(context, request, intent.id);
+  executionIntent = intent.status === "policy_checked" || intent.status === "approved"
+    ? intent
+    : await transitionExecutionIntent(context.config.storage.intentsDir, intent.id, "policy_checked", {
+        policy: { status: policyDecision.status, matchedRules: policyDecision.matchedRules }
+      });
+  if (policyDecision.status === "denied") {
+    await transitionExecutionIntent(context.config.storage.intentsDir, intent.id, "denied", {
+      spendReservation: { ...intent.spendReservation!, active: false },
+      outcome: { changedOnChain: false, safeToRetry: false, reason: "policy_denied" }
+    });
+    throw policyDeniedError();
+  }
   if (policyDecision.status === "requires_approval") {
+    await transitionExecutionIntent(context.config.storage.intentsDir, intent.id, "cancelled", {
+      spendReservation: { ...intent.spendReservation!, active: false },
+      outcome: { changedOnChain: false, safeToRetry: false, reason: "interactive_approval_not_supported" }
+    });
     throw new StellarAgentError({
       code: "APPROVAL_REQUIRED",
       message: "Mainnet agent-wallet autosigning requires policy status 'allowed'.",
@@ -5311,19 +6084,65 @@ async function sendMainnetAgentWalletPayment(
       details: { policyDecision }
     });
   }
-  const autosign = await assertMainnetAgentWalletAutosignPayment(context, request, options);
+  const autosign = await assertMainnetAgentWalletAutosignPayment(context, request, options, intent.id);
+  executionIntent = await claimExecutionIntent(context.config.storage.intentsDir, intent.id);
+  executionIntent = await transitionExecutionIntent(context.config.storage.intentsDir, intent.id, "approved");
   const { sendPayment } = await import("@stellar-agent/stellar");
-  const mainnetProfile = resolveNetworkProfile("mainnet", context.config.profiles);
-  const transaction = await sendPayment({
-    source: autosign.source,
-    destination: options.to,
-    amount: options.amount,
-    asset: options.asset,
-    ...(options.memo === undefined ? {} : { memo: options.memo }),
-    profile: mainnetProfile,
-    allowRealFunds: true,
-    feeStrategy: parseFeeStrategy(options.feeStrategy),
-    ...(context.options.noCache === undefined ? {} : { noCache: context.options.noCache })
+  let transaction;
+  try {
+    transaction = await sendPayment({
+      source: autosign.source,
+      destination: options.to,
+      amount: options.amount,
+      asset: options.asset,
+      ...(options.memo === undefined ? {} : { memo: options.memo }),
+      profile: mainnetProfile,
+      allowRealFunds: true,
+      feeStrategy: parseFeeStrategy(options.feeStrategy),
+      ...(context.options.noCache === undefined ? {} : { noCache: context.options.noCache }),
+      lifecycle: {
+        onBuilt: async (built) => {
+          executionIntent = await transitionExecutionIntent(context.config.storage.intentsDir, intent.id, "signed", {
+            transaction: {
+              signedXdr: built.signedXdr,
+              hash: built.hash,
+              envelopeHash: built.hash,
+              ...(built.source === undefined ? {} : { source: built.source }),
+              ...(built.sequence === undefined ? {} : { sequence: built.sequence }),
+              ...(built.expiresAt === undefined ? {} : { expiresAt: built.expiresAt })
+            },
+            outcome: { changedOnChain: false, safeToRetry: false }
+          });
+        },
+        onSubmission: async (attempt) => {
+          executionIntent = await updateExecutionIntent(context.config.storage.intentsDir, intent.id, (current) => ({
+            ...current,
+            status: attempt.status === "transport_unknown" ? "confirmation_unknown" : "submitted",
+            submission: {
+              attempts: [...(current.submission?.attempts ?? []), { ...attempt, at: new Date().toISOString() }]
+            },
+            outcome: {
+              changedOnChain: attempt.status === "transport_unknown" ? "unknown" : "unknown",
+              safeToRetry: false
+            }
+          }));
+        }
+      },
+      executionLockPath: sequenceExecutionLockPath(context, "mainnet", configured.publicKey)
+    });
+  } catch (error) {
+    const current = await readExecutionIntent(context.config.storage.intentsDir, intent.id);
+    if (!["submitted", "confirmation_unknown"].includes(current.status)) {
+      await transitionExecutionIntent(context.config.storage.intentsDir, intent.id, "failed", {
+        spendReservation: { ...current.spendReservation!, active: false },
+        outcome: { changedOnChain: false, safeToRetry: false, reason: serializeError(error).code }
+      });
+    }
+    throw error;
+  }
+  executionIntent = await transitionExecutionIntent(context.config.storage.intentsDir, intent.id, "confirmed", {
+    spendReservation: { ...executionIntent.spendReservation!, active: false },
+    outcome: { changedOnChain: true, safeToRetry: false }
   });
   const eventLog = join(context.config.storage.logsDir, "events.jsonl");
   await appendEvent(eventLog, {
@@ -5365,7 +6184,7 @@ async function sendMainnetAgentWalletPayment(
           walletName: configured.walletName,
           publicKey: configured.publicKey,
           secretKeyEnvVar: configured.autosign?.secretKeyEnvVar,
-          riskBudgetState: coreMainnetAgentWalletRiskBudgetState(configured, autosign.spendHistory, request),
+          riskBudgetState: coreMainnetAgentWalletRiskBudgetState(configured, history, request),
           warning: autosign.warning
         },
         realFundsAcknowledged: true
@@ -5377,8 +6196,13 @@ async function sendMainnetAgentWalletPayment(
     },
     transaction,
     ...(transaction.ledger === undefined ? {} : { ledger: { confirmedLedger: transaction.ledger } }),
-    eventLog
+    eventLog,
+    intentId: intent.id,
+    ...(executionIntent.idempotencyKeyHash === undefined ? {} : { idempotencyKeyHash: executionIntent.idempotencyKeyHash }),
+    outcome: { status: "confirmed", changedOnChain: true, safeToRetry: false },
+    ...(executionIntent.submission?.attempts === undefined ? {} : { attempts: executionIntent.submission.attempts })
   });
+  executionIntent = await updateExecutionIntent(context.config.storage.intentsDir, intent.id, (current) => ({ ...current, receiptPath }));
   await appendEvent(eventLog, {
     event: "receipt_written",
     status: "success",
@@ -5402,23 +6226,21 @@ async function sendMainnetAgentWalletPayment(
     },
     transaction,
     receiptPath,
+    intent: executionIntent,
     realFunds: true
   };
 }
 
-async function assertMainnetAgentWalletBalanceWithinBudget(
-  context: CliContext,
-  wallet: MainnetAgentWalletConfig
-): Promise<void> {
+async function assertMainnetAgentWalletBalanceWithinBudget(context: CliContext, wallet: MainnetAgentWalletConfig): Promise<void> {
   assertCoreMainnetAgentWalletBalanceWithinBudget(wallet, await readMainnetAgentWalletBalances(context, wallet));
 }
 
-async function readMainnetAgentWalletBalances(
-  context: CliContext,
-  wallet: MainnetAgentWalletConfig
-): Promise<Array<{ asset: string; balance: string }>> {
+async function readMainnetAgentWalletBalances(context: CliContext, wallet: MainnetAgentWalletConfig): Promise<Array<{ asset: string; balance: string }>> {
   if (!wallet.publicKey) {
-    throw new StellarAgentError({ code: "WALLET_NOT_FOUND", message: "Mainnet agent wallet public key is missing." });
+    throw new StellarAgentError({
+      code: "WALLET_NOT_FOUND",
+      message: "Mainnet agent wallet public key is missing."
+    });
   }
   try {
     const profile = resolveNetworkProfile("mainnet", context.config.profiles);
@@ -5433,12 +6255,12 @@ async function readMainnetAgentWalletBalances(
   }
 }
 
-async function fetchMainnetAgentWalletBalances(
-  publicKey: string,
-  profile: NetworkProfile
-): Promise<Array<{ asset: string; balance: string }>> {
+async function fetchMainnetAgentWalletBalances(publicKey: string, profile: NetworkProfile): Promise<Array<{ asset: string; balance: string }>> {
   if (!profile.horizonUrl) {
-    throw new StellarAgentError({ code: "HORIZON_UNAVAILABLE", message: "Mainnet Horizon is not configured." });
+    throw new StellarAgentError({
+      code: "HORIZON_UNAVAILABLE",
+      message: "Mainnet Horizon is not configured."
+    });
   }
   const response = await fetch(`${profile.horizonUrl.replace(/\/$/, "")}/accounts/${publicKey}`, {
     signal: AbortSignal.timeout(15_000)
@@ -5459,10 +6281,7 @@ async function fetchMainnetAgentWalletBalances(
 }
 
 async function mainnetAgentWalletPolicyFingerprint(context: CliContext): Promise<{ path: string; fingerprint: string }> {
-  const policyPath =
-    context.options.policy ??
-    process.env.STELLAR_AGENT_POLICY ??
-    join(context.config.storage.policiesDir, defaultPolicyFilename("mainnet"));
+  const policyPath = context.options.policy ?? process.env.STELLAR_AGENT_POLICY ?? join(context.config.storage.policiesDir, defaultPolicyFilename("mainnet"));
   const resolvedPath = resolvePath(policyPath);
   let source: string;
   try {
@@ -5474,18 +6293,18 @@ async function mainnetAgentWalletPolicyFingerprint(context: CliContext): Promise
   return { path: resolvedPath, fingerprint: sha256(source) };
 }
 
-async function mainnetAgentWalletSpendCounters(
-  context: CliContext,
-  wallet: MainnetAgentWalletConfig
-): Promise<NonNullable<MainnetAgentWalletConfig["spendCounters"]>> {
+async function mainnetAgentWalletSpendCounters(context: CliContext, wallet: MainnetAgentWalletConfig): Promise<NonNullable<MainnetAgentWalletConfig["spendCounters"]>> {
   const entries = await Promise.all(
-    wallet.riskBudget.allowedAssets.map(async (asset) => [
-      asset,
-      await spendHistoryFromReceipts(context.config.storage.receiptsDir, {
-        profile: "mainnet",
-        asset
-      })
-    ] as const)
+    wallet.riskBudget.allowedAssets.map(
+      async (asset) =>
+        [
+          asset,
+          await spendHistoryFromReceipts(context.config.storage.receiptsDir, {
+            profile: "mainnet",
+            asset
+          })
+        ] as const
+    )
   );
   return {
     updatedAt: new Date().toISOString(),
@@ -5495,9 +6314,7 @@ async function mainnetAgentWalletSpendCounters(
 }
 
 function configFingerprintPath(context: CliContext): string {
-  return resolvePath(
-    context.options.config ?? process.env.STELLAR_AGENT_CONFIG ?? join(context.config.storage.rootDir, "config.yaml")
-  );
+  return resolvePath(context.options.config ?? process.env.STELLAR_AGENT_CONFIG ?? join(context.config.storage.rootDir, "config.yaml"));
 }
 
 function sha256(value: string): string {
@@ -5545,7 +6362,7 @@ function parseBatchPaymentsFile(raw: string): Array<{ destination: string; amoun
     throw new StellarAgentError({
       code: "INVALID_INPUT",
       message: "Batch payment file must be valid JSON.",
-      hint: "Use an array like [{\"destination\":\"G...\",\"amount\":\"1\",\"asset\":\"XLM\"}].",
+      hint: 'Use an array like [{"destination":"G...","amount":"1","asset":"XLM"}].',
       docs: "docs/troubleshooting.md#batch-transaction-failed",
       details: String(error)
     });
@@ -5611,11 +6428,7 @@ async function evaluateBatchPaymentPolicy(
       histories.set(assetKey, incrementBatchSpendHistory(history, request));
     }
   }
-  const status: "allowed" | "denied" | "requires_approval" = results.some((result) => result.policyDecision.status === "denied")
-    ? "denied"
-    : results.some((result) => result.policyDecision.status === "requires_approval")
-      ? "requires_approval"
-      : "allowed";
+  const status: "allowed" | "denied" | "requires_approval" = results.some((result) => result.policyDecision.status === "denied") ? "denied" : results.some((result) => result.policyDecision.status === "requires_approval") ? "requires_approval" : "allowed";
   return {
     aggregate: {
       status,
@@ -5625,10 +6438,7 @@ async function evaluateBatchPaymentPolicy(
   };
 }
 
-function incrementBatchSpendHistory(
-  history: Awaited<ReturnType<typeof loadSpendHistory>>,
-  request: PaymentRequest
-): Awaited<ReturnType<typeof loadSpendHistory>> {
+function incrementBatchSpendHistory(history: Awaited<ReturnType<typeof loadSpendHistory>>, request: PaymentRequest): Awaited<ReturnType<typeof loadSpendHistory>> {
   if (history.unreadable) return history;
   const amount = parseAmount(request.amount, request.asset).stroops;
   const add = (value: string | undefined) => formatStroops(parseNonnegativeStroops(value, request.asset) + amount);
@@ -5637,11 +6447,7 @@ function incrementBatchSpendHistory(
     dailyTotal: add(history.dailyTotal),
     monthlyTotal: add(history.monthlyTotal),
     knownRecipients: [...new Set([...(history.knownRecipients ?? []), request.destination])],
-    ...(request.domain
-      ? { knownDomains: [...new Set([...(history.knownDomains ?? []), request.domain])] }
-      : history.knownDomains === undefined
-        ? {}
-        : { knownDomains: history.knownDomains })
+    ...(request.domain ? { knownDomains: [...new Set([...(history.knownDomains ?? []), request.domain])] } : history.knownDomains === undefined ? {} : { knownDomains: history.knownDomains })
   };
 }
 
@@ -5660,11 +6466,7 @@ function policyDeniedError(): StellarAgentError {
   });
 }
 
-function assertGuardedRealFundsProfile(
-  context: CliContext,
-  profile: NetworkProfile,
-  options: { allowRealFunds: boolean; acknowledgeRealFunds: boolean; action: string }
-): void {
+function assertGuardedRealFundsProfile(context: CliContext, profile: NetworkProfile, options: { allowRealFunds: boolean; acknowledgeRealFunds: boolean; action: string }): void {
   if (!profile.realFunds) return;
   if (!context.config.profiles.mainnet?.enabled) {
     throw new StellarAgentError({
@@ -5685,10 +6487,12 @@ function assertGuardedRealFundsProfile(
 }
 
 async function verifyReceiptAgainstLedger(context: CliContext, receipt: Awaited<ReturnType<typeof readReceipt>>) {
-  const transaction = (await lookupTransaction(
-    receipt.transaction.hash,
-    resolveNetworkProfile(receipt.profile, context.config.profiles)
-  )) as { hash?: string; ledger?: number; successful?: boolean; fee_charged?: string | number };
+  const transaction = (await lookupTransaction(receipt.transaction.hash, resolveNetworkProfile(receipt.profile, context.config.profiles))) as {
+    hash?: string;
+    ledger?: number;
+    successful?: boolean;
+    fee_charged?: string | number;
+  };
   if (transaction.hash !== receipt.transaction.hash) {
     throw new StellarAgentError({
       code: "LEDGER_LOOKUP_FAILED",
@@ -5722,7 +6526,8 @@ async function verifyReceiptAgainstLedger(context: CliContext, receipt: Awaited<
 function printSuccess(options: CliOptions, data: unknown, humanMessage: string): void {
   process.exitCode = EXIT_CODES.success;
   if (options.json) {
-    process.stdout.write(`${JSON.stringify(ok(redactSensitive(data)))}\n`);
+    const redacted = redactSensitive(data);
+    process.stdout.write(`${JSON.stringify(ok(redacted, continuationForResult(redacted)))}\n`);
     return;
   }
   if (!options.quiet) {
@@ -5732,9 +6537,7 @@ function printSuccess(options: CliOptions, data: unknown, humanMessage: string):
 }
 
 function printWalletConnectPairingUri(options: CliOptions, uri: string): void {
-  const message = options.json
-    ? JSON.stringify({ event: "walletconnect_pairing_uri", uri })
-    : `WalletConnect pairing URI:\n${uri}\nScan this URI or QR payload with your WalletConnect wallet.`;
+  const message = options.json ? JSON.stringify({ event: "walletconnect_pairing_uri", uri }) : `WalletConnect pairing URI:\n${uri}\nScan this URI or QR payload with your WalletConnect wallet.`;
   process.stderr.write(`${message}\n`);
 }
 
@@ -5753,14 +6556,9 @@ function printVersion(options: CliOptions): void {
 
 function printError(options: CliOptions, error: unknown): void {
   const serialized = serializeError(error);
-  process.exitCode =
-    error instanceof StellarAgentError
-      ? error.exitCode
-      : serialized.code === "INVALID_INPUT"
-        ? EXIT_CODES.usage
-        : EXIT_CODES.general;
+  process.exitCode = error instanceof StellarAgentError ? error.exitCode : serialized.code === "INVALID_INPUT" ? EXIT_CODES.usage : EXIT_CODES.general;
   if (options.json) {
-    process.stdout.write(`${JSON.stringify(fail(serialized))}\n`);
+    process.stdout.write(`${JSON.stringify(fail(serialized, continuationForError(serialized)))}\n`);
     return;
   }
   process.stderr.write(`${serialized.code}: ${serialized.message}\n`);
@@ -5782,23 +6580,11 @@ function commanderErrorToStellarAgentError(error: unknown): unknown {
 }
 
 function isCommanderError(error: unknown): error is { code: string; exitCode?: number; message: string } {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    typeof (error as { code?: unknown }).code === "string" &&
-    (error as { code: string }).code.startsWith("commander.") &&
-    "message" in error &&
-    typeof (error as { message?: unknown }).message === "string"
-  );
+  return typeof error === "object" && error !== null && "code" in error && typeof (error as { code?: unknown }).code === "string" && (error as { code: string }).code.startsWith("commander.") && "message" in error && typeof (error as { message?: unknown }).message === "string";
 }
 
 function isCommanderHelpOrVersionExit(error: unknown): boolean {
-  return (
-    isCommanderError(error) &&
-    (error.code === "commander.helpDisplayed" || error.code === "commander.version") &&
-    (error.exitCode === undefined || error.exitCode === EXIT_CODES.success)
-  );
+  return isCommanderError(error) && (error.code === "commander.helpDisplayed" || error.code === "commander.version") && (error.exitCode === undefined || error.exitCode === EXIT_CODES.success);
 }
 
 function normalizeCommanderMessage(message: string): string {
@@ -5955,7 +6741,9 @@ async function writeOperationReceipt(
       ledger?: number;
       successful: boolean;
       feeCharged?: string;
+      transport?: "rpc" | "horizon";
     };
+    intent?: Awaited<ReturnType<typeof readExecutionIntent>>;
   }
 ): Promise<string> {
   const eventLog = join(context.config.storage.logsDir, "events.jsonl");
@@ -5966,12 +6754,22 @@ async function writeOperationReceipt(
     networkPassphrase: profile.networkPassphrase,
     realFunds: false,
     operation: args.operation,
-    policyDecision: args.policyDecision
-      ? { status: args.policyDecision.status, matchedRules: args.policyDecision.matchedRules }
-      : { status: "allowed", matchedRules: ["testnet_operation"] },
+    policyDecision: args.policyDecision ? { status: args.policyDecision.status, matchedRules: args.policyDecision.matchedRules } : { status: "allowed", matchedRules: ["testnet_operation"] },
     transaction: args.transaction,
     ...(args.transaction.ledger === undefined ? {} : { ledger: { confirmedLedger: args.transaction.ledger } }),
-    eventLog
+    eventLog,
+    ...(args.intent === undefined
+      ? {}
+      : {
+          intentId: args.intent.id,
+          ...(args.intent.idempotencyKeyHash === undefined ? {} : { idempotencyKeyHash: args.intent.idempotencyKeyHash }),
+          outcome: {
+            status: "confirmed" as const,
+            changedOnChain: true as const,
+            safeToRetry: false
+          },
+          ...(args.intent.submission?.attempts === undefined ? {} : { attempts: args.intent.submission.attempts })
+        })
   });
   await appendEvent(eventLog, {
     event: "receipt_written",
@@ -5994,7 +6792,9 @@ async function writeBlendReceipt(
       ledger?: number;
       successful: boolean;
       feeCharged?: string;
+      transport?: "rpc" | "horizon";
     };
+    intent?: Awaited<ReturnType<typeof readExecutionIntent>>;
   }
 ): Promise<string> {
   const eventLog = join(context.config.storage.logsDir, "events.jsonl");
@@ -6011,7 +6811,19 @@ async function writeBlendReceipt(
     },
     transaction: args.transaction,
     ...(args.transaction.ledger === undefined ? {} : { ledger: { confirmedLedger: args.transaction.ledger } }),
-    eventLog
+    eventLog,
+    ...(args.intent === undefined
+      ? {}
+      : {
+          intentId: args.intent.id,
+          ...(args.intent.idempotencyKeyHash === undefined ? {} : { idempotencyKeyHash: args.intent.idempotencyKeyHash }),
+          outcome: {
+            status: "confirmed" as const,
+            changedOnChain: true as const,
+            safeToRetry: false
+          },
+          ...(args.intent.submission?.attempts === undefined ? {} : { attempts: args.intent.submission.attempts })
+        })
   });
   await appendEvent(eventLog, {
     event: "receipt_written",
@@ -6034,7 +6846,9 @@ async function writeSubmittedXdrReceipt(
       ledger?: number;
       successful: boolean;
       feeCharged?: string;
+      transport?: "rpc" | "horizon";
     };
+    intent?: Awaited<ReturnType<typeof readExecutionIntent>>;
   }
 ): Promise<string> {
   const eventLog = join(context.config.storage.logsDir, "events.jsonl");
@@ -6061,13 +6875,23 @@ async function writeSubmittedXdrReceipt(
     operation,
     policyDecision: {
       status: args.profile.realFunds ? "requires_approval" : "allowed",
-      matchedRules: args.profile.realFunds
-        ? ["signed_xdr_external_wallet", "real_funds_acknowledged"]
-        : ["signed_xdr_external_wallet"]
+      matchedRules: args.profile.realFunds ? ["signed_xdr_external_wallet", "real_funds_acknowledged"] : ["signed_xdr_external_wallet"]
     },
     transaction: args.transaction,
     ...(args.transaction.ledger === undefined ? {} : { ledger: { confirmedLedger: args.transaction.ledger } }),
-    eventLog
+    eventLog,
+    ...(args.intent === undefined
+      ? {}
+      : {
+          intentId: args.intent.id,
+          ...(args.intent.idempotencyKeyHash === undefined ? {} : { idempotencyKeyHash: args.intent.idempotencyKeyHash }),
+          outcome: {
+            status: "confirmed" as const,
+            changedOnChain: true as const,
+            safeToRetry: false
+          },
+          ...(args.intent.submission?.attempts === undefined ? {} : { attempts: args.intent.submission.attempts })
+        })
   });
   await appendEvent(eventLog, {
     event: "receipt_written",
@@ -6079,6 +6903,50 @@ async function writeSubmittedXdrReceipt(
   return receiptPath;
 }
 
+function intentLifecycle(context: CliContext, intentId: string, setIntent: (intent: Awaited<ReturnType<typeof readExecutionIntent>>) => void) {
+  return {
+    onBuilt: async (built: { hash: string; signedXdr: string; source?: string; sequence?: string; expiresAt?: string }) => {
+      const next = await transitionExecutionIntent(context.config.storage.intentsDir, intentId, "signed", {
+        transaction: {
+          hash: built.hash,
+          envelopeHash: built.hash,
+          signedXdr: built.signedXdr,
+          ...(built.source === undefined ? {} : { source: built.source }),
+          ...(built.sequence === undefined ? {} : { sequence: built.sequence }),
+          ...(built.expiresAt === undefined ? {} : { expiresAt: built.expiresAt })
+        },
+        outcome: { changedOnChain: false, safeToRetry: false }
+      });
+      setIntent(next);
+    },
+    onSubmission: async (attempt: { transport: "rpc" | "horizon"; endpoint: string; status: string; detail?: unknown }) => {
+      const next = await updateExecutionIntent(context.config.storage.intentsDir, intentId, (current) => ({
+        ...current,
+        status: attempt.status === "transport_unknown" ? "confirmation_unknown" : "submitted",
+        submission: {
+          attempts: [...(current.submission?.attempts ?? []), { ...attempt, at: new Date().toISOString() }]
+        },
+        outcome: { changedOnChain: "unknown", safeToRetry: false }
+      }));
+      setIntent(next);
+    }
+  };
+}
+
+async function failUnsubmittedIntent(context: CliContext, intentId: string, error: unknown): Promise<void> {
+  const current = await readExecutionIntent(context.config.storage.intentsDir, intentId);
+  if (["submitted", "confirmation_unknown"].includes(current.status)) return;
+  await transitionExecutionIntent(context.config.storage.intentsDir, intentId, "failed", {
+    ...(current.spendReservation ? { spendReservation: { ...current.spendReservation, active: false } } : {}),
+    outcome: { changedOnChain: false, safeToRetry: false, reason: serializeError(error).code }
+  });
+}
+
+function sequenceExecutionLockPath(context: CliContext, profile: NetworkName, source: string): string {
+  const key = createHash("sha256").update(`${profile}:${source}`).digest("hex");
+  return join(context.config.storage.intentsDir, "sequences", key);
+}
+
 async function writeSubmittedPaymentApprovalReceipt(
   context: CliContext,
   args: {
@@ -6088,13 +6956,18 @@ async function writeSubmittedPaymentApprovalReceipt(
     signerPublicKey?: string;
     payment: PaymentRequest;
     policyDecision: PolicyDecision;
-    mainnetAgentWallet?: { warning: string; spendHistory: Awaited<ReturnType<typeof loadSpendHistory>> };
+    mainnetAgentWallet?: {
+      warning: string;
+      spendHistory: Awaited<ReturnType<typeof loadSpendHistory>>;
+    };
     transaction: {
       hash: string;
       ledger?: number;
       successful: boolean;
       feeCharged?: string;
+      transport?: "rpc" | "horizon";
     };
+    intent?: Awaited<ReturnType<typeof readExecutionIntent>>;
   }
 ): Promise<string> {
   const eventLog = join(context.config.storage.logsDir, "events.jsonl");
@@ -6129,11 +7002,7 @@ async function writeSubmittedPaymentApprovalReceipt(
                 armed: true,
                 walletName: context.config.mainnetAgentWallet?.walletName,
                 publicKey: context.config.mainnetAgentWallet?.publicKey,
-                riskBudgetState: coreMainnetAgentWalletRiskBudgetState(
-                  context.config.mainnetAgentWallet,
-                  args.mainnetAgentWallet.spendHistory,
-                  args.payment
-                ),
+                riskBudgetState: coreMainnetAgentWalletRiskBudgetState(context.config.mainnetAgentWallet, args.mainnetAgentWallet.spendHistory, args.payment),
                 warning: args.mainnetAgentWallet.warning
               }
             })
@@ -6145,7 +7014,19 @@ async function writeSubmittedPaymentApprovalReceipt(
     },
     transaction: args.transaction,
     ...(args.transaction.ledger === undefined ? {} : { ledger: { confirmedLedger: args.transaction.ledger } }),
-    eventLog
+    eventLog,
+    ...(args.intent === undefined
+      ? {}
+      : {
+          intentId: args.intent.id,
+          ...(args.intent.idempotencyKeyHash === undefined ? {} : { idempotencyKeyHash: args.intent.idempotencyKeyHash }),
+          outcome: {
+            status: "confirmed" as const,
+            changedOnChain: true as const,
+            safeToRetry: false
+          },
+          ...(args.intent.submission?.attempts === undefined ? {} : { attempts: args.intent.submission.attempts })
+        })
   });
   await appendEvent(eventLog, {
     event: "receipt_written",
@@ -6239,7 +7120,13 @@ async function receiptSummary(context: CliContext, options: { profile?: NetworkN
     realFundsCount: 0,
     totals: {} as Record<string, { amount: string; count: number }>,
     profiles: {} as Record<string, { count: number; realFundsCount: number }>,
-    latest: null as null | { path: string; id: string; command: string; createdAt: string; profile: NetworkName }
+    latest: null as null | {
+      path: string;
+      id: string;
+      command: string;
+      createdAt: string;
+      profile: NetworkName;
+    }
   };
   for (const path of paths) {
     try {
@@ -6553,11 +7440,7 @@ interface ContractExecutionContext {
   networkPassphrase: string;
 }
 
-function resolveContractExecutionContext(
-  context: CliContext,
-  network: string,
-  options: { mutating: boolean; allowRealFunds?: boolean; acknowledgeRealFunds?: boolean }
-): ContractExecutionContext {
+function resolveContractExecutionContext(context: CliContext, network: string, options: { mutating: boolean; allowRealFunds?: boolean; acknowledgeRealFunds?: boolean }): ContractExecutionContext {
   const realFunds = isRealFundsContractNetwork(network);
   const profile = realFunds ? context.config.profiles.mainnet : context.config.profiles.testnet;
   if (!profile) {
@@ -6595,11 +7478,7 @@ function isRealFundsContractNetwork(network: string): boolean {
   return ["mainnet", "public", "pubnet"].includes(network.toLowerCase());
 }
 
-async function resolveContractSource(
-  context: CliContext,
-  source: string,
-  options: { realFunds?: boolean } = {}
-): Promise<string> {
+async function resolveContractSource(context: CliContext, source: string, options: { realFunds?: boolean } = {}): Promise<string> {
   if (options.realFunds) {
     if (/^S[A-Z2-7]{55}$/.test(source)) {
       throw new StellarAgentError({
@@ -6636,11 +7515,7 @@ async function resolveContractSource(
   return source;
 }
 
-async function resolvePaymentSourcePublicKey(
-  context: CliContext,
-  source: string,
-  options: { realFunds?: boolean } = {}
-): Promise<string> {
+async function resolvePaymentSourcePublicKey(context: CliContext, source: string, options: { realFunds?: boolean } = {}): Promise<string> {
   if (/^G[A-Z2-7]{55}$/.test(source)) return source;
   if (options.realFunds && /^S[A-Z2-7]{55}$/.test(source)) {
     throw new StellarAgentError({
@@ -6663,8 +7538,7 @@ async function resolvePaymentSourcePublicKey(
 }
 
 if (isCliEntrypoint()) {
-  const argv =
-    process.argv[2] === "--" ? [process.argv[0] ?? "node", process.argv[1] ?? "stellar-agent", ...process.argv.slice(3)] : process.argv;
+  const argv = process.argv[2] === "--" ? [process.argv[0] ?? "node", process.argv[1] ?? "stellar-agent", ...process.argv.slice(3)] : process.argv;
   await buildProgram().parseAsync(argv);
 }
 

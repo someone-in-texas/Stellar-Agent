@@ -1,8 +1,8 @@
 # @stellar-agent/x402-client
 
-Local x402-style client support for the Testnet demo.
+Local x402-style Testnet demos plus a versioned production facilitator verification adapter.
 
-This package implements a concrete local `402 -> policy -> Testnet payment -> retry with proof` flow. It is not a full facilitator-backed Soroban auth-entry x402 implementation yet.
+The local `402 -> policy -> Testnet payment -> retry with proof` flow remains a demo. `verifyWithX402Facilitator` separately pins a production adapter to HTTPS, a network-passphrase hash, challenge, transaction, recipient, asset, amount, and an atomic persistent replay store.
 
 ## Install
 
@@ -19,10 +19,10 @@ stellar-agent pay x402 http://127.0.0.1:PORT/paid-report --allow-localhost-demo 
 
 ## Safety
 
-- This package is for local Testnet demos.
+- CLI flows are local Testnet demos; the facilitator verifier is a provider-neutral package API.
 - `verifyX402PaymentProof` validates local x402 proofs against Testnet payment evidence: amount, asset, destination, source, resource, nonce, freshness, success, and replay state.
 - Use Horizon-backed verification for real Testnet settlement checks. Mock verification is only for CI-safe demos and local examples.
-- Production facilitator-backed x402 support is intentionally out of scope for this release.
+- Facilitator responses remain untrusted. Deployments must authenticate the provider and independently reconcile settlement on Stellar.
 - Payment policy and receipts are handled by the CLI flow before and after Testnet payment submission.
 
 ## Server Verification

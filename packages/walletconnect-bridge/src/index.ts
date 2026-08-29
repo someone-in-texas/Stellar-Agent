@@ -1,4 +1,4 @@
-import { EXIT_CODES, NetworkName, StellarAgentError, redactSensitive, resolvePath } from "@stellar-agent/core";
+import { EXIT_CODES, NetworkName, SignerCapabilities, StellarAgentError, redactSensitive, resolvePath } from "@stellar-agent/core";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -40,14 +40,8 @@ export interface WalletConnectSession {
 }
 
 export interface WalletConnectSignClient {
-  connect(args: {
-    requiredNamespaces: Record<string, { chains: string[]; methods: string[]; events: string[] }>;
-  }): Promise<{ uri?: string; approval(): Promise<WalletConnectSession> }>;
-  request(args: {
-    topic: string;
-    chainId: WalletConnectStellarChain;
-    request: { method: WalletConnectStellarMethod; params: { xdr: string } };
-  }): Promise<unknown>;
+  connect(args: { requiredNamespaces: Record<string, { chains: string[]; methods: string[]; events: string[] }> }): Promise<{ uri?: string; approval(): Promise<WalletConnectSession> }>;
+  request(args: { topic: string; chainId: WalletConnectStellarChain; request: { method: WalletConnectStellarMethod; params: { xdr: string } } }): Promise<unknown>;
   session?: {
     getAll(): WalletConnectSession[];
   };
@@ -98,6 +92,20 @@ export interface WalletConnectSessionView {
 
 export const WALLETCONNECT_STELLAR_SIGN_METHOD: WalletConnectStellarMethod = "stellar_signXDR";
 
+export function walletConnectSignerCapabilities(session: WalletConnectSession, network: NetworkName): SignerCapabilities {
+  const accounts = parseWalletConnectSessionAccounts(session)
+    .filter((account) => walletConnectNetworkForChain(`stellar:${account.chain}` as WalletConnectStellarChain) === network)
+    .map((account) => account.address);
+  return {
+    provider: "walletconnect",
+    accounts,
+    networks: [network],
+    signTransaction: true,
+    signAuthEntry: false,
+    submitTransaction: false
+  };
+}
+
 export function walletConnectChainForNetwork(network: NetworkName): WalletConnectStellarChain {
   if (network === "testnet") return "stellar:testnet";
   if (network === "mainnet") return "stellar:pubnet";
@@ -126,10 +134,7 @@ export function walletConnectRequiredNamespaces(network: NetworkName) {
 export function walletConnectMetadata(wallet: WalletConnectWalletName = "lobstr"): WalletConnectMetadata {
   return {
     name: "Stellar Agent",
-    description:
-      wallet === "lobstr"
-        ? "External Stellar transaction signing for Stellar Agent approval requests through LOBSTR WalletConnect."
-        : "External Stellar transaction signing for Stellar Agent approval requests through WalletConnect.",
+    description: wallet === "lobstr" ? "External Stellar transaction signing for Stellar Agent approval requests through LOBSTR WalletConnect." : "External Stellar transaction signing for Stellar Agent approval requests through WalletConnect.",
     url: "https://github.com/someone-in-texas/Stellar-Agent",
     icons: []
   };
@@ -148,21 +153,13 @@ export function requireWalletConnectProjectId(projectId?: string): string {
   return resolved;
 }
 
-export async function createWalletConnectSignClient(args: {
-  projectId?: string | undefined;
-  metadata?: WalletConnectMetadata | undefined;
-  storagePath?: string | undefined;
-}): Promise<WalletConnectSignClient> {
+export async function createWalletConnectSignClient(args: { projectId?: string | undefined; metadata?: WalletConnectMetadata | undefined; storagePath?: string | undefined }): Promise<WalletConnectSignClient> {
   const module = await import("@walletconnect/sign-client");
   const SignClient = resolveWalletConnectSignClientExport(module);
   return (await SignClient.init(await walletConnectSignClientInitOptions(args))) as WalletConnectSignClient;
 }
 
-export async function walletConnectSignClientInitOptions(args: {
-  projectId?: string | undefined;
-  metadata?: WalletConnectMetadata | undefined;
-  storagePath?: string | undefined;
-}): Promise<WalletConnectSignClientInitOptions> {
+export async function walletConnectSignClientInitOptions(args: { projectId?: string | undefined; metadata?: WalletConnectMetadata | undefined; storagePath?: string | undefined }): Promise<WalletConnectSignClientInitOptions> {
   const projectId = requireWalletConnectProjectId(args.projectId);
   const metadata = args.metadata ?? walletConnectMetadata();
   if (!args.storagePath) return { projectId, metadata };
@@ -197,12 +194,7 @@ function hasWalletConnectSignClientInit(candidate: unknown): candidate is Wallet
   return typeof (candidate as { init?: unknown }).init === "function";
 }
 
-export async function pairWalletConnectSession(args: {
-  client: WalletConnectSignClient;
-  network: NetworkName;
-  onPairingUri?: ((uri: string) => void) | undefined;
-  timeoutMs?: number | undefined;
-}): Promise<WalletConnectSession> {
+export async function pairWalletConnectSession(args: { client: WalletConnectSignClient; network: NetworkName; onPairingUri?: ((uri: string) => void) | undefined; timeoutMs?: number | undefined }): Promise<WalletConnectSession> {
   const { uri, approval } = await args.client.connect({
     requiredNamespaces: walletConnectRequiredNamespaces(args.network)
   });
@@ -212,14 +204,7 @@ export async function pairWalletConnectSession(args: {
   return session;
 }
 
-export async function signTransactionXdrWithWalletConnect(args: {
-  client: WalletConnectSignClient;
-  network: NetworkName;
-  transactionXdr: string;
-  expectedSignerPublicKey?: string | undefined;
-  onPairingUri?: ((uri: string) => void) | undefined;
-  timeoutMs?: number | undefined;
-}): Promise<WalletConnectSignResult> {
+export async function signTransactionXdrWithWalletConnect(args: { client: WalletConnectSignClient; network: NetworkName; transactionXdr: string; expectedSignerPublicKey?: string | undefined; onPairingUri?: ((uri: string) => void) | undefined; timeoutMs?: number | undefined }): Promise<WalletConnectSignResult> {
   const chainId = walletConnectChainForNetwork(args.network);
   const session = await pairWalletConnectSession({
     client: args.client,
@@ -254,10 +239,7 @@ export function listWalletConnectSessions(client: WalletConnectSignClient): Wall
   return (client.session?.getAll() ?? []).map(walletConnectSessionView);
 }
 
-export async function disconnectWalletConnectSession(args: {
-  client: WalletConnectSignClient;
-  topic: string;
-}): Promise<{ topic: string; disconnected: true }> {
+export async function disconnectWalletConnectSession(args: { client: WalletConnectSignClient; topic: string }): Promise<{ topic: string; disconnected: true }> {
   if (!args.client.disconnect) {
     throw new StellarAgentError({
       code: "INVALID_INPUT",
@@ -298,10 +280,7 @@ export function walletConnectSessionView(session: WalletConnectSession): WalletC
   };
 }
 
-export function assertWalletConnectSessionSupportsNetwork(
-  session: WalletConnectSession,
-  network: NetworkName
-): WalletConnectAccount[] {
+export function assertWalletConnectSessionSupportsNetwork(session: WalletConnectSession, network: NetworkName): WalletConnectAccount[] {
   const expectedChain = walletConnectChainForNetwork(network);
   const accounts = parseWalletConnectSessionAccounts(session).filter((account) => account.raw.startsWith(`${expectedChain}:`));
   if (accounts.length === 0) {
@@ -343,10 +322,7 @@ export function extractSignedTransactionXdr(result: unknown): string {
   return signed;
 }
 
-function selectWalletConnectSigner(
-  accounts: WalletConnectAccount[],
-  expectedSignerPublicKey?: string
-): WalletConnectAccount | undefined {
+function selectWalletConnectSigner(accounts: WalletConnectAccount[], expectedSignerPublicKey?: string): WalletConnectAccount | undefined {
   if (!expectedSignerPublicKey) return accounts[0];
   const signer = accounts.find((account) => account.address === expectedSignerPublicKey);
   if (!signer) {

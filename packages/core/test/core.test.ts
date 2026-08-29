@@ -3,24 +3,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import {
-  assertMainnetAgentWalletPaymentPreflight,
-  compareAmount,
-  createDefaultConfig,
-  mainnetAgentWalletConfigFingerprint,
-  mainnetAgentWalletIntegrityFailures,
-  mainnetAgentWalletRiskBudgetState,
-  MainnetAgentWalletConfig,
-  parseAmount,
-  parseAsset,
-  redactSensitive,
-  resolvePath,
-  serializeError,
-  StellarAgentError,
-  writeFileAtomic
-} from "../src/index.js";
+import { assertMainnetAgentWalletPaymentPreflight, compareAmount, continuationForResult, createDefaultConfig, mainnetAgentWalletConfigFingerprint, mainnetAgentWalletIntegrityFailures, mainnetAgentWalletRiskBudgetState, MainnetAgentWalletConfig, parseAmount, parseAsset, redactSensitive, resolvePath, serializeError, StellarAgentError, writeFileAtomic } from "../src/index.js";
 
 describe("amount parsing", () => {
+  it("marks legacy successful transaction results as changed on chain", () => {
+    expect(continuationForResult({ transaction: { hash: "abc", successful: true } })).toMatchObject({
+      transactionHash: "abc",
+      changedOnChain: true,
+      safeToRetry: false
+    });
+    expect(continuationForResult({ transaction: { hash: "def" } })).toMatchObject({
+      changedOnChain: "unknown"
+    });
+  });
+
   it("normalizes XLM amounts to seven decimals", () => {
     expect(parseAmount("1").value).toBe("1.0000000");
     expect(parseAmount("1.25").stroops).toBe(12_500_000n);
@@ -75,7 +71,13 @@ describe("config and redaction", () => {
   });
 
   it("preserves explicit redaction metadata booleans", () => {
-    expect(redactSensitive({ redactions: { secretKeysIncluded: false }, hasSecret: true, secretPrinted: false })).toEqual({
+    expect(
+      redactSensitive({
+        redactions: { secretKeysIncluded: false },
+        hasSecret: true,
+        secretPrinted: false
+      })
+    ).toEqual({
       redactions: { secretKeysIncluded: false },
       hasSecret: true,
       secretPrinted: false
@@ -174,7 +176,13 @@ describe("Mainnet agent-wallet guards", () => {
     const { config, wallet, configPath, policyPath, policyFingerprint } = armedMainnetAgentWallet();
 
     expect(
-      mainnetAgentWalletIntegrityFailures({ wallet, config, configPath, policyPath, policyFingerprint })
+      mainnetAgentWalletIntegrityFailures({
+        wallet,
+        config,
+        configPath,
+        policyPath,
+        policyFingerprint
+      })
     ).toEqual([]);
     expect(
       mainnetAgentWalletIntegrityFailures({
@@ -247,11 +255,7 @@ describe("Mainnet agent-wallet guards", () => {
 
   it("reports risk budget state before and after a payment", () => {
     const { wallet } = armedMainnetAgentWallet();
-    const state = mainnetAgentWalletRiskBudgetState(
-      wallet,
-      { dailyTotal: "0.0100000", monthlyTotal: "0.0200000", knownRecipients: [] },
-      { destination, amount: "0.01", asset: "XLM", network: "mainnet" }
-    );
+    const state = mainnetAgentWalletRiskBudgetState(wallet, { dailyTotal: "0.0100000", monthlyTotal: "0.0200000", knownRecipients: [] }, { destination, amount: "0.01", asset: "XLM", network: "mainnet" });
 
     expect(state).toMatchObject({
       before: { dailyTotal: "0.0100000" },

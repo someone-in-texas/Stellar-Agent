@@ -1,6 +1,6 @@
 {
   "name": "@stellar-agent/mcp-server",
-  "version": "0.5.4",
+  "version": "0.6.0",
   "description": "MCP stdio server that exposes Stellar Agent Bridge CLI workflows as agent tools.",
   "type": "module",
   "license": "MIT",
@@ -14,7 +14,7 @@
   },
   "homepage": "https://github.com/someone-in-texas/Stellar-Agent/tree/main/packages/mcp-server#readme",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12.0"
   },
   "bin": {
     "stellar-agent-mcp": "./dist/server.js"

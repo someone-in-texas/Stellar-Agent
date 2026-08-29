@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.0
+
+- Upgraded direct Stellar dependencies to `@stellar/stellar-sdk` 17.0.1 and Node.js 22.12+, adopting property-style XDR unions and `Uint8Array` byte APIs while keeping the separately versioned Blend adapter boundary unchanged.
+- Added durable execution intents with idempotency keys, atomic spend reservations, explicit lifecycle states, reconciliation without blind resubmission, and machine-readable continuation guidance.
+- Added Stellar RPC submission and reconciliation with local transaction hashes and explicit terminal, pending, and confirmation-unknown outcome semantics; Horizon remains supported.
+- Added signer capability discovery, cryptographic signed-envelope verification, Soroban authorization-entry helpers, and simulation enforcement hooks.
+- Made approvals expiring, intent-bound, atomically claimed, and one-use; signed transaction approvals remain bound to the exact network and transaction body.
+- Added v2 hash-chained receipts and event logs, legacy v1 receipt reads, submission-attempt metadata, and `receipts verify-chain`.
+- Added a versioned HTTPS x402 facilitator verification adapter with network/challenge/settlement pinning and a persistent atomic replay store.
+- Added durable, cross-process-safe MPP session budget debits, while retaining the local Testnet demo protocols as explicit non-production fixtures.
+
 ## 0.5.4
 
 - Aligned direct Stellar SDK dependencies on the 16.3.0 LTS release, including current Protocol 28 XDR support and a patched Axios dependency.

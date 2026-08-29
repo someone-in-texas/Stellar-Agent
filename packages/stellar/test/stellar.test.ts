@@ -44,23 +44,20 @@ const wallet = {
 
 describe("stellar operations", () => {
   it("builds unsigned payment transaction XDR", async () => {
-    await expect(
-      buildPaymentTransactionXdr({
+    const fetchImpl = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify({ last_ledger_base_fee: "100", ledger_capacity_usage: "0", fee_charged: { p50: "100", p80: "100", p90: "100", p95: "100" } }));
+    try {
+      await expect(buildPaymentTransactionXdr({
         sourcePublicKey: wallet.publicKey,
         destination: wallet.publicKey,
         amount: "1",
         memo: "sign-me",
         sourceSequence: "1",
         profile: testnetProfile()
-      })
-    ).resolves.toMatchObject({
-      source: wallet.publicKey,
-      destination: wallet.publicKey,
-      amount: "1.0000000",
-      asset: "XLM",
-      networkPassphrase: "Test SDF Network ; September 2015",
-      xdr: expect.any(String)
-    });
+      })).resolves.toMatchObject({ source: wallet.publicKey, destination: wallet.publicKey, amount: "1.0000000", asset: "XLM", networkPassphrase: "Test SDF Network ; September 2015", xdr: expect.any(String) });
+    } finally {
+      globalThis.fetch = fetchImpl;
+    }
   });
 
   it("uses Horizon fee stats for unsigned payment XDR and caches fee lookups", async () => {
@@ -101,9 +98,7 @@ describe("stellar operations", () => {
         cached: true
       });
       expect(feeStatsCalls).toBe(1);
-      expect(stellarSessionCacheSnapshot()).toEqual([
-        expect.objectContaining({ key: "feeStats:https://horizon-testnet.stellar.org" })
-      ]);
+      expect(stellarSessionCacheSnapshot()).toEqual([expect.objectContaining({ key: "feeStats:https://horizon-testnet.stellar.org" })]);
     } finally {
       clearStellarSessionCache();
       globalThis.fetch = fetchImpl;
@@ -156,7 +151,13 @@ describe("stellar operations", () => {
         destination: wallet.publicKey,
         amount: "1",
         sourceSequence: "1",
-        profile: { ...testnetProfile(), name: "mainnet", network: "public", networkPassphrase: Networks.PUBLIC, realFunds: true },
+        profile: {
+          ...testnetProfile(),
+          name: "mainnet",
+          network: "public",
+          networkPassphrase: Networks.PUBLIC,
+          realFunds: true
+        },
         allowRealFunds: true
       })
     ).resolves.toMatchObject({
@@ -279,10 +280,7 @@ describe("stellar operations", () => {
   });
 
   it("deduplicates primary and additional claimable balance claimants", () => {
-    expect(resolveClaimableBalanceClaimants(wallet.publicKey, [wallet.publicKey, "GCLAIMANT"])).toEqual([
-      wallet.publicKey,
-      "GCLAIMANT"
-    ]);
+    expect(resolveClaimableBalanceClaimants(wallet.publicKey, [wallet.publicKey, "GCLAIMANT"])).toEqual([wallet.publicKey, "GCLAIMANT"]);
   });
 
   it("reports missing Stellar CLI for contract invocations", async () => {
@@ -324,24 +322,7 @@ describe("stellar operations", () => {
         stellarBinary: binary
       })
     ).resolves.toMatchObject({
-      command: [
-        binary,
-        "contract",
-        "invoke",
-        "--id",
-        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-        "--source-account",
-        "agent",
-        "--network",
-        "testnet",
-        "--config-dir",
-        "/tmp/stellar-config",
-        "--no-cache",
-        "--",
-        "hello",
-        "--to",
-        "world"
-      ]
+      command: [binary, "contract", "invoke", "--id", "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM", "--source-account", "agent", "--network", "testnet", "--config-dir", "/tmp/stellar-config", "--no-cache", "--", "hello", "--to", "world"]
     });
 
     await expect(
@@ -356,26 +337,7 @@ describe("stellar operations", () => {
         stellarBinary: binary
       })
     ).resolves.toMatchObject({
-      command: [
-        binary,
-        "contract",
-        "deploy",
-        "--source-account",
-        "agent",
-        "--network",
-        "testnet",
-        "--wasm",
-        "contract.wasm",
-        "--alias",
-        "hello",
-        "--rpc-url",
-        "https://soroban-testnet.stellar.org",
-        "--network-passphrase",
-        "Test SDF Network ; September 2015",
-        "--",
-        "--admin",
-        wallet.publicKey
-      ]
+      command: [binary, "contract", "deploy", "--source-account", "agent", "--network", "testnet", "--wasm", "contract.wasm", "--alias", "hello", "--rpc-url", "https://soroban-testnet.stellar.org", "--network-passphrase", "Test SDF Network ; September 2015", "--", "--admin", wallet.publicKey]
     });
 
     await expect(
@@ -388,21 +350,7 @@ describe("stellar operations", () => {
         stellarBinary: binary
       })
     ).resolves.toMatchObject({
-      command: [
-        binary,
-        "contract",
-        "upload",
-        "--source-account",
-        "agent",
-        "--network",
-        "testnet",
-        "--wasm",
-        "contract.wasm",
-        "--rpc-url",
-        "https://soroban-testnet.stellar.org",
-        "--network-passphrase",
-        "Test SDF Network ; September 2015"
-      ]
+      command: [binary, "contract", "upload", "--source-account", "agent", "--network", "testnet", "--wasm", "contract.wasm", "--rpc-url", "https://soroban-testnet.stellar.org", "--network-passphrase", "Test SDF Network ; September 2015"]
     });
 
     await expect(
@@ -415,21 +363,7 @@ describe("stellar operations", () => {
         stellarBinary: binary
       })
     ).resolves.toMatchObject({
-      command: [
-        binary,
-        "contract",
-        "asset",
-        "deploy",
-        "--source-account",
-        "agent",
-        "--network",
-        "testnet",
-        "--asset",
-        "native",
-        "--config-dir",
-        "/tmp/stellar-config",
-        "--no-cache"
-      ]
+      command: [binary, "contract", "asset", "deploy", "--source-account", "agent", "--network", "testnet", "--asset", "native", "--config-dir", "/tmp/stellar-config", "--no-cache"]
     });
 
     await expect(
@@ -440,16 +374,7 @@ describe("stellar operations", () => {
         stellarBinary: binary
       })
     ).resolves.toMatchObject({
-      command: [
-        binary,
-        "contract",
-        "info",
-        "interface",
-        "--contract-id",
-        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-        "--network",
-        "testnet"
-      ]
+      command: [binary, "contract", "info", "interface", "--contract-id", "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM", "--network", "testnet"]
     });
 
     await expect(
@@ -470,17 +395,7 @@ describe("stellar operations", () => {
         stellarBinary: binary
       })
     ).resolves.toMatchObject({
-      command: [
-        binary,
-        "contract",
-        "read",
-        "--network",
-        "testnet",
-        "--id",
-        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-        "--output",
-        "json"
-      ]
+      command: [binary, "contract", "read", "--network", "testnet", "--id", "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM", "--output", "json"]
     });
 
     await expect(
@@ -491,17 +406,7 @@ describe("stellar operations", () => {
         stellarBinary: binary
       })
     ).resolves.toMatchObject({
-      command: [
-        binary,
-        "contract",
-        "fetch",
-        "--network",
-        "testnet",
-        "--wasm-hash",
-        "0123456789abcdef",
-        "--out-file",
-        "/tmp/contract.wasm"
-      ]
+      command: [binary, "contract", "fetch", "--network", "testnet", "--wasm-hash", "0123456789abcdef", "--out-file", "/tmp/contract.wasm"]
     });
 
     await expect(
@@ -516,24 +421,7 @@ describe("stellar operations", () => {
         stellarBinary: binary
       })
     ).resolves.toMatchObject({
-      command: [
-        binary,
-        "contract",
-        "extend",
-        "--source-account",
-        "agent",
-        "--network",
-        "testnet",
-        "--ledgers-to-extend",
-        "535679",
-        "--id",
-        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-        "--key",
-        "counter",
-        "--durability",
-        "persistent",
-        "--ttl-ledger-only"
-      ]
+      command: [binary, "contract", "extend", "--source-account", "agent", "--network", "testnet", "--ledgers-to-extend", "535679", "--id", "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM", "--key", "counter", "--durability", "persistent", "--ttl-ledger-only"]
     });
 
     await expect(
@@ -544,17 +432,7 @@ describe("stellar operations", () => {
         stellarBinary: binary
       })
     ).resolves.toMatchObject({
-      command: [
-        binary,
-        "contract",
-        "restore",
-        "--source-account",
-        "agent",
-        "--network",
-        "testnet",
-        "--wasm-hash",
-        "0123456789abcdef"
-      ]
+      command: [binary, "contract", "restore", "--source-account", "agent", "--network", "testnet", "--wasm-hash", "0123456789abcdef"]
     });
   });
 
@@ -647,8 +525,9 @@ describe("stellar operations", () => {
   it("submits signed transaction XDR to Horizon", async () => {
     let requestedUrl = "";
     let requestedBody = "";
+    const signedXdr = signedTestTransactionXdr();
     const result = await submitTransactionXdr({
-      xdr: "AAAAAgSIGNED",
+      xdr: signedXdr,
       profile: testnetProfile(),
       fetchImpl: async (input, init) => {
         requestedUrl = String(input);
@@ -665,19 +544,20 @@ describe("stellar operations", () => {
     });
 
     expect(requestedUrl).toBe("https://horizon-testnet.stellar.org/transactions");
-    expect(requestedBody).toBe("tx=AAAAAgSIGNED");
+    expect(requestedBody).toBe(`tx=${encodeURIComponent(signedXdr)}`);
     expect(result).toEqual({
       hash: "abc123",
       ledger: 456,
       successful: true,
-      feeCharged: "100"
+      feeCharged: "100",
+      transport: "horizon"
     });
   });
 
   it("polls Horizon when signed transaction submission returns an unconfirmed hash", async () => {
     const requests: string[] = [];
     const result = await submitTransactionXdr({
-      xdr: "AAAAAgSIGNED",
+      xdr: signedTestTransactionXdr(),
       profile: testnetProfile(),
       fetchImpl: async (input) => {
         requests.push(String(input));
@@ -693,23 +573,43 @@ describe("stellar operations", () => {
       }
     });
 
-    expect(requests).toEqual([
-      "https://horizon-testnet.stellar.org/transactions",
-      "https://horizon-testnet.stellar.org/transactions/abc123"
-    ]);
+    expect(requests).toEqual(["https://horizon-testnet.stellar.org/transactions", "https://horizon-testnet.stellar.org/transactions/abc123"]);
     expect(result).toEqual({
       hash: "abc123",
       ledger: 456,
       successful: true,
-      feeCharged: "200"
+      feeCharged: "200",
+      transport: "horizon"
     });
+  });
+
+  it("reports Horizon transport failures as confirmation unknown", async () => {
+    const attempts: Array<{ status: string; hash: string }> = [];
+    await expect(
+      submitTransactionXdr({
+        xdr: signedTestTransactionXdr(),
+        profile: testnetProfile(),
+        fetchImpl: async () => { throw new Error("connection reset"); },
+        lifecycle: { onSubmission: async (attempt) => { attempts.push({ status: attempt.status, hash: attempt.hash }); } }
+      })
+    ).rejects.toMatchObject({
+      code: "TRANSACTION_TIMEOUT",
+      details: { changedOnChain: "unknown", safeToRetry: false, hash: expect.any(String) }
+    });
+    expect(attempts).toEqual([{ status: "transport_unknown", hash: expect.any(String) }]);
   });
 
   it("requires explicit approval before signed transaction XDR submission on real-funds profiles", async () => {
     await expect(
       submitTransactionXdr({
         xdr: "AAAAAgSIGNED",
-        profile: { ...testnetProfile(), name: "mainnet", network: "public", networkPassphrase: Networks.PUBLIC, realFunds: true }
+        profile: {
+          ...testnetProfile(),
+          name: "mainnet",
+          network: "public",
+          networkPassphrase: Networks.PUBLIC,
+          realFunds: true
+        }
       })
     ).rejects.toMatchObject({ code: "MAINNET_NOT_ENABLED" });
   });
@@ -719,7 +619,14 @@ describe("stellar operations", () => {
     const signedXdr = signedPaymentXdrFixture();
     const result = await submitTransactionXdr({
       xdr: signedXdr,
-      profile: { ...testnetProfile(), name: "mainnet", network: "public", networkPassphrase: Networks.PUBLIC, realFunds: true, horizonUrl: "https://horizon.stellar.org" },
+      profile: {
+        ...testnetProfile(),
+        name: "mainnet",
+        network: "public",
+        networkPassphrase: Networks.PUBLIC,
+        realFunds: true,
+        horizonUrl: "https://horizon.stellar.org"
+      },
       allowRealFunds: true,
       fetchImpl: async (input) => {
         requestedUrl = String(input);
@@ -743,7 +650,13 @@ describe("stellar operations", () => {
     await expect(
       submitTransactionXdr({
         xdr: unsignedXdr,
-        profile: { ...testnetProfile(), name: "mainnet", network: "public", networkPassphrase: Networks.PUBLIC, realFunds: true },
+        profile: {
+          ...testnetProfile(),
+          name: "mainnet",
+          network: "public",
+          networkPassphrase: Networks.PUBLIC,
+          realFunds: true
+        },
         allowRealFunds: true
       })
     ).rejects.toMatchObject({
@@ -797,6 +710,25 @@ describe("stellar operations", () => {
     }
   });
 });
+
+function signedTestTransactionXdr(): string {
+  const source = Keypair.random();
+  const transaction = new TransactionBuilder(new Account(source.publicKey(), "1"), {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.TESTNET
+  })
+    .addOperation(
+      Operation.payment({
+        destination: Keypair.random().publicKey(),
+        asset: Asset.native(),
+        amount: "1"
+      })
+    )
+    .setTimeout(60)
+    .build();
+  transaction.sign(source);
+  return transaction.toXDR();
+}
 
 function predicateType(predicate: any): string | undefined {
   return predicate?.type ?? predicate?.switch?.().name;
@@ -907,6 +839,6 @@ function accountFixture() {
 async function fakeStellarBinary(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "stellar-agent-fake-cli-"));
   const binary = join(dir, "stellar");
-  await writeFile(binary, "#!/bin/sh\necho fake-stellar \"$@\"\n", { mode: 0o755 });
+  await writeFile(binary, '#!/bin/sh\necho fake-stellar "$@"\n', { mode: 0o755 });
   return binary;
 }

@@ -8,6 +8,7 @@ import { mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from "node:fs/p
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import { createServer } from "node:http";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { stringify } from "yaml";
 import { buildProgram, isCliEntrypoint } from "../src/index.js";
@@ -35,11 +36,17 @@ vi.mock("@stellar-agent/walletconnect-bridge", () => ({
     walletConnectMockState.createClientCalls.push(args);
     return { mockWalletConnectClient: true };
   }),
-  disconnectWalletConnectSession: vi.fn(async (_args: any) => ({ topic: _args.topic, disconnected: true })),
+  disconnectWalletConnectSession: vi.fn(async (_args: any) => ({
+    topic: _args.topic,
+    disconnected: true
+  })),
   listWalletConnectSessions: vi.fn(() => []),
   pairWalletConnectSession: vi.fn(async (args: any) => {
     args.onPairingUri?.("wc:test-pairing-uri");
-    return { topic: "topic-test", namespaces: { stellar: { accounts: [], methods: ["stellar_signXDR"] } } };
+    return {
+      topic: "topic-test",
+      namespaces: { stellar: { accounts: [], methods: ["stellar_signXDR"] } }
+    };
   }),
   signTransactionXdrWithWalletConnect: vi.fn(async (args: any) => {
     walletConnectMockState.signCalls.push(args);
@@ -62,12 +69,24 @@ vi.mock("@stellar-agent/walletconnect-bridge", () => ({
       method: "stellar_signXDR"
     };
   }),
-  walletConnectMetadata: vi.fn((wallet: string) => ({ name: "Stellar Agent", description: wallet, url: "https://example.test", icons: [] })),
+  walletConnectMetadata: vi.fn((wallet: string) => ({
+    name: "Stellar Agent",
+    description: wallet,
+    url: "https://example.test",
+    icons: []
+  })),
   walletConnectSessionView: vi.fn((session: any) => ({
     topic: session.topic,
     peerName: session.peer?.metadata?.name,
     peerUrl: session.peer?.metadata?.url,
-    accounts: [{ namespace: "stellar", chain: "testnet", address: walletConnectMockState.signerPublicKey, raw: `stellar:testnet:${walletConnectMockState.signerPublicKey}` }]
+    accounts: [
+      {
+        namespace: "stellar",
+        chain: "testnet",
+        address: walletConnectMockState.signerPublicKey,
+        raw: `stellar:testnet:${walletConnectMockState.signerPublicKey}`
+      }
+    ]
   }))
 }));
 
@@ -87,7 +106,10 @@ describe("CLI package entrypoint", () => {
 
   it("prints plain and JSON version output", async () => {
     await expect(runCliText(["--version"])).resolves.toBe(`${cliVersion}\n`);
-    await expect(runCli(["--json", "--version"])).resolves.toEqual({ ok: true, data: { version: cliVersion } });
+    await expect(runCli(["--json", "--version"])).resolves.toEqual({
+      ok: true,
+      data: { version: cliVersion }
+    });
   });
 
   it("stops before dispatching subcommands when the root version flag is present", async () => {
@@ -152,19 +174,7 @@ describe("CLI package entrypoint", () => {
   it("publishes JSON schemas for agent-facing CLI outputs", async () => {
     const schemaDir = fileURLToPath(new URL("../schemas/cli/", import.meta.url));
     const entries = (await readdir(schemaDir)).sort();
-    const expected = [
-      "approval-list.schema.json",
-      "approval-request.schema.json",
-      "defi-aquarius-swap-preflight.schema.json",
-      "envelope.schema.json",
-      "index.json",
-      "market-lp-preflight.schema.json",
-      "pay-quote.schema.json",
-      "policy-explain.schema.json",
-      "receipt.schema.json",
-      "receipts-latest.schema.json",
-      "receipts-summary.schema.json"
-    ];
+    const expected = ["approval-list.schema.json", "approval-request.schema.json", "defi-aquarius-swap-preflight.schema.json", "envelope.schema.json", "index.json", "intent.schema.json", "market-lp-preflight.schema.json", "pay-quote.schema.json", "policy-explain.schema.json", "receipt.schema.json", "receipts-latest.schema.json", "receipts-summary.schema.json"];
     expect(entries).toEqual(expected);
     expect(cliPackage.files).toContain("schemas");
     expect(cliPackage.exports["./schemas/cli/index.json"]).toBe("./schemas/cli/index.json");
@@ -210,6 +220,7 @@ describe("CLI package entrypoint", () => {
       updatedAt: "2026-06-08T12:00:00.000Z",
       network: "testnet",
       requestHash: "hash",
+      boundIntentId: "int_test",
       summary: "Pay 1 XLM",
       payment: paymentRequest,
       redactions: { secretKeysIncluded: false }
@@ -270,11 +281,17 @@ describe("CLI package entrypoint", () => {
             totalShares: "10.0000000",
             reserves: [
               { asset: "XLM", amount: "10.0000000" },
-              { asset: "USD:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", amount: "20.0000000" }
+              {
+                asset: "USD:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+                amount: "20.0000000"
+              }
             ]
           },
           assets: ["XLM"],
-          nominalExposure: { value: "2.0000000", semantics: "sum_of_max_reserve_amounts_not_mark_to_market" },
+          nominalExposure: {
+            value: "2.0000000",
+            semantics: "sum_of_max_reserve_amounts_not_mark_to_market"
+          },
           risk: { notes: ["Preflight only."] }
         }
       },
@@ -342,22 +359,7 @@ describe("CLI contract receipts", () => {
       stderr: `Signing transaction: ${transactionHash}\n`
     });
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "contract",
-      "asset-deploy",
-      "--source",
-      "agent",
-      "--asset",
-      "native",
-      "--stellar-binary",
-      stellarBinary,
-      "--stellar-config-dir",
-      "/tmp/stellar-cli-test",
-      "--stellar-no-cache"
-    ]);
+    const output = await runCli(["--config", configPath, "--json", "contract", "asset-deploy", "--source", "agent", "--asset", "native", "--stellar-binary", stellarBinary, "--stellar-config-dir", "/tmp/stellar-cli-test", "--stellar-no-cache"]);
 
     expect(output.ok).toBe(true);
     expect(output.data).toMatchObject({
@@ -392,21 +394,7 @@ describe("CLI contract receipts", () => {
       stderr: `Signing transaction: ${transactionHash}\n`
     });
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "contract",
-      "asset-deploy",
-      "--source",
-      "agent",
-      "--asset",
-      "native",
-      "--network",
-      "local",
-      "--stellar-binary",
-      stellarBinary
-    ]);
+    const output = await runCli(["--config", configPath, "--json", "contract", "asset-deploy", "--source", "agent", "--asset", "native", "--network", "local", "--stellar-binary", stellarBinary]);
 
     expect(output.ok).toBe(true);
     expect(output.data.transactionHash).toBeUndefined();
@@ -419,21 +407,7 @@ describe("CLI contract receipts", () => {
       stderr: `Signing transaction: ${transactionHash}\n`
     });
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "contract",
-      "asset-deploy",
-      "--source",
-      "agent",
-      "--asset",
-      "native",
-      "--network",
-      "mainnet",
-      "--stellar-binary",
-      stellarBinary
-    ]);
+    const output = await runCli(["--config", configPath, "--json", "contract", "asset-deploy", "--source", "agent", "--asset", "native", "--network", "mainnet", "--stellar-binary", stellarBinary]);
 
     expect(output).toMatchObject({
       ok: false,
@@ -453,23 +427,7 @@ describe("CLI contract receipts", () => {
       { mainnetEnabled: true }
     );
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "contract",
-      "asset-deploy",
-      "--source",
-      "agent",
-      "--asset",
-      "native",
-      "--network",
-      "mainnet",
-      "--allow-real-funds",
-      "--i-understand-real-funds",
-      "--stellar-binary",
-      stellarBinary
-    ]);
+    const output = await runCli(["--config", configPath, "--json", "contract", "asset-deploy", "--source", "agent", "--asset", "native", "--network", "mainnet", "--allow-real-funds", "--i-understand-real-funds", "--stellar-binary", stellarBinary]);
 
     expect(output).toMatchObject({
       ok: false,
@@ -499,24 +457,9 @@ describe("CLI contract receipts", () => {
       )
     );
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--profile",
-      "mainnet",
-      "--json",
-      "tx",
-      "submit-xdr",
-      "--xdr",
-      signedPaymentXdrFixture(),
-      "--allow-real-funds",
-      "--i-understand-real-funds"
-    ]);
+    const output = await runCli(["--config", configPath, "--profile", "mainnet", "--json", "tx", "submit-xdr", "--xdr", signedPaymentXdrFixture(), "--allow-real-funds", "--i-understand-real-funds"]);
 
-    expect(fetchSpy).toHaveBeenCalledWith(
-      "https://horizon.stellar.org/transactions",
-      expect.objectContaining({ method: "POST" })
-    );
+    expect(fetchSpy).toHaveBeenCalledWith("https://horizon.stellar.org/transactions", expect.objectContaining({ method: "POST" }));
     expect(output).toMatchObject({
       ok: true,
       data: {
@@ -543,7 +486,7 @@ describe("CLI contract receipts", () => {
         successful: true
       }
     });
-    expect(JSON.stringify(receipt)).not.toContain("\"S");
+    expect(JSON.stringify(receipt)).not.toContain('"S');
   });
 
   it("writes payment receipts for signed payment approval submission", async () => {
@@ -576,29 +519,13 @@ describe("CLI contract receipts", () => {
       signerPublicKey,
       signedTransactionXdr: signedXdr
     });
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          hash: transactionHash,
-          ledger: 12345,
-          successful: true,
-          fee_charged: "100"
-        })
-      )
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      String(input).includes("/accounts/")
+        ? new Response(JSON.stringify({ signers: [{ key: signerPublicKey, weight: 1, type: "ed25519_public_key" }], thresholds: { med_threshold: 1 } }))
+        : new Response(JSON.stringify({ hash: transactionHash, ledger: 12345, successful: true, fee_charged: "100" }))
     );
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--profile",
-      "mainnet",
-      "--json",
-      "tx",
-      "submit-approval",
-      approval.id,
-      "--allow-real-funds",
-      "--i-understand-real-funds"
-    ]);
+    const output = await runCli(["--config", configPath, "--profile", "mainnet", "--json", "tx", "submit-approval", approval.id, "--allow-real-funds", "--i-understand-real-funds"]);
 
     expect(output).toMatchObject({
       ok: true,
@@ -635,7 +562,7 @@ describe("CLI contract receipts", () => {
         successful: true
       }
     });
-    expect(JSON.stringify(receipt)).not.toContain("\"S");
+    expect(JSON.stringify(receipt)).not.toContain('"S');
   });
 
   it("records WalletConnect signed XDR on an approval without submitting it", async () => {
@@ -661,20 +588,7 @@ describe("CLI contract receipts", () => {
     });
     const fetchSpy = vi.spyOn(globalThis, "fetch");
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "approval",
-      "sign-walletconnect",
-      approval.id,
-      "--wallet",
-      "lobstr",
-      "--project-id",
-      "project-test",
-      "--timeout-ms",
-      "10"
-    ]);
+    const output = await runCli(["--config", configPath, "--json", "approval", "sign-walletconnect", approval.id, "--wallet", "lobstr", "--project-id", "project-test", "--timeout-ms", "10"]);
 
     expect(output).toMatchObject({
       ok: true,
@@ -722,51 +636,39 @@ describe("CLI contract receipts", () => {
     walletConnectMockState.createClientCalls = [];
     walletConnectMockState.closeClientCalls = [];
 
-    await expect(
-      runCli(["--config", configPath, "--json", "wallet", "walletconnect", "status", "--project-id", "project-test"])
-    ).resolves.toMatchObject({
+    await expect(runCli(["--config", configPath, "--json", "wallet", "walletconnect", "status", "--project-id", "project-test"])).resolves.toMatchObject({
       ok: true,
       data: { wallet: "lobstr", sessions: [], custody: "external_wallet" }
     });
-    await expect(
-      runCli([
-        "--config",
-        configPath,
-        "--json",
-        "wallet",
-        "walletconnect",
-        "disconnect",
-        "--topic",
-        "topic-test",
-        "--project-id",
-        "project-test"
-      ])
-    ).resolves.toMatchObject({
+    await expect(runCli(["--config", configPath, "--json", "wallet", "walletconnect", "disconnect", "--topic", "topic-test", "--project-id", "project-test"])).resolves.toMatchObject({
       ok: true,
-      data: { wallet: "lobstr", topic: "topic-test", disconnected: true, custody: "external_wallet" }
+      data: {
+        wallet: "lobstr",
+        topic: "topic-test",
+        disconnected: true,
+        custody: "external_wallet"
+      }
     });
-    await expect(
-      runCli([
-        "--config",
-        configPath,
-        "--json",
-        "wallet",
-        "walletconnect",
-        "pair",
-        "--project-id",
-        "project-test",
-        "--timeout-ms",
-        "10"
-      ])
-    ).resolves.toMatchObject({
+    await expect(runCli(["--config", configPath, "--json", "wallet", "walletconnect", "pair", "--project-id", "project-test", "--timeout-ms", "10"])).resolves.toMatchObject({
       ok: true,
-      data: { wallet: "lobstr", network: "testnet", pairingUriPrinted: true, custody: "external_wallet" }
+      data: {
+        wallet: "lobstr",
+        network: "testnet",
+        pairingUriPrinted: true,
+        custody: "external_wallet"
+      }
     });
 
     expect(walletConnectMockState.createClientCalls).toEqual([
-      expect.objectContaining({ storagePath: join(config.storage.rootDir, "walletconnect", "sessions.db") }),
-      expect.objectContaining({ storagePath: join(config.storage.rootDir, "walletconnect", "sessions.db") }),
-      expect.objectContaining({ storagePath: join(config.storage.rootDir, "walletconnect", "sessions.db") })
+      expect.objectContaining({
+        storagePath: join(config.storage.rootDir, "walletconnect", "sessions.db")
+      }),
+      expect.objectContaining({
+        storagePath: join(config.storage.rootDir, "walletconnect", "sessions.db")
+      }),
+      expect.objectContaining({
+        storagePath: join(config.storage.rootDir, "walletconnect", "sessions.db")
+      })
     ]);
     expect(walletConnectMockState.closeClientCalls).toHaveLength(3);
   });
@@ -788,20 +690,7 @@ describe("CLI contract receipts", () => {
       }
     });
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--profile",
-      "mainnet",
-      "--json",
-      "approval",
-      "sign-walletconnect",
-      approval.id,
-      "--wallet",
-      "lobstr",
-      "--project-id",
-      "project-test"
-    ]);
+    const output = await runCli(["--config", configPath, "--profile", "mainnet", "--json", "approval", "sign-walletconnect", approval.id, "--wallet", "lobstr", "--project-id", "project-test"]);
 
     expect(output).toMatchObject({
       ok: false,
@@ -823,19 +712,7 @@ describe("CLI contract receipts", () => {
       )
     );
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "pay",
-      "quote",
-      "--to",
-      "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
-      "--amount",
-      "1",
-      "--fee-strategy",
-      "p95"
-    ]);
+    const output = await runCli(["--config", configPath, "--json", "pay", "quote", "--to", "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "--amount", "1", "--fee-strategy", "p95"]);
 
     expect(output).toMatchObject({
       ok: true,
@@ -857,21 +734,20 @@ describe("CLI contract receipts", () => {
     await writeFile(
       batchPath,
       JSON.stringify([
-        { destination: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", amount: "1", asset: "XLM" },
-        { destination: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", amount: "2", asset: "XLM" }
+        {
+          destination: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+          amount: "1",
+          asset: "XLM"
+        },
+        {
+          destination: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+          amount: "2",
+          asset: "XLM"
+        }
       ])
     );
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "pay",
-      "batch",
-      "--file",
-      batchPath,
-      "--dry-run"
-    ]);
+    const output = await runCli(["--config", configPath, "--json", "pay", "batch", "--file", batchPath, "--dry-run"]);
 
     expect(output).toMatchObject({
       ok: true,
@@ -888,19 +764,7 @@ describe("CLI contract receipts", () => {
 
   it("rejects invalid fee strategies with a docs-linked hint", async () => {
     const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "pay",
-      "quote",
-      "--to",
-      "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
-      "--amount",
-      "1",
-      "--fee-strategy",
-      "fastest"
-    ]);
+    const output = await runCli(["--config", configPath, "--json", "pay", "quote", "--to", "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "--amount", "1", "--fee-strategy", "fastest"]);
 
     expect(output).toMatchObject({
       ok: false,
@@ -919,22 +783,7 @@ describe("CLI contract receipts", () => {
     await writeFile(policyPath, policyToYaml(DEFAULT_TESTNET_POLICY));
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ last_ledger_base_fee: "100" })));
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--policy",
-      policyPath,
-      "--profile",
-      "mainnet",
-      "--json",
-      "--no-cache",
-      "pay",
-      "quote",
-      "--to",
-      "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
-      "--amount",
-      "0.01"
-    ]);
+    const output = await runCli(["--config", configPath, "--policy", policyPath, "--profile", "mainnet", "--json", "--no-cache", "pay", "quote", "--to", "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "--amount", "0.01"]);
 
     expect(output).toMatchObject({
       ok: true,
@@ -952,19 +801,7 @@ describe("CLI contract receipts", () => {
   it("uses the default local policy for local payment quotes", async () => {
     const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { localProfile: true, testnetPolicy: true });
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--profile",
-      "local",
-      "--json",
-      "pay",
-      "quote",
-      "--to",
-      "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
-      "--amount",
-      "1"
-    ]);
+    const output = await runCli(["--config", configPath, "--profile", "local", "--json", "pay", "quote", "--to", "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "--amount", "1"]);
 
     expect(output).toMatchObject({
       ok: true,
@@ -1030,18 +867,56 @@ describe("CLI contract receipts", () => {
     });
   });
 
+  it("resumes an approved Testnet payment on its original durable intent", async () => {
+    const { configPath, config } = await createCliFixture({ stdout: "", stderr: "" });
+    const originalHorizonUrl = config.profiles.testnet.horizonUrl;
+    const originalRpcUrl = config.profiles.testnet.rpcUrl;
+    await mkdir(config.storage.policiesDir, { recursive: true });
+    await writeFile(join(config.storage.policiesDir, "default-testnet.yaml"), policyToYaml({ ...DEFAULT_TESTNET_POLICY, approval: { ...DEFAULT_TESTNET_POLICY.approval, requireForAllPayments: true } }));
+    const destination = Keypair.random().publicKey();
+    const first = await runCli(["--config", configPath, "--json", "pay", "send", "--to", destination, "--amount", "0.0000001", "--idempotency-key", "approval-job"]);
+    expect(first).toMatchObject({ ok: false, error: { code: "APPROVAL_REQUIRED", details: { approvalId: expect.any(String), intentId: expect.any(String) } } });
+    const { approvalId, intentId } = first.error.details;
+    const pendingRetry = await runCli(["--config", configPath, "--json", "pay", "send", "--to", destination, "--amount", "0.0000001", "--idempotency-key", "approval-job"]);
+    expect(pendingRetry).toMatchObject({ ok: false, error: { code: "APPROVAL_REQUIRED", details: { approvalId, intentId } } });
+    expect((await readdir(config.storage.approvalsDir)).filter((name) => name.endsWith(".json"))).toHaveLength(1);
+    await decideApprovalRequest({ approvalsDir: config.storage.approvalsDir, id: approvalId, approved: true });
+    const server = createServer((request, response) => {
+      response.setHeader("content-type", "application/json");
+      if (request.url?.startsWith("/fee_stats")) response.end(JSON.stringify({ fee_charged: { p50: "100", p70: "100", p90: "100", p95: "100", p99: "100" } }));
+      else if (request.url?.startsWith("/accounts/")) response.end(JSON.stringify(accountFixture(request.url.split("/").at(-1)!)));
+      else if (request.url === "/transactions") response.end(JSON.stringify({ hash: transactionHash, ledger: 123, successful: true, fee_charged: "100" }));
+      else if (request.url === "/") {
+        let body = "";
+        request.on("data", (chunk) => { body += chunk; });
+        request.on("end", () => {
+          const rpc = JSON.parse(body);
+          response.end(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result: rpc.method === "sendTransaction" ? { status: "PENDING", hash: transactionHash, latestLedger: 122, latestLedgerCloseTime: "1" } : { status: "SUCCESS", txHash: transactionHash, ledger: 123, createdAt: "1", applicationOrder: 1, feeBump: false } }));
+        });
+      }
+      else { response.statusCode = 404; response.end(JSON.stringify({ error: "not found" })); }
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    config.profiles.testnet.horizonUrl = `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}`;
+    config.profiles.testnet.rpcUrl = config.profiles.testnet.horizonUrl;
+    await writeFile(configPath, stringify(config));
+    try {
+      const second = await runCli(["--config", configPath, "--json", "pay", "send", "--to", destination, "--amount", "0.0000001", "--idempotency-key", "approval-job", "--approval-id", approvalId]);
+      expect(second.ok, JSON.stringify(second)).toBe(true);
+      expect(second).toMatchObject({ ok: true, data: { intent: { id: intentId, status: "confirmed" }, receiptPath: expect.any(String) } });
+    } finally {
+      config.profiles.testnet.horizonUrl = originalHorizonUrl;
+      config.profiles.testnet.rpcUrl = originalRpcUrl;
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+    expect(await readdir(config.storage.intentsDir)).toContain(`${intentId}.json`);
+  });
+
   it("initializes local policies under a local-specific filename", async () => {
     const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { localProfile: true });
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "policy",
-      "init",
-      "--network",
-      "local"
-    ]);
+    const output = await runCli(["--config", configPath, "--json", "policy", "init", "--network", "local"]);
 
     expect(output).toMatchObject({
       ok: true,
@@ -1128,9 +1003,7 @@ describe("CLI contract receipts", () => {
         network: "testnet",
         realFunds: false,
         files: expect.arrayContaining(["package.json", "server.mjs", "README.md"]),
-        commands: expect.arrayContaining([
-          "stellar-agent pay x402 http://127.0.0.1:8787/paid-report --allow-localhost-demo --json"
-        ])
+        commands: expect.arrayContaining(["stellar-agent pay x402 http://127.0.0.1:8787/paid-report --allow-localhost-demo --json"])
       }
     });
     await expect(readFile(join(out, "server.mjs"), "utf8")).resolves.toContain("verifyPaymentProof");
@@ -1168,19 +1041,7 @@ describe("CLI contract receipts", () => {
   it("prints a copyable approval bridge URL without starting the server", async () => {
     const { configPath, config } = await createCliFixture({ stdout: "", stderr: "" });
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "approval",
-      "open",
-      "--host",
-      "127.0.0.1",
-      "--port",
-      "8787",
-      "--token",
-      "token with spaces"
-    ]);
+    const output = await runCli(["--config", configPath, "--json", "approval", "open", "--host", "127.0.0.1", "--port", "8787", "--token", "token with spaces"]);
 
     expect(output).toMatchObject({
       ok: true,
@@ -1212,9 +1073,7 @@ describe("CLI contract receipts", () => {
           apiBaseUrl: expect.any(String),
           assets: expect.arrayContaining([expect.objectContaining({ symbol: "XLM" })])
         },
-        commands: expect.arrayContaining([
-          "stellar-agent defi aquarius swap preflight --from XLM --to AQUA --amount 0.01 --slippage-bps 100 --json"
-        ])
+        commands: expect.arrayContaining(["stellar-agent defi aquarius swap preflight --from XLM --to AQUA --amount 0.01 --slippage-bps 100 --json"])
       }
     });
   });
@@ -1225,26 +1084,7 @@ describe("CLI contract receipts", () => {
     const destination = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(accountFixture())));
 
-    const created = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "mainnet",
-      "agent-wallet",
-      "create",
-      "--address",
-      address,
-      "--max-balance",
-      "125",
-      "--daily-limit",
-      "5",
-      "--per-tx-limit",
-      "1",
-      "--asset",
-      "XLM",
-      "--allow-destination",
-      destination
-    ]);
+    const created = await runCli(["--config", configPath, "--json", "mainnet", "agent-wallet", "create", "--address", address, "--max-balance", "125", "--daily-limit", "5", "--per-tx-limit", "1", "--asset", "XLM", "--allow-destination", destination]);
 
     expect(created).toMatchObject({
       ok: true,
@@ -1257,17 +1097,9 @@ describe("CLI contract receipts", () => {
         warning: expect.stringContaining("bounded, not safe")
       }
     });
-    expect(JSON.stringify(created)).not.toContain("\"S");
+    expect(JSON.stringify(created)).not.toContain('"S');
 
-    const armed = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "mainnet",
-      "agent-wallet",
-      "arm",
-      "--i-understand-real-funds"
-    ]);
+    const armed = await runCli(["--config", configPath, "--json", "mainnet", "agent-wallet", "arm", "--i-understand-real-funds"]);
 
     expect(armed).toMatchObject({
       ok: true,
@@ -1302,36 +1134,9 @@ describe("CLI contract receipts", () => {
     const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
     const address = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 
-    await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "mainnet",
-      "agent-wallet",
-      "create",
-      "--address",
-      address,
-      "--allow-destination",
-      address
-    ]);
+    await runCli(["--config", configPath, "--json", "mainnet", "agent-wallet", "create", "--address", address, "--allow-destination", address]);
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--profile",
-      "mainnet",
-      "--json",
-      "tx",
-      "request-payment-signature",
-      "--from",
-      "mainnet-agent",
-      "--to",
-      address,
-      "--amount",
-      "0.01",
-      "--allow-real-funds",
-      "--i-understand-real-funds"
-    ]);
+    const output = await runCli(["--config", configPath, "--profile", "mainnet", "--json", "tx", "request-payment-signature", "--from", "mainnet-agent", "--to", address, "--amount", "0.01", "--allow-real-funds", "--i-understand-real-funds"]);
 
     expect(output).toMatchObject({
       ok: false,
@@ -1347,30 +1152,9 @@ describe("CLI contract receipts", () => {
     const address = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(accountFixture())));
 
-    await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "mainnet",
-      "agent-wallet",
-      "create",
-      "--address",
-      address,
-      "--max-balance",
-      "25",
-      "--allow-destination",
-      address
-    ]);
+    await runCli(["--config", configPath, "--json", "mainnet", "agent-wallet", "create", "--address", address, "--max-balance", "25", "--allow-destination", address]);
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "mainnet",
-      "agent-wallet",
-      "arm",
-      "--i-understand-real-funds"
-    ]);
+    const output = await runCli(["--config", configPath, "--json", "mainnet", "agent-wallet", "arm", "--i-understand-real-funds"]);
 
     expect(output).toMatchObject({
       ok: false,
@@ -1385,28 +1169,7 @@ describe("CLI contract receipts", () => {
     const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
     const signer = Keypair.random();
 
-    const enabled = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "mainnet",
-      "agent-wallet",
-      "enable",
-      "--address",
-      signer.publicKey(),
-      "--max-balance",
-      "125",
-      "--daily-limit",
-      "5",
-      "--per-tx-limit",
-      "1",
-      "--allow-destination",
-      "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
-      "--enable-autosign",
-      "--secret-key-env",
-      "STELLAR_AGENT_TEST_SECRET",
-      "--i-understand-agent-wallet-autosign"
-    ]);
+    const enabled = await runCli(["--config", configPath, "--json", "mainnet", "agent-wallet", "enable", "--address", signer.publicKey(), "--max-balance", "125", "--daily-limit", "5", "--per-tx-limit", "1", "--allow-destination", "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "--enable-autosign", "--secret-key-env", "STELLAR_AGENT_TEST_SECRET", "--i-understand-agent-wallet-autosign"]);
 
     expect(enabled).toMatchObject({
       ok: true,
@@ -1426,24 +1189,7 @@ describe("CLI contract receipts", () => {
   it("keeps Mainnet pay send blocked outside the configured agent-wallet account", async () => {
     const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--profile",
-      "mainnet",
-      "--json",
-      "pay",
-      "send",
-      "--from",
-      "agent",
-      "--to",
-      "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
-      "--amount",
-      "0.01",
-      "--allow-real-funds",
-      "--i-understand-real-funds",
-      "--i-understand-agent-wallet-autosign"
-    ]);
+    const output = await runCli(["--config", configPath, "--profile", "mainnet", "--json", "pay", "send", "--from", "agent", "--to", "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "--amount", "0.01", "--allow-real-funds", "--i-understand-real-funds", "--i-understand-agent-wallet-autosign"]);
 
     expect(output).toMatchObject({
       ok: false,
@@ -1464,28 +1210,18 @@ describe("CLI contract receipts", () => {
       if (url.includes("/transactions")) transactionSubmitCalls += 1;
       if (url.includes("/accounts/")) return new Response(JSON.stringify(accountFixture(signer.publicKey())));
       if (url.includes("/fee_stats")) return new Response(JSON.stringify({ last_ledger_base_fee: "100" }));
-      return new Response(JSON.stringify({ hash: transactionHash, ledger: 12345, successful: true, fee_charged: "100" }));
+      return new Response(
+        JSON.stringify({
+          hash: transactionHash,
+          ledger: 12345,
+          successful: true,
+          fee_charged: "100"
+        })
+      );
     });
     await enableArmedAutosignWallet(configPath, signer.publicKey(), destination);
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--profile",
-      "mainnet",
-      "--json",
-      "pay",
-      "send",
-      "--from",
-      "mainnet-agent",
-      "--to",
-      destination,
-      "--amount",
-      "0.01",
-      "--allow-real-funds",
-      "--i-understand-real-funds",
-      "--i-understand-agent-wallet-autosign"
-    ]);
+    const output = await runCli(["--config", configPath, "--profile", "mainnet", "--json", "pay", "send", "--from", "mainnet-agent", "--to", destination, "--amount", "0.01", "--allow-real-funds", "--i-understand-real-funds", "--i-understand-agent-wallet-autosign"]);
 
     expect(output).toMatchObject({
       ok: false,
@@ -1514,57 +1250,24 @@ describe("CLI contract receipts", () => {
       if (url.includes("/accounts/")) return new Response(JSON.stringify(accountFixture(signer.publicKey())));
       if (url.includes("/fee_stats")) return new Response(JSON.stringify({ last_ledger_base_fee: "100" }));
       if (url.includes("/transactions")) {
-        return new Response(JSON.stringify({ hash: transactionHash, ledger: 12345, successful: true, fee_charged: "100" }));
+        return new Response(
+          JSON.stringify({
+            hash: transactionHash,
+            ledger: 12345,
+            successful: true,
+            fee_charged: "100"
+          })
+        );
       }
       return new Response(JSON.stringify({}));
     });
 
     try {
       await writeMainnetAgentWalletAutosignPolicy(config);
-      const enabled = await runCli([
-        "--config",
-        configPath,
-        "--json",
-        "mainnet",
-        "agent-wallet",
-        "enable",
-        "--address",
-        signer.publicKey(),
-        "--max-balance",
-        "125",
-        "--daily-limit",
-        "5",
-        "--per-tx-limit",
-        "1",
-        "--allow-destination",
-        destination,
-        "--enable-autosign",
-        "--secret-key-env",
-        "STELLAR_AGENT_TEST_SECRET",
-        "--i-understand-agent-wallet-autosign",
-        "--arm",
-        "--i-understand-real-funds"
-      ]);
+      const enabled = await runCli(["--config", configPath, "--json", "mainnet", "agent-wallet", "enable", "--address", signer.publicKey(), "--max-balance", "125", "--daily-limit", "5", "--per-tx-limit", "1", "--allow-destination", destination, "--enable-autosign", "--secret-key-env", "STELLAR_AGENT_TEST_SECRET", "--i-understand-agent-wallet-autosign", "--arm", "--i-understand-real-funds"]);
       expect(enabled).toMatchObject({ ok: true, data: { armed: true, status: "armed" } });
 
-      const output = await runCli([
-        "--config",
-        configPath,
-        "--profile",
-        "mainnet",
-        "--json",
-        "pay",
-        "send",
-        "--from",
-        "mainnet-agent",
-        "--to",
-        destination,
-        "--amount",
-        "0.01",
-        "--allow-real-funds",
-        "--i-understand-real-funds",
-        "--i-understand-agent-wallet-autosign"
-      ]);
+      const output = await runCli(["--config", configPath, "--profile", "mainnet", "--json", "pay", "send", "--from", "mainnet-agent", "--to", destination, "--amount", "0.01", "--allow-real-funds", "--i-understand-real-funds", "--i-understand-agent-wallet-autosign"]);
 
       expect(output).toMatchObject({
         ok: true,
@@ -1616,50 +1319,10 @@ describe("CLI contract receipts", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(accountFixture(signer.publicKey()))));
 
     try {
-      const enabled = await runCli([
-        "--config",
-        configPath,
-        "--json",
-        "mainnet",
-        "agent-wallet",
-        "enable",
-        "--address",
-        signer.publicKey(),
-        "--max-balance",
-        "125",
-        "--daily-limit",
-        "5",
-        "--per-tx-limit",
-        "0.01",
-        "--allow-destination",
-        destination,
-        "--enable-autosign",
-        "--secret-key-env",
-        "STELLAR_AGENT_TEST_SECRET",
-        "--i-understand-agent-wallet-autosign",
-        "--arm",
-        "--i-understand-real-funds"
-      ]);
+      const enabled = await runCli(["--config", configPath, "--json", "mainnet", "agent-wallet", "enable", "--address", signer.publicKey(), "--max-balance", "125", "--daily-limit", "5", "--per-tx-limit", "0.01", "--allow-destination", destination, "--enable-autosign", "--secret-key-env", "STELLAR_AGENT_TEST_SECRET", "--i-understand-agent-wallet-autosign", "--arm", "--i-understand-real-funds"]);
       expect(enabled).toMatchObject({ ok: true, data: { armed: true, status: "armed" } });
 
-      const output = await runCli([
-        "--config",
-        configPath,
-        "--profile",
-        "mainnet",
-        "--json",
-        "pay",
-        "send",
-        "--from",
-        "mainnet-agent",
-        "--to",
-        destination,
-        "--amount",
-        "0.02",
-        "--allow-real-funds",
-        "--i-understand-real-funds",
-        "--i-understand-agent-wallet-autosign"
-      ]);
+      const output = await runCli(["--config", configPath, "--profile", "mainnet", "--json", "pay", "send", "--from", "mainnet-agent", "--to", destination, "--amount", "0.02", "--allow-real-funds", "--i-understand-real-funds", "--i-understand-agent-wallet-autosign"]);
 
       expect(output).toMatchObject({
         ok: false,
@@ -1678,27 +1341,12 @@ describe("CLI contract receipts", () => {
     const signer = Keypair.random();
     const destination = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(accountFixture(signer.publicKey()))));
-    await enableArmedAutosignWallet(configPath, signer.publicKey(), destination, { dailyLimit: "0.01" });
+    await enableArmedAutosignWallet(configPath, signer.publicKey(), destination, {
+      dailyLimit: "0.01"
+    });
     await writeMainnetPaymentReceipt(config, signer.publicKey(), destination, "0.0090000");
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--profile",
-      "mainnet",
-      "--json",
-      "pay",
-      "send",
-      "--from",
-      "mainnet-agent",
-      "--to",
-      destination,
-      "--amount",
-      "0.002",
-      "--allow-real-funds",
-      "--i-understand-real-funds",
-      "--i-understand-agent-wallet-autosign"
-    ]);
+    const output = await runCli(["--config", configPath, "--profile", "mainnet", "--json", "pay", "send", "--from", "mainnet-agent", "--to", destination, "--amount", "0.002", "--allow-real-funds", "--i-understand-real-funds", "--i-understand-agent-wallet-autosign"]);
 
     expect(output).toMatchObject({
       ok: false,
@@ -1714,27 +1362,12 @@ describe("CLI contract receipts", () => {
     const signer = Keypair.random();
     const destination = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(accountFixture(signer.publicKey()))));
-    await enableArmedAutosignWallet(configPath, signer.publicKey(), destination, { monthlyLimit: "0.01" });
+    await enableArmedAutosignWallet(configPath, signer.publicKey(), destination, {
+      monthlyLimit: "0.01"
+    });
     await writeMainnetPaymentReceipt(config, signer.publicKey(), destination, "0.0090000");
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--profile",
-      "mainnet",
-      "--json",
-      "pay",
-      "send",
-      "--from",
-      "mainnet-agent",
-      "--to",
-      destination,
-      "--amount",
-      "0.002",
-      "--allow-real-funds",
-      "--i-understand-real-funds",
-      "--i-understand-agent-wallet-autosign"
-    ]);
+    const output = await runCli(["--config", configPath, "--profile", "mainnet", "--json", "pay", "send", "--from", "mainnet-agent", "--to", destination, "--amount", "0.002", "--allow-real-funds", "--i-understand-real-funds", "--i-understand-agent-wallet-autosign"]);
 
     expect(output).toMatchObject({
       ok: false,
@@ -1754,24 +1387,7 @@ describe("CLI contract receipts", () => {
     await mkdir(config.storage.receiptsDir, { recursive: true });
     await writeFile(join(config.storage.receiptsDir, "bad-receipt.json"), "{not-json");
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--profile",
-      "mainnet",
-      "--json",
-      "pay",
-      "send",
-      "--from",
-      "mainnet-agent",
-      "--to",
-      destination,
-      "--amount",
-      "0.001",
-      "--allow-real-funds",
-      "--i-understand-real-funds",
-      "--i-understand-agent-wallet-autosign"
-    ]);
+    const output = await runCli(["--config", configPath, "--profile", "mainnet", "--json", "pay", "send", "--from", "mainnet-agent", "--to", destination, "--amount", "0.001", "--allow-real-funds", "--i-understand-real-funds", "--i-understand-agent-wallet-autosign"]);
 
     expect(output).toMatchObject({
       ok: false,
@@ -1793,24 +1409,7 @@ describe("CLI contract receipts", () => {
       mode: 0o600
     });
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--profile",
-      "mainnet",
-      "--json",
-      "pay",
-      "send",
-      "--from",
-      "mainnet-agent",
-      "--to",
-      destination,
-      "--amount",
-      "0.001",
-      "--allow-real-funds",
-      "--i-understand-real-funds",
-      "--i-understand-agent-wallet-autosign"
-    ]);
+    const output = await runCli(["--config", configPath, "--profile", "mainnet", "--json", "pay", "send", "--from", "mainnet-agent", "--to", destination, "--amount", "0.001", "--allow-real-funds", "--i-understand-real-funds", "--i-understand-agent-wallet-autosign"]);
 
     expect(output).toMatchObject({
       ok: false,
@@ -1831,24 +1430,7 @@ describe("CLI contract receipts", () => {
     const copiedConfigPath = join(tmpdir(), `stellar-agent-config-copy-${Date.now()}.yaml`);
     await writeFile(copiedConfigPath, await readFile(configPath, "utf8"), { mode: 0o600 });
 
-    const output = await runCli([
-      "--config",
-      copiedConfigPath,
-      "--profile",
-      "mainnet",
-      "--json",
-      "pay",
-      "send",
-      "--from",
-      "mainnet-agent",
-      "--to",
-      destination,
-      "--amount",
-      "0.001",
-      "--allow-real-funds",
-      "--i-understand-real-funds",
-      "--i-understand-agent-wallet-autosign"
-    ]);
+    const output = await runCli(["--config", copiedConfigPath, "--profile", "mainnet", "--json", "pay", "send", "--from", "mainnet-agent", "--to", destination, "--amount", "0.001", "--allow-real-funds", "--i-understand-real-funds", "--i-understand-agent-wallet-autosign"]);
 
     expect(output).toMatchObject({
       ok: false,
@@ -1889,24 +1471,17 @@ describe("CLI DeFi commands", () => {
         network: "testnet",
         pools: expect.arrayContaining([expect.objectContaining({ name: "TestnetV2" })]),
         assets: expect.arrayContaining([
-          expect.objectContaining({ symbol: "USDC", classicAsset: expect.stringContaining("USDC:G") })
+          expect.objectContaining({
+            symbol: "USDC",
+            classicAsset: expect.stringContaining("USDC:G")
+          })
         ])
       }
     });
   });
 
   it("guides Blend trustline creation from SAC aliases", async () => {
-    const output = await runCli([
-      "--json",
-      "defi",
-      "blend",
-      "trustline",
-      "guide",
-      "--asset",
-      "USDC",
-      "--account",
-      "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
-    ]);
+    const output = await runCli(["--json", "defi", "blend", "trustline", "guide", "--asset", "USDC", "--account", "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"]);
     expect(output).toMatchObject({
       ok: true,
       data: {
@@ -1930,7 +1505,10 @@ describe("CLI DeFi commands", () => {
         routerContractId: "CBCFTQSPDBAIZ6R6PJQKSQWKNKWH2QIV3I4J72SHWBIK3ADRRAM5A6GD",
         apiBaseUrl: expect.stringContaining("amm-api-testnet"),
         assets: expect.arrayContaining([
-          expect.objectContaining({ symbol: "AQUA", classicAsset: expect.stringContaining("AQUA:G") })
+          expect.objectContaining({
+            symbol: "AQUA",
+            classicAsset: expect.stringContaining("AQUA:G")
+          })
         ])
       }
     });
@@ -1955,19 +1533,7 @@ describe("CLI DeFi commands", () => {
       )
     );
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "defi",
-      "aquarius",
-      "pool",
-      "inspect",
-      "--pool",
-      "XLM",
-      "--network",
-      "testnet"
-    ]);
+    const output = await runCli(["--config", configPath, "--json", "defi", "aquarius", "pool", "inspect", "--pool", "XLM", "--network", "testnet"]);
 
     expect(output).toMatchObject({
       ok: true,
@@ -2000,33 +1566,12 @@ describe("CLI DeFi commands", () => {
           swap_chain_xdr: "AAAA",
           pools: ["CPOOL"],
           tokens: ["native", "AQUA:GISSUER"],
-          tokens_addresses: [
-            "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
-            "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"
-          ]
+          tokens_addresses: ["CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC", "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"]
         })
       )
     );
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "defi",
-      "aquarius",
-      "swap",
-      "preflight",
-      "--from",
-      "XLM",
-      "--to",
-      "AQUA",
-      "--amount",
-      "0.01",
-      "--slippage-bps",
-      "500",
-      "--network",
-      "testnet"
-    ]);
+    const output = await runCli(["--config", configPath, "--json", "defi", "aquarius", "swap", "preflight", "--from", "XLM", "--to", "AQUA", "--amount", "0.01", "--slippage-bps", "500", "--network", "testnet"]);
 
     expect(output).toMatchObject({
       ok: true,
@@ -2035,31 +1580,14 @@ describe("CLI DeFi commands", () => {
         preflight: {
           slippageBps: 500,
           assets: expect.arrayContaining(["XLM", "AQUA", "native", "AQUA:GISSUER"]),
-          assetGroups: expect.arrayContaining([
-            expect.arrayContaining(["XLM", "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"]),
-            expect.arrayContaining(["AQUA", "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"])
-          ])
+          assetGroups: expect.arrayContaining([expect.arrayContaining(["XLM", "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"]), expect.arrayContaining(["AQUA", "CDNVQW44C3HALYNVQ4SOBXY5EWYTGVYXX6JPESOLQDABJI5FC5LTRRUE"])])
         }
       }
     });
   });
 
   it("prints JSON for Aquarius parse-time slippage errors", async () => {
-    const output = await runCli([
-      "--json",
-      "defi",
-      "aquarius",
-      "swap",
-      "preflight",
-      "--from",
-      "XLM",
-      "--to",
-      "AQUA",
-      "--amount",
-      "0.01",
-      "--slippage-bps",
-      "10001"
-    ]);
+    const output = await runCli(["--json", "defi", "aquarius", "swap", "preflight", "--from", "XLM", "--to", "AQUA", "--amount", "0.01", "--slippage-bps", "10001"]);
 
     expect(output).toMatchObject({
       ok: false,
@@ -2072,19 +1600,7 @@ describe("CLI DeFi commands", () => {
   });
 
   it("prints JSON for missing required Aquarius options", async () => {
-    const output = await runCli([
-      "--json",
-      "defi",
-      "aquarius",
-      "swap",
-      "preflight",
-      "--from",
-      "XLM",
-      "--to",
-      "AQUA",
-      "--amount",
-      "0.01"
-    ]);
+    const output = await runCli(["--json", "defi", "aquarius", "swap", "preflight", "--from", "XLM", "--to", "AQUA", "--amount", "0.01"]);
 
     expect(output).toMatchObject({
       ok: false,
@@ -2115,29 +1631,7 @@ describe("CLI DeFi commands", () => {
       )
     );
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "defi",
-      "aquarius",
-      "lp",
-      "preflight",
-      "--pool",
-      "XLM",
-      "--action",
-      "deposit",
-      "--account",
-      "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
-      "--amount",
-      "0.01",
-      "--amount",
-      "0.01",
-      "--min-shares",
-      "0.0000001",
-      "--network",
-      "mainnet"
-    ]);
+    const output = await runCli(["--config", configPath, "--json", "defi", "aquarius", "lp", "preflight", "--pool", "XLM", "--action", "deposit", "--account", "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "--amount", "0.01", "--amount", "0.01", "--min-shares", "0.0000001", "--network", "mainnet"]);
 
     expect(output).toMatchObject({
       ok: true,
@@ -2170,25 +1664,7 @@ describe("CLI DeFi commands", () => {
       )
     );
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "defi",
-      "aquarius",
-      "lp",
-      "preflight",
-      "--pool",
-      "CPOOL",
-      "--action",
-      "withdraw",
-      "--account",
-      "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
-      "--shares",
-      "1",
-      "--min-amount",
-      "0"
-    ]);
+    const output = await runCli(["--config", configPath, "--json", "defi", "aquarius", "lp", "preflight", "--pool", "CPOOL", "--action", "withdraw", "--account", "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "--shares", "1", "--min-amount", "0"]);
 
     expect(output).toMatchObject({
       ok: false,
@@ -2210,16 +1686,7 @@ describe("CLI market liquidity commands", () => {
     const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(poolFixture())));
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "market",
-      "pool",
-      "inspect",
-      "--pool",
-      poolIdFixture()
-    ]);
+    const output = await runCli(["--config", configPath, "--json", "market", "pool", "inspect", "--pool", poolIdFixture()]);
 
     expect(output).toMatchObject({
       ok: true,
@@ -2243,24 +1710,7 @@ describe("CLI market liquidity commands", () => {
       return new Response(JSON.stringify(poolFixture()));
     });
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "market",
-      "lp",
-      "preflight",
-      "--pool",
-      poolIdFixture(),
-      "--max-a",
-      "1",
-      "--max-b",
-      "2",
-      "--min-price",
-      "1.5",
-      "--max-price",
-      "2.5"
-    ]);
+    const output = await runCli(["--config", configPath, "--json", "market", "lp", "preflight", "--pool", poolIdFixture(), "--max-a", "1", "--max-b", "2", "--min-price", "1.5", "--max-price", "2.5"]);
 
     expect(output).toMatchObject({
       ok: true,
@@ -2301,18 +1751,7 @@ describe("CLI market liquidity commands", () => {
     const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(poolFixture())));
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "market",
-      "listen",
-      "price",
-      "--pool",
-      poolIdFixture(),
-      "--above",
-      "1.5"
-    ]);
+    const output = await runCli(["--config", configPath, "--json", "market", "listen", "price", "--pool", poolIdFixture(), "--above", "1.5"]);
 
     expect(output).toMatchObject({
       ok: true,
@@ -2332,28 +1771,10 @@ describe("CLI market liquidity commands", () => {
   it("evaluates market alert config files", async () => {
     const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
     const alertsPath = join(await mkdtemp(join(tmpdir(), "stellar-agent-alerts-")), "alerts.yaml");
-    await writeFile(
-      alertsPath,
-      [
-        "alerts:",
-        `  - name: xlm_usd_high`,
-        `    pool: ${poolIdFixture()}`,
-        `    above: "1.5"`,
-        "    action: log"
-      ].join("\n")
-    );
+    await writeFile(alertsPath, ["alerts:", `  - name: xlm_usd_high`, `    pool: ${poolIdFixture()}`, `    above: "1.5"`, "    action: log"].join("\n"));
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(poolFixture())));
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "market",
-      "listen",
-      "config",
-      "--file",
-      alertsPath
-    ]);
+    const output = await runCli(["--config", configPath, "--json", "market", "listen", "config", "--file", alertsPath]);
 
     expect(output).toMatchObject({
       ok: true,
@@ -2381,18 +1802,7 @@ describe("CLI market liquidity commands", () => {
   it("rejects invalid market listener thresholds and reversed LP price bounds", async () => {
     const { configPath } = await createCliFixture({ stdout: "", stderr: "" });
 
-    const listener = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "market",
-      "listen",
-      "price",
-      "--pool",
-      poolIdFixture(),
-      "--above",
-      "not-a-price"
-    ]);
+    const listener = await runCli(["--config", configPath, "--json", "market", "listen", "price", "--pool", poolIdFixture(), "--above", "not-a-price"]);
     expect(listener).toMatchObject({
       ok: false,
       error: {
@@ -2403,16 +1813,7 @@ describe("CLI market liquidity commands", () => {
 
     const alertsPath = join(await mkdtemp(join(tmpdir(), "stellar-agent-alerts-invalid-")), "alerts.yaml");
     await writeFile(alertsPath, ["alerts:", `  - pool: ${poolIdFixture()}`, "    action: trade"].join("\n"));
-    const config = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "market",
-      "listen",
-      "config",
-      "--file",
-      alertsPath
-    ]);
+    const config = await runCli(["--config", configPath, "--json", "market", "listen", "config", "--file", alertsPath]);
     expect(config).toMatchObject({
       ok: false,
       error: {
@@ -2421,16 +1822,7 @@ describe("CLI market liquidity commands", () => {
       }
     });
 
-    const missingConfig = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "market",
-      "listen",
-      "config",
-      "--file",
-      join(tmpdir(), "stellar-agent-missing-alerts.yaml")
-    ]);
+    const missingConfig = await runCli(["--config", configPath, "--json", "market", "listen", "config", "--file", join(tmpdir(), "stellar-agent-missing-alerts.yaml")]);
     expect(missingConfig).toMatchObject({
       ok: false,
       error: {
@@ -2442,16 +1834,7 @@ describe("CLI market liquidity commands", () => {
 
     const malformedAlertsPath = join(await mkdtemp(join(tmpdir(), "stellar-agent-alerts-malformed-")), "alerts.yaml");
     await writeFile(malformedAlertsPath, "alerts:\n  - pool: [");
-    const malformedConfig = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "market",
-      "listen",
-      "config",
-      "--file",
-      malformedAlertsPath
-    ]);
+    const malformedConfig = await runCli(["--config", configPath, "--json", "market", "listen", "config", "--file", malformedAlertsPath]);
     expect(malformedConfig).toMatchObject({
       ok: false,
       error: {
@@ -2461,24 +1844,7 @@ describe("CLI market liquidity commands", () => {
       }
     });
 
-    const preflight = await runCli([
-      "--config",
-      configPath,
-      "--json",
-      "market",
-      "lp",
-      "preflight",
-      "--pool",
-      poolIdFixture(),
-      "--max-a",
-      "1",
-      "--max-b",
-      "2",
-      "--min-price",
-      "3",
-      "--max-price",
-      "2"
-    ]);
+    const preflight = await runCli(["--config", configPath, "--json", "market", "lp", "preflight", "--pool", poolIdFixture(), "--max-a", "1", "--max-b", "2", "--min-price", "3", "--max-price", "2"]);
     expect(preflight).toMatchObject({
       ok: false,
       error: {
@@ -2491,26 +1857,7 @@ describe("CLI market liquidity commands", () => {
   it("blocks local Mainnet liquidity mutation", async () => {
     const { configPath } = await createCliFixture({ stdout: "", stderr: "" }, { mainnetEnabled: true });
 
-    const output = await runCli([
-      "--config",
-      configPath,
-      "--profile",
-      "mainnet",
-      "--json",
-      "market",
-      "lp",
-      "deposit",
-      "--pool",
-      poolIdFixture(),
-      "--max-a",
-      "1",
-      "--max-b",
-      "1",
-      "--min-price",
-      "0.9",
-      "--max-price",
-      "1.1"
-    ]);
+    const output = await runCli(["--config", configPath, "--profile", "mainnet", "--json", "market", "lp", "deposit", "--pool", poolIdFixture(), "--max-a", "1", "--max-b", "1", "--min-price", "0.9", "--max-price", "1.1"]);
 
     expect(output).toMatchObject({
       ok: false,
@@ -2546,17 +1893,7 @@ describe("CLI market liquidity commands", () => {
   });
 
   it("keeps Soroban pool mutation behind an adapter-required boundary", async () => {
-    const output = await runCli([
-      "--json",
-      "market",
-      "soroban",
-      "pool",
-      "preflight",
-      "--id",
-      contractId,
-      "--action",
-      "deposit"
-    ]);
+    const output = await runCli(["--json", "market", "soroban", "pool", "preflight", "--id", contractId, "--action", "deposit"]);
 
     expect(output).toMatchObject({
       ok: true,
@@ -2569,10 +1906,7 @@ describe("CLI market liquidity commands", () => {
   });
 });
 
-async function createCliFixture(
-  args: { stdout: string; stderr: string },
-  options: { mainnetEnabled?: boolean; localProfile?: boolean; testnetPolicy?: boolean } = {}
-) {
+async function createCliFixture(args: { stdout: string; stderr: string }, options: { mainnetEnabled?: boolean; localProfile?: boolean; testnetPolicy?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), "stellar-agent-cli-test-"));
   const config = createDefaultConfig(root);
   if (options.mainnetEnabled && config.profiles.mainnet) config.profiles.mainnet.enabled = true;
@@ -2598,11 +1932,7 @@ async function createCliFixture(
   await writeFile(configPath, stringify(config), { mode: 0o600 });
 
   const stellarBinary = join(root, "stellar");
-  await writeFile(
-    stellarBinary,
-    `#!/bin/sh\nprintf '%s' '${escapeSingleQuotedShell(args.stderr)}' >&2\nprintf '%s' '${escapeSingleQuotedShell(args.stdout)}'\n`,
-    { mode: 0o755 }
-  );
+  await writeFile(stellarBinary, `#!/bin/sh\nprintf '%s' '${escapeSingleQuotedShell(args.stderr)}' >&2\nprintf '%s' '${escapeSingleQuotedShell(args.stdout)}'\n`, { mode: 0o755 });
 
   return { configPath, stellarBinary, config };
 }
@@ -2634,14 +1964,7 @@ async function runCliText(args: string[]) {
 }
 
 function isCommanderVersionExit(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    "exitCode" in error &&
-    error.code === "commander.version" &&
-    error.exitCode === 0
-  );
+  return typeof error === "object" && error !== null && "code" in error && "exitCode" in error && error.code === "commander.version" && error.exitCode === 0;
 }
 
 function escapeSingleQuotedShell(value: string): string {
@@ -2652,7 +1975,11 @@ function signedPaymentXdrFixture(): string {
   return signedPaymentXdrPair("1").signedXdr;
 }
 
-function signedPaymentXdrPair(amount: string): { signerPublicKey: string; unsignedXdr: string; signedXdr: string } {
+function signedPaymentXdrPair(amount: string): {
+  signerPublicKey: string;
+  unsignedXdr: string;
+  signedXdr: string;
+} {
   const signer = Keypair.random();
   const destination = Keypair.random().publicKey();
   const account = new Account(signer.publicKey(), "1");
@@ -2674,7 +2001,11 @@ function signedPaymentXdrPair(amount: string): { signerPublicKey: string; unsign
   return { signerPublicKey: signer.publicKey(), unsignedXdr, signedXdr: transaction.toXDR() };
 }
 
-function signedTestnetPaymentXdrPair(amount: string): { signerPublicKey: string; unsignedXdr: string; signedXdr: string } {
+function signedTestnetPaymentXdrPair(amount: string): {
+  signerPublicKey: string;
+  unsignedXdr: string;
+  signedXdr: string;
+} {
   const signer = Keypair.random();
   const destination = Keypair.random().publicKey();
   const account = new Account(signer.publicKey(), "1");
@@ -2710,7 +2041,10 @@ function poolFixture() {
     total_shares: "50.0000000",
     reserves: [
       { asset: "native", amount: "100.0000000" },
-      { asset: "USD:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", amount: "200.0000000" }
+      {
+        asset: "USD:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        amount: "200.0000000"
+      }
     ],
     _links: {
       self: { href: `https://horizon-testnet.stellar.org/liquidity_pools/${poolIdFixture()}` }
@@ -2718,48 +2052,15 @@ function poolFixture() {
   };
 }
 
-async function enableArmedAutosignWallet(
-  configPath: string,
-  publicKey: string,
-  destination: string,
-  options: { perTxLimit?: string; dailyLimit?: string; monthlyLimit?: string } = {}
-) {
-  const args = [
-    "--config",
-    configPath,
-    "--json",
-    "mainnet",
-    "agent-wallet",
-    "enable",
-    "--address",
-    publicKey,
-    "--max-balance",
-    "125",
-    "--daily-limit",
-    options.dailyLimit ?? "5",
-    "--per-tx-limit",
-    options.perTxLimit ?? "1",
-    "--allow-destination",
-    destination,
-    "--enable-autosign",
-    "--secret-key-env",
-    "STELLAR_AGENT_TEST_SECRET",
-    "--i-understand-agent-wallet-autosign",
-    "--arm",
-    "--i-understand-real-funds"
-  ];
+async function enableArmedAutosignWallet(configPath: string, publicKey: string, destination: string, options: { perTxLimit?: string; dailyLimit?: string; monthlyLimit?: string } = {}) {
+  const args = ["--config", configPath, "--json", "mainnet", "agent-wallet", "enable", "--address", publicKey, "--max-balance", "125", "--daily-limit", options.dailyLimit ?? "5", "--per-tx-limit", options.perTxLimit ?? "1", "--allow-destination", destination, "--enable-autosign", "--secret-key-env", "STELLAR_AGENT_TEST_SECRET", "--i-understand-agent-wallet-autosign", "--arm", "--i-understand-real-funds"];
   if (options.monthlyLimit) args.splice(args.indexOf("--allow-destination"), 0, "--monthly-limit", options.monthlyLimit);
   const output = await runCli(args);
   expect(output).toMatchObject({ ok: true, data: { armed: true, status: "armed" } });
   return output;
 }
 
-async function writeMainnetPaymentReceipt(
-  config: ReturnType<typeof createDefaultConfig>,
-  source: string,
-  destination: string,
-  amount: string
-) {
+async function writeMainnetPaymentReceipt(config: ReturnType<typeof createDefaultConfig>, source: string, destination: string, amount: string) {
   await writeReceipt(config.storage.receiptsDir, {
     command: "pay send",
     profile: "mainnet",
@@ -2823,13 +2124,7 @@ function accountFixture(address = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
   };
 }
 
-function validateSchema(
-  schema: any,
-  value: unknown,
-  label: string,
-  externalRefs: Record<string, any> = {},
-  root: any = schema
-): void {
+function validateSchema(schema: any, value: unknown, label: string, externalRefs: Record<string, any> = {}, root: any = schema): void {
   if (schema.$ref) {
     const ref = String(schema.$ref);
     if (ref.startsWith("#/$defs/")) {
@@ -2881,13 +2176,7 @@ function validateSchema(
       validateSchema(schema.items, item, `${label}[${index}]`, externalRefs, root);
     }
   }
-  if (
-    schema.additionalProperties &&
-    typeof schema.additionalProperties === "object" &&
-    value &&
-    typeof value === "object" &&
-    !Array.isArray(value)
-  ) {
+  if (schema.additionalProperties && typeof schema.additionalProperties === "object" && value && typeof value === "object" && !Array.isArray(value)) {
     for (const [key, child] of Object.entries(value)) {
       if (!schema.properties?.[key]) {
         validateSchema(schema.additionalProperties, child, `${label}.${key}`, externalRefs, root);

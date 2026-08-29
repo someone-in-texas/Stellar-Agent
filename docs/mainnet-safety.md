@@ -1,5 +1,11 @@
 # Mainnet Safety
 
+## Durable Submission Safety
+
+0.6.0 creates a spend reservation and execution intent before a guarded Mainnet agent-wallet payment is signed or submitted. The reservation counts toward daily and monthly caps until the transaction is confirmed, fails before submission, is explicitly cancelled, or is reconciled to a terminal ledger result. A timeout or missing lookup leaves it active and `safeToRetry: false`.
+
+Local approvals expire, are atomically claimed by one execution intent, and are consumed after submission. Transaction-XDR approvals bind the exact network and transaction body; changing source, sequence, fee, operations, time bounds, or network invalidates the signature decision.
+
 Mainnet uses real funds.
 
 Defaults:

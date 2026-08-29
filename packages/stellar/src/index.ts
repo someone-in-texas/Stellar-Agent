@@ -1,29 +1,5 @@
-import {
-  EXIT_CODES,
-  NetworkProfile,
-  StellarAgentError,
-  TESTNET_PROFILE,
-  TestnetWallet,
-  formatStroops,
-  parseAmount,
-  parseAsset,
-  redactWallet
-} from "@stellar-agent/core";
-import {
-  Account,
-  Asset,
-  BASE_FEE,
-  Claimant,
-  Horizon,
-  Keypair,
-  LiquidityPoolAsset,
-  LiquidityPoolFeeV18,
-  Memo,
-  Operation,
-  TransactionBuilder,
-  getLiquidityPoolId,
-  xdr
-} from "@stellar/stellar-sdk";
+import { EXIT_CODES, NetworkProfile, StellarAgentError, TESTNET_PROFILE, TestnetWallet, formatStroops, parseAmount, parseAsset, redactWallet, withFileLock } from "@stellar-agent/core";
+import { Account, Asset, BASE_FEE, Claimant, Horizon, Keypair, LiquidityPoolAsset, LiquidityPoolFeeV18, Memo, Operation, TransactionBuilder, authorizeEntry, getLiquidityPoolId, rpc, xdr } from "@stellar/stellar-sdk";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -63,6 +39,66 @@ export interface SubmittedTransaction {
   ledger?: number;
   successful: boolean;
   feeCharged?: string;
+  transport?: "rpc" | "horizon";
+}
+
+export interface TransactionLifecycleHooks {
+  onBuilt?: (transaction: { hash: string; signedXdr: string; source?: string; sequence?: string; expiresAt?: string }) => Promise<void>;
+  onSubmission?: (attempt: { hash: string; transport: "rpc" | "horizon"; endpoint: string; status: string; detail?: unknown }) => Promise<void>;
+}
+
+export interface TransactionReconciliation {
+  hash: string;
+  status: "confirmed" | "failed" | "not_found" | "unknown";
+  changedOnChain: boolean | "unknown";
+  safeToRetry: boolean;
+  ledger?: number;
+  transport: "rpc" | "horizon";
+  detail?: unknown;
+}
+
+export interface SorobanAuthorizationResult {
+  entries: xdr.SorobanAuthorizationEntry[];
+  expirationLedger: number;
+  networkPassphrase: string;
+}
+
+export async function signSorobanAuthorizationEntries(args: { entries: xdr.SorobanAuthorizationEntry[]; signer: Parameters<typeof authorizeEntry>[1]; expirationLedger: number; profile?: NetworkProfile; forAddress?: string }): Promise<SorobanAuthorizationResult> {
+  const profile = args.profile ?? TESTNET_PROFILE;
+  if (!Number.isInteger(args.expirationLedger) || args.expirationLedger <= 0) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Soroban authorization expiration ledger is invalid."
+    });
+  }
+  const entries = await Promise.all(args.entries.map((entry) => authorizeEntry(entry, args.signer, args.expirationLedger, profile.networkPassphrase, args.forAddress)));
+  return {
+    entries,
+    expirationLedger: args.expirationLedger,
+    networkPassphrase: profile.networkPassphrase
+  };
+}
+
+export async function enforceSorobanTransaction(args: { transactionXdr: string; profile?: NetworkProfile; rpcServer?: Pick<rpc.Server, "simulateTransaction"> }): Promise<{ successful: true; latestLedger: number; fingerprint: string }> {
+  const profile = args.profile ?? TESTNET_PROFILE;
+  if (!profile.rpcUrl && !args.rpcServer) {
+    throw new StellarAgentError({
+      code: "RPC_UNAVAILABLE",
+      message: "Soroban enforcing simulation requires RPC."
+    });
+  }
+  const transaction = parseTransactionXdr(args.transactionXdr, profile.networkPassphrase);
+  const server = args.rpcServer ?? new rpc.Server(profile.rpcUrl!);
+  const simulation = await server.simulateTransaction(transaction);
+  if (!rpc.Api.isSimulationSuccess(simulation)) {
+    throw new StellarAgentError({
+      code: "TRANSACTION_BUILD_FAILED",
+      message: "Soroban enforcing simulation rejected the signed authorization entries.",
+      details: simulation
+    });
+  }
+  const fingerprint = Buffer.from(transaction.hash()).toString("hex");
+  return { successful: true, latestLedger: simulation.latestLedger, fingerprint };
 }
 
 export interface SigningWallet {
@@ -262,11 +298,7 @@ export function publicKeyFromSecret(secretKey: string): string {
   return Keypair.fromSecret(secretKey).publicKey();
 }
 
-export async function fundWithFriendbot(
-  address: string,
-  profile: NetworkProfile = TESTNET_PROFILE,
-  fetchImpl: typeof fetch = fetch
-): Promise<FriendbotResult> {
+export async function fundWithFriendbot(address: string, profile: NetworkProfile = TESTNET_PROFILE, fetchImpl: typeof fetch = fetch): Promise<FriendbotResult> {
   if (!profile.friendbotUrl) {
     throw new StellarAgentError({
       code: "FRIENDBOT_UNAVAILABLE",
@@ -307,10 +339,7 @@ export async function fundWithFriendbot(
   });
 }
 
-export async function getBalances(
-  address: string,
-  profile: NetworkProfile = TESTNET_PROFILE
-): Promise<BalanceLine[]> {
+export async function getBalances(address: string, profile: NetworkProfile = TESTNET_PROFILE): Promise<BalanceLine[]> {
   if (!profile.horizonUrl) {
     throw new StellarAgentError({
       code: "HORIZON_UNAVAILABLE",
@@ -337,28 +366,11 @@ export async function getBalances(
   }
 }
 
-export async function sendNativePayment(args: {
-  source: TestnetWallet | SigningWallet;
-  destination: string;
-  amount: string;
-  memo?: string;
-  profile?: NetworkProfile;
-  allowRealFunds?: boolean;
-}): Promise<SubmittedPayment> {
+export async function sendNativePayment(args: { source: TestnetWallet | SigningWallet; destination: string; amount: string; memo?: string; profile?: NetworkProfile; allowRealFunds?: boolean }): Promise<SubmittedPayment> {
   return sendPayment({ ...args, asset: "XLM" });
 }
 
-export async function sendPayment(args: {
-  source: TestnetWallet | SigningWallet;
-  destination: string;
-  amount: string;
-  asset?: string;
-  memo?: string;
-  profile?: NetworkProfile;
-  allowRealFunds?: boolean;
-  feeStrategy?: FeeStrategy;
-  noCache?: boolean;
-}): Promise<SubmittedPayment> {
+export async function sendPayment(args: { source: TestnetWallet | SigningWallet; destination: string; amount: string; asset?: string; memo?: string; profile?: NetworkProfile; allowRealFunds?: boolean; feeStrategy?: FeeStrategy; noCache?: boolean; lifecycle?: TransactionLifecycleHooks; executionLockPath?: string }): Promise<SubmittedPayment> {
   const profile = args.profile ?? TESTNET_PROFILE;
   const amount = parseAmount(args.amount, args.asset ?? "XLM").value;
   const asset = stellarSdkAsset(args.asset ?? "XLM");
@@ -371,14 +383,16 @@ export async function sendPayment(args: {
       ...(args.memo === undefined ? {} : { memo: args.memo }),
       ...(args.feeStrategy === undefined ? {} : { feeStrategy: args.feeStrategy }),
       ...(args.noCache === undefined ? {} : { noCache: args.noCache }),
-      operation:
-      Operation.payment({
+      ...(args.lifecycle === undefined ? {} : { lifecycle: args.lifecycle }),
+      ...(args.executionLockPath === undefined ? {} : { executionLockPath: args.executionLockPath }),
+      operation: Operation.payment({
         destination: args.destination,
         asset,
         amount
       })
     });
   } catch (error) {
+    if (error instanceof StellarAgentError) throw error;
     throw new StellarAgentError({
       code: "TRANSACTION_SUBMIT_FAILED",
       message: "Stellar payment could not be submitted or confirmed.",
@@ -389,14 +403,7 @@ export async function sendPayment(args: {
   }
 }
 
-export async function changeTrustline(args: {
-  source: TestnetWallet;
-  asset: string;
-  limit?: string;
-  profile?: NetworkProfile;
-  feeStrategy?: FeeStrategy;
-  noCache?: boolean;
-}): Promise<SubmittedOperation & { asset: string; limit: string }> {
+export async function changeTrustline(args: { source: TestnetWallet; asset: string; limit?: string; profile?: NetworkProfile; feeStrategy?: FeeStrategy; noCache?: boolean }): Promise<SubmittedOperation & { asset: string; limit: string }> {
   const asset = stellarSdkAsset(args.asset);
   if (asset.isNative()) {
     throw new StellarAgentError({
@@ -416,11 +423,7 @@ export async function changeTrustline(args: {
   return { ...submitted, asset: args.asset.toUpperCase(), limit };
 }
 
-export async function removeTrustline(args: {
-  source: TestnetWallet;
-  asset: string;
-  profile?: NetworkProfile;
-}): Promise<SubmittedOperation & { asset: string; limit: "0" }> {
+export async function removeTrustline(args: { source: TestnetWallet; asset: string; profile?: NetworkProfile }): Promise<SubmittedOperation & { asset: string; limit: "0" }> {
   const submitted = await changeTrustline({
     source: args.source,
     asset: args.asset,
@@ -430,18 +433,7 @@ export async function removeTrustline(args: {
   return { ...submitted, limit: "0" };
 }
 
-export async function createClaimableBalance(args: {
-  source: TestnetWallet;
-  amount: string;
-  asset?: string;
-  claimant: string;
-  claimants?: string[];
-  claimableAfter?: string | number | Date;
-  claimableBefore?: string | number | Date;
-  profile?: NetworkProfile;
-  feeStrategy?: FeeStrategy;
-  noCache?: boolean;
-}): Promise<
+export async function createClaimableBalance(args: { source: TestnetWallet; amount: string; asset?: string; claimant: string; claimants?: string[]; claimableAfter?: string | number | Date; claimableBefore?: string | number | Date; profile?: NetworkProfile; feeStrategy?: FeeStrategy; noCache?: boolean }): Promise<
   SubmittedOperation & {
     asset: string;
     amount: string;
@@ -471,9 +463,7 @@ export async function createClaimableBalance(args: {
       claimants: claimants.map((claimant) => new Claimant(claimant, claimantPredicate.predicate))
     })
   });
-  const claimableBalanceEntries = await Promise.all(
-    claimants.map(async (claimant) => [claimant, await listClaimableBalances(claimant, profile)] as const)
-  );
+  const claimableBalanceEntries = await Promise.all(claimants.map(async (claimant) => [claimant, await listClaimableBalances(claimant, profile)] as const));
   const claimableBalancesByClaimant = Object.fromEntries(claimableBalanceEntries);
   return {
     ...submitted,
@@ -491,10 +481,8 @@ export function buildClaimableBalancePredicate(options: ClaimableBalancePredicat
   predicate: xdr.ClaimPredicate;
   summary: ClaimableBalancePredicateSummary;
 } {
-  const claimableAfter =
-    options.claimableAfter === undefined ? undefined : parseClaimableTimestamp(options.claimableAfter, "claimableAfter");
-  const claimableBefore =
-    options.claimableBefore === undefined ? undefined : parseClaimableTimestamp(options.claimableBefore, "claimableBefore");
+  const claimableAfter = options.claimableAfter === undefined ? undefined : parseClaimableTimestamp(options.claimableAfter, "claimableAfter");
+  const claimableBefore = options.claimableBefore === undefined ? undefined : parseClaimableTimestamp(options.claimableBefore, "claimableBefore");
 
   if (claimableAfter && claimableBefore && BigInt(claimableAfter.epochSeconds) >= BigInt(claimableBefore.epochSeconds)) {
     throw new StellarAgentError({
@@ -506,10 +494,7 @@ export function buildClaimableBalancePredicate(options: ClaimableBalancePredicat
 
   if (claimableAfter && claimableBefore) {
     return {
-      predicate: Claimant.predicateAnd(
-        Claimant.predicateNot(Claimant.predicateBeforeAbsoluteTime(claimableAfter.epochSeconds)),
-        Claimant.predicateBeforeAbsoluteTime(claimableBefore.epochSeconds)
-      ),
+      predicate: Claimant.predicateAnd(Claimant.predicateNot(Claimant.predicateBeforeAbsoluteTime(claimableAfter.epochSeconds)), Claimant.predicateBeforeAbsoluteTime(claimableBefore.epochSeconds)),
       summary: { type: "time_window", claimableAfter, claimableBefore }
     };
   }
@@ -538,13 +523,7 @@ export function resolveClaimableBalanceClaimants(claimant: string, claimants: st
   return uniqueClaimants([claimant, ...claimants]);
 }
 
-export async function claimClaimableBalance(args: {
-  source: TestnetWallet;
-  balanceId: string;
-  profile?: NetworkProfile;
-  feeStrategy?: FeeStrategy;
-  noCache?: boolean;
-}): Promise<SubmittedOperation & { balanceId: string }> {
+export async function claimClaimableBalance(args: { source: TestnetWallet; balanceId: string; profile?: NetworkProfile; feeStrategy?: FeeStrategy; noCache?: boolean }): Promise<SubmittedOperation & { balanceId: string }> {
   const submitted = await submitOperation({
     source: args.source,
     profile: args.profile ?? TESTNET_PROFILE,
@@ -555,16 +534,21 @@ export async function claimClaimableBalance(args: {
   return { ...submitted, balanceId: args.balanceId };
 }
 
-export async function listLiquidityPools(args: {
-  profile?: NetworkProfile;
-  assetA?: string;
-  assetB?: string;
-  account?: string;
-  limit?: number;
-} = {}): Promise<HorizonCollectionResult<LiquidityPoolSummary>> {
+export async function listLiquidityPools(
+  args: {
+    profile?: NetworkProfile;
+    assetA?: string;
+    assetB?: string;
+    account?: string;
+    limit?: number;
+  } = {}
+): Promise<HorizonCollectionResult<LiquidityPoolSummary>> {
   const profile = args.profile ?? TESTNET_PROFILE;
   if (!profile.horizonUrl) {
-    throw new StellarAgentError({ code: "HORIZON_UNAVAILABLE", message: "Horizon is not configured." });
+    throw new StellarAgentError({
+      code: "HORIZON_UNAVAILABLE",
+      message: "Horizon is not configured."
+    });
   }
   const url = new URL(`${profile.horizonUrl.replace(/\/$/, "")}/liquidity_pools`);
   if (args.assetA && args.assetB) {
@@ -577,22 +561,17 @@ export async function listLiquidityPools(args: {
   return collectionResult(horizonRecords(page).map(normalizeLiquidityPoolRecord), page);
 }
 
-export async function inspectLiquidityPool(args: {
-  poolId: string;
-  profile?: NetworkProfile;
-}): Promise<LiquidityPoolSummary> {
+export async function inspectLiquidityPool(args: { poolId: string; profile?: NetworkProfile }): Promise<LiquidityPoolSummary> {
   validateLiquidityPoolId(args.poolId);
   const profile = args.profile ?? TESTNET_PROFILE;
   if (!profile.horizonUrl) {
-    throw new StellarAgentError({ code: "HORIZON_UNAVAILABLE", message: "Horizon is not configured." });
+    throw new StellarAgentError({
+      code: "HORIZON_UNAVAILABLE",
+      message: "Horizon is not configured."
+    });
   }
   try {
-    return normalizeLiquidityPoolRecord(
-      await horizonGet(
-        new URL(`${profile.horizonUrl.replace(/\/$/, "")}/liquidity_pools/${args.poolId}`),
-        "Could not inspect liquidity pool from Horizon."
-      )
-    );
+    return normalizeLiquidityPoolRecord(await horizonGet(new URL(`${profile.horizonUrl.replace(/\/$/, "")}/liquidity_pools/${args.poolId}`), "Could not inspect liquidity pool from Horizon."));
   } catch (error) {
     if (error instanceof StellarAgentError) throw error;
     throw new StellarAgentError({
@@ -604,15 +583,14 @@ export async function inspectLiquidityPool(args: {
   }
 }
 
-export async function liquidityPoolTrades(args: {
-  poolId: string;
-  profile?: NetworkProfile;
-  limit?: number;
-}): Promise<HorizonCollectionResult<unknown>> {
+export async function liquidityPoolTrades(args: { poolId: string; profile?: NetworkProfile; limit?: number }): Promise<HorizonCollectionResult<unknown>> {
   validateLiquidityPoolId(args.poolId);
   const profile = args.profile ?? TESTNET_PROFILE;
   if (!profile.horizonUrl) {
-    throw new StellarAgentError({ code: "HORIZON_UNAVAILABLE", message: "Horizon is not configured." });
+    throw new StellarAgentError({
+      code: "HORIZON_UNAVAILABLE",
+      message: "Horizon is not configured."
+    });
   }
   const url = new URL(`${profile.horizonUrl.replace(/\/$/, "")}/liquidity_pools/${args.poolId}/trades`);
   url.searchParams.set("order", "desc");
@@ -621,20 +599,16 @@ export async function liquidityPoolTrades(args: {
   return collectionResult(horizonRecords(page), page);
 }
 
-export async function inspectLiquidityPoolPosition(args: {
-  account: string;
-  poolId?: string;
-  profile?: NetworkProfile;
-}): Promise<{ account: string; positions: LiquidityPoolPosition[] }> {
+export async function inspectLiquidityPoolPosition(args: { account: string; poolId?: string; profile?: NetworkProfile }): Promise<{ account: string; positions: LiquidityPoolPosition[] }> {
   if (args.poolId) validateLiquidityPoolId(args.poolId);
   const profile = args.profile ?? TESTNET_PROFILE;
   if (!profile.horizonUrl) {
-    throw new StellarAgentError({ code: "HORIZON_UNAVAILABLE", message: "Horizon is not configured." });
+    throw new StellarAgentError({
+      code: "HORIZON_UNAVAILABLE",
+      message: "Horizon is not configured."
+    });
   }
-  const account: any = await horizonGet(
-    new URL(`${profile.horizonUrl.replace(/\/$/, "")}/accounts/${args.account}`),
-    "Could not load account liquidity pool positions from Horizon."
-  );
+  const account: any = await horizonGet(new URL(`${profile.horizonUrl.replace(/\/$/, "")}/accounts/${args.account}`), "Could not load account liquidity pool positions from Horizon.");
   const poolShareBalances = account.balances.filter((balance: any) => balance.asset_type === "liquidity_pool_shares");
   const positions = await Promise.all(
     poolShareBalances
@@ -656,15 +630,7 @@ export async function inspectLiquidityPoolPosition(args: {
   return { account: args.account, positions };
 }
 
-export async function preflightLiquidityPoolDeposit(args: {
-  poolId: string;
-  maxAmountA: string;
-  maxAmountB: string;
-  minPrice: string;
-  maxPrice: string;
-  account?: string;
-  profile?: NetworkProfile;
-}): Promise<LiquidityPoolPreflight> {
+export async function preflightLiquidityPoolDeposit(args: { poolId: string; maxAmountA: string; maxAmountB: string; minPrice: string; maxPrice: string; account?: string; profile?: NetworkProfile }): Promise<LiquidityPoolPreflight> {
   validateLiquidityPoolId(args.poolId);
   validatePoolPriceBounds(args.minPrice, args.maxPrice);
   const profile = args.profile ?? TESTNET_PROFILE;
@@ -696,14 +662,7 @@ export async function preflightLiquidityPoolDeposit(args: {
   };
 }
 
-export async function preflightLiquidityPoolWithdraw(args: {
-  poolId: string;
-  shares: string;
-  minAmountA: string;
-  minAmountB: string;
-  account?: string;
-  profile?: NetworkProfile;
-}): Promise<LiquidityPoolPreflight> {
+export async function preflightLiquidityPoolWithdraw(args: { poolId: string; shares: string; minAmountA: string; minAmountB: string; account?: string; profile?: NetworkProfile }): Promise<LiquidityPoolPreflight> {
   validateLiquidityPoolId(args.poolId);
   const profile = args.profile ?? TESTNET_PROFILE;
   const pool = await inspectLiquidityPool({ poolId: args.poolId, profile });
@@ -730,16 +689,7 @@ export async function preflightLiquidityPoolWithdraw(args: {
   };
 }
 
-export async function changeLiquidityPoolTrustline(args: {
-  source: TestnetWallet;
-  poolId?: string;
-  assetA?: string;
-  assetB?: string;
-  limit?: string;
-  profile?: NetworkProfile;
-  feeStrategy?: FeeStrategy;
-  noCache?: boolean;
-}): Promise<SubmittedOperation & { poolId: string; limit: string }> {
+export async function changeLiquidityPoolTrustline(args: { source: TestnetWallet; poolId?: string; assetA?: string; assetB?: string; limit?: string; profile?: NetworkProfile; feeStrategy?: FeeStrategy; noCache?: boolean }): Promise<SubmittedOperation & { poolId: string; limit: string }> {
   const poolAsset = await resolveLiquidityPoolAssetForTrustline(args);
   const limit = normalizeTrustlineLimit(args.limit ?? "922337203685.4775807");
   const submitted = await submitOperation({
@@ -752,17 +702,7 @@ export async function changeLiquidityPoolTrustline(args: {
   return { ...submitted, poolId: poolAsset.poolId, limit };
 }
 
-export async function submitLiquidityPoolDeposit(args: {
-  source: TestnetWallet;
-  poolId: string;
-  maxAmountA: string;
-  maxAmountB: string;
-  minPrice: string;
-  maxPrice: string;
-  profile?: NetworkProfile;
-  feeStrategy?: FeeStrategy;
-  noCache?: boolean;
-}): Promise<SubmittedOperation & { preflight: LiquidityPoolPreflight }> {
+export async function submitLiquidityPoolDeposit(args: { source: TestnetWallet; poolId: string; maxAmountA: string; maxAmountB: string; minPrice: string; maxPrice: string; profile?: NetworkProfile; feeStrategy?: FeeStrategy; noCache?: boolean }): Promise<SubmittedOperation & { preflight: LiquidityPoolPreflight }> {
   validatePoolPriceBounds(args.minPrice, args.maxPrice);
   const profile = args.profile ?? TESTNET_PROFILE;
   const preflight = await preflightLiquidityPoolDeposit({
@@ -790,16 +730,7 @@ export async function submitLiquidityPoolDeposit(args: {
   return { ...submitted, preflight };
 }
 
-export async function submitLiquidityPoolWithdraw(args: {
-  source: TestnetWallet;
-  poolId: string;
-  shares: string;
-  minAmountA: string;
-  minAmountB: string;
-  profile?: NetworkProfile;
-  feeStrategy?: FeeStrategy;
-  noCache?: boolean;
-}): Promise<SubmittedOperation & { preflight: LiquidityPoolPreflight }> {
+export async function submitLiquidityPoolWithdraw(args: { source: TestnetWallet; poolId: string; shares: string; minAmountA: string; minAmountB: string; profile?: NetworkProfile; feeStrategy?: FeeStrategy; noCache?: boolean }): Promise<SubmittedOperation & { preflight: LiquidityPoolPreflight }> {
   const profile = args.profile ?? TESTNET_PROFILE;
   const preflight = await preflightLiquidityPoolWithdraw({
     poolId: args.poolId,
@@ -824,18 +755,7 @@ export async function submitLiquidityPoolWithdraw(args: {
   return { ...submitted, preflight };
 }
 
-export async function buildPaymentTransactionXdr(args: {
-  sourcePublicKey: string;
-  destination: string;
-  amount: string;
-  asset?: string;
-  memo?: string;
-  profile?: NetworkProfile;
-  sourceSequence?: string;
-  allowRealFunds?: boolean;
-  feeStrategy?: FeeStrategy;
-  noCache?: boolean;
-}): Promise<BuiltPaymentTransactionXdr> {
+export async function buildPaymentTransactionXdr(args: { sourcePublicKey: string; destination: string; amount: string; asset?: string; memo?: string; profile?: NetworkProfile; sourceSequence?: string; allowRealFunds?: boolean; feeStrategy?: FeeStrategy; noCache?: boolean }): Promise<BuiltPaymentTransactionXdr> {
   const profile = args.profile ?? TESTNET_PROFILE;
   if (profile.realFunds && !args.allowRealFunds) {
     throw new StellarAgentError({
@@ -852,9 +772,7 @@ export async function buildPaymentTransactionXdr(args: {
   }
   const amount = parseAmount(args.amount, args.asset ?? "XLM").value;
   const asset = stellarSdkAsset(args.asset ?? "XLM");
-  const sourceAccount = args.sourceSequence
-    ? new Account(args.sourcePublicKey, args.sourceSequence)
-    : await new Horizon.Server(profile.horizonUrl!).loadAccount(args.sourcePublicKey);
+  const sourceAccount = args.sourceSequence ? new Account(args.sourcePublicKey, args.sourceSequence) : await new Horizon.Server(profile.horizonUrl!).loadAccount(args.sourcePublicKey);
   const fee = await estimateTransactionFee({
     profile,
     operationCount: 1,
@@ -874,7 +792,7 @@ export async function buildPaymentTransactionXdr(args: {
   if (args.memo) builder = builder.addMemo(Memo.text(args.memo));
   const transaction = builder.setTimeout(60).build();
   return {
-    xdr: transaction.toXDR(),
+    xdr: transaction.toXdr(),
     source: args.sourcePublicKey,
     destination: args.destination,
     amount,
@@ -884,14 +802,7 @@ export async function buildPaymentTransactionXdr(args: {
   };
 }
 
-export async function sendPaymentBatch(args: {
-  source: TestnetWallet;
-  payments: BatchPaymentItem[];
-  memo?: string;
-  profile?: NetworkProfile;
-  feeStrategy?: FeeStrategy;
-  noCache?: boolean;
-}): Promise<SubmittedPaymentBatch> {
+export async function sendPaymentBatch(args: { source: TestnetWallet; payments: BatchPaymentItem[]; memo?: string; profile?: NetworkProfile; feeStrategy?: FeeStrategy; noCache?: boolean }): Promise<SubmittedPaymentBatch> {
   const payments = normalizeBatchPayments(args.payments);
   const operations = payments.map((payment) =>
     Operation.payment({
@@ -915,12 +826,7 @@ export async function sendPaymentBatch(args: {
   };
 }
 
-export async function submitTransactionXdr(args: {
-  xdr: string;
-  profile?: NetworkProfile;
-  allowRealFunds?: boolean;
-  fetchImpl?: typeof fetch;
-}): Promise<SubmittedTransaction> {
+export async function submitTransactionXdr(args: { xdr: string; profile?: NetworkProfile; allowRealFunds?: boolean; fetchImpl?: typeof fetch; rpcServer?: Pick<rpc.Server, "sendTransaction" | "pollTransaction" | "getTransaction">; transport?: "auto" | "rpc" | "horizon"; lifecycle?: TransactionLifecycleHooks }): Promise<SubmittedTransaction> {
   const profile = args.profile ?? TESTNET_PROFILE;
   if (profile.realFunds && !args.allowRealFunds) {
     throw new StellarAgentError({
@@ -928,12 +834,6 @@ export async function submitTransactionXdr(args: {
       message: "Mainnet signed-XDR submission requires explicit real-funds approval.",
       hint: "Use a signed transaction from a human-controlled Mainnet wallet.",
       docs: "docs/mainnet-safety.md"
-    });
-  }
-  if (!profile.horizonUrl) {
-    throw new StellarAgentError({
-      code: "HORIZON_UNAVAILABLE",
-      message: "Horizon is not configured for this profile."
     });
   }
   const xdr = args.xdr.trim();
@@ -944,16 +844,164 @@ export async function submitTransactionXdr(args: {
       docs: "docs/mainnet-safety.md#signed-xdr-submission"
     });
   }
-  if (profile.realFunds) assertSignedTransactionXdr(xdr);
+  assertSignedTransactionXdr(xdr);
+
+  const transaction = parseTransactionXdr(xdr, profile.networkPassphrase);
+  const lifecycleTransaction = "innerTransaction" in transaction ? transaction.innerTransaction : transaction;
+  const transactionHash = Buffer.from(transaction.hash()).toString("hex");
+  await args.lifecycle?.onBuilt?.({
+    hash: transactionHash,
+    signedXdr: xdr,
+    source: lifecycleTransaction.source,
+    sequence: lifecycleTransaction.sequence,
+    ...(lifecycleTransaction.timeBounds?.maxTime === undefined || lifecycleTransaction.timeBounds.maxTime === "0"
+      ? {}
+      : {
+          expiresAt: new Date(Number(lifecycleTransaction.timeBounds.maxTime) * 1000).toISOString()
+        })
+  });
+
+  const useRpc = args.transport === "rpc" || (args.transport !== "horizon" && Boolean(profile.rpcUrl) && (args.rpcServer !== undefined || args.fetchImpl === undefined));
+  if (useRpc) {
+    if (!profile.rpcUrl && !args.rpcServer) {
+      throw new StellarAgentError({
+        code: "RPC_UNAVAILABLE",
+        message: "RPC is not configured for this profile."
+      });
+    }
+    const server = args.rpcServer ?? new rpc.Server(profile.rpcUrl!);
+    const endpoint = profile.rpcUrl ?? "injected-rpc";
+    let response: Awaited<ReturnType<typeof server.sendTransaction>>;
+    try {
+      response = await server.sendTransaction(transaction);
+    } catch (error) {
+      await args.lifecycle?.onSubmission?.({
+        hash: transactionHash,
+        transport: "rpc",
+        endpoint,
+        status: "transport_unknown",
+        detail: String(error)
+      });
+      throw new StellarAgentError({
+        code: "TRANSACTION_TIMEOUT",
+        message: "RPC submission outcome is unknown; reconcile the transaction hash before retrying.",
+        hint: `Run stellar-agent intent reconcile for transaction ${transactionHash}.`,
+        details: {
+          hash: transactionHash,
+          status: "confirmation_unknown",
+          changedOnChain: "unknown",
+          safeToRetry: false
+        }
+      });
+    }
+    await args.lifecycle?.onSubmission?.({
+      hash: transactionHash,
+      transport: "rpc",
+      endpoint,
+      status: response.status,
+      detail: { latestLedger: response.latestLedger }
+    });
+    if (response.status === "ERROR") {
+      throw new StellarAgentError({
+        code: "TRANSACTION_SUBMIT_FAILED",
+        message: "RPC rejected the signed transaction before confirmation.",
+        details: {
+          hash: transactionHash,
+          status: response.status,
+          changedOnChain: false,
+          safeToRetry: false
+        }
+      });
+    }
+    if (response.status === "TRY_AGAIN_LATER") {
+      throw new StellarAgentError({
+        code: "TRANSACTION_TIMEOUT",
+        message: "RPC could not accept the transaction; reconcile its hash before rebuilding or retrying.",
+        details: {
+          hash: transactionHash,
+          status: response.status,
+          changedOnChain: "unknown",
+          safeToRetry: false
+        }
+      });
+    }
+    const finalStatus = await server.pollTransaction(response.hash || transactionHash, {
+      attempts: 30,
+      sleepStrategy: () => 2_000
+    });
+    if (finalStatus.status === rpc.Api.GetTransactionStatus.SUCCESS) {
+      return {
+        hash: finalStatus.txHash || transactionHash,
+        ledger: finalStatus.ledger,
+        successful: true,
+        transport: "rpc"
+      };
+    }
+    if (finalStatus.status === rpc.Api.GetTransactionStatus.FAILED) {
+      throw new StellarAgentError({
+        code: "TRANSACTION_SUBMIT_FAILED",
+        message: "RPC confirmed that the transaction failed on ledger.",
+        hint: "The sequence and fee may have been consumed; rebuild only after inspecting the result.",
+        details: {
+          hash: transactionHash,
+          ledger: finalStatus.ledger,
+          changedOnChain: true,
+          safeToRetry: false
+        }
+      });
+    }
+    throw new StellarAgentError({
+      code: "TRANSACTION_TIMEOUT",
+      message: "RPC did not confirm the transaction before polling ended.",
+      hint: `Reconcile transaction ${transactionHash} before retrying.`,
+      details: {
+        hash: transactionHash,
+        status: "confirmation_unknown",
+        changedOnChain: "unknown",
+        safeToRetry: false
+      }
+    });
+  }
+
+  if (!profile.horizonUrl) {
+    throw new StellarAgentError({
+      code: "HORIZON_UNAVAILABLE",
+      message: "Horizon is not configured for this profile."
+    });
+  }
 
   const fetchImpl = args.fetchImpl ?? fetch;
-  const response = await fetchImpl(`${profile.horizonUrl.replace(/\/$/, "")}/transactions`, {
-    method: "POST",
-    body: new URLSearchParams({ tx: xdr }),
-    signal: AbortSignal.timeout(30_000)
-  });
+  let response: Response;
+  try {
+    response = await fetchImpl(`${profile.horizonUrl.replace(/\/$/, "")}/transactions`, {
+      method: "POST",
+      body: new URLSearchParams({ tx: xdr }),
+      signal: AbortSignal.timeout(30_000)
+    });
+  } catch (error) {
+    await args.lifecycle?.onSubmission?.({
+      hash: transactionHash,
+      transport: "horizon",
+      endpoint: profile.horizonUrl,
+      status: "transport_unknown",
+      detail: String(error)
+    });
+    throw new StellarAgentError({
+      code: "TRANSACTION_TIMEOUT",
+      message: "Horizon submission outcome is unknown; reconcile the transaction hash before retrying.",
+      hint: `Run stellar-agent intent reconcile for transaction ${transactionHash}.`,
+      details: { hash: transactionHash, status: "confirmation_unknown", changedOnChain: "unknown", safeToRetry: false }
+    });
+  }
   const body = await response.text();
   const parsed = safeJson(body);
+  await args.lifecycle?.onSubmission?.({
+    hash: parsed?.hash ?? transactionHash,
+    transport: "horizon",
+    endpoint: profile.horizonUrl,
+    status: response.ok ? "accepted" : `http_${response.status}`,
+    detail: parsed ?? body
+  });
   if (!response.ok) {
     throw new StellarAgentError({
       code: "TRANSACTION_SUBMIT_FAILED",
@@ -991,15 +1039,12 @@ export async function submitTransactionXdr(args: {
     hash: parsed?.hash,
     ledger: parsed?.ledger,
     successful: parsed?.successful ?? true,
-    feeCharged: parsed?.fee_charged?.toString()
+    feeCharged: parsed?.fee_charged?.toString(),
+    transport: "horizon"
   };
 }
 
-async function confirmSubmittedTransaction(args: {
-  hash: string;
-  profile: NetworkProfile;
-  fetchImpl: typeof fetch;
-}): Promise<SubmittedTransaction> {
+async function confirmSubmittedTransaction(args: { hash: string; profile: NetworkProfile; fetchImpl: typeof fetch }): Promise<SubmittedTransaction> {
   const horizonUrl = args.profile.horizonUrl?.replace(/\/$/, "");
   if (!horizonUrl) {
     throw new StellarAgentError({
@@ -1042,7 +1087,8 @@ async function confirmSubmittedTransaction(args: {
       hash: parsed?.hash ?? args.hash,
       ledger: parsed?.ledger,
       successful: parsed?.successful ?? true,
-      feeCharged: parsed?.fee_charged?.toString()
+      feeCharged: parsed?.fee_charged?.toString(),
+      transport: "horizon"
     };
   }
   throw new StellarAgentError({
@@ -1054,10 +1100,118 @@ async function confirmSubmittedTransaction(args: {
   });
 }
 
+export async function reconcileTransaction(args: { hash: string; profile?: NetworkProfile; rpcServer?: Pick<rpc.Server, "getTransaction">; fetchImpl?: typeof fetch }): Promise<TransactionReconciliation> {
+  const profile = args.profile ?? TESTNET_PROFILE;
+  if (!/^[a-f0-9]{64}$/i.test(args.hash)) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Transaction hash must be 64 hexadecimal characters."
+    });
+  }
+  if (profile.rpcUrl || args.rpcServer) {
+    try {
+      const server = args.rpcServer ?? new rpc.Server(profile.rpcUrl!);
+      const result = await server.getTransaction(args.hash);
+      if (result.status === rpc.Api.GetTransactionStatus.SUCCESS) {
+        return {
+          hash: args.hash,
+          status: "confirmed",
+          changedOnChain: true,
+          safeToRetry: false,
+          ledger: result.ledger,
+          transport: "rpc"
+        };
+      }
+      if (result.status === rpc.Api.GetTransactionStatus.FAILED) {
+        return {
+          hash: args.hash,
+          status: "failed",
+          changedOnChain: true,
+          safeToRetry: false,
+          ledger: result.ledger,
+          transport: "rpc"
+        };
+      }
+      if (!profile.horizonUrl) {
+        return {
+          hash: args.hash,
+          status: "not_found",
+          changedOnChain: "unknown",
+          safeToRetry: false,
+          transport: "rpc"
+        };
+      }
+    } catch (error) {
+      if (!profile.horizonUrl) {
+        return {
+          hash: args.hash,
+          status: "unknown",
+          changedOnChain: "unknown",
+          safeToRetry: false,
+          transport: "rpc",
+          detail: String(error)
+        };
+      }
+    }
+  }
+  if (!profile.horizonUrl) {
+    return {
+      hash: args.hash,
+      status: "unknown",
+      changedOnChain: "unknown",
+      safeToRetry: false,
+      transport: "horizon"
+    };
+  }
+  const response = await (args.fetchImpl ?? fetch)(`${profile.horizonUrl.replace(/\/$/, "")}/transactions/${args.hash}`, {
+    signal: AbortSignal.timeout(15_000)
+  });
+  if (response.status === 404) {
+    return {
+      hash: args.hash,
+      status: "not_found",
+      changedOnChain: "unknown",
+      safeToRetry: false,
+      transport: "horizon"
+    };
+  }
+  const body = await response.text();
+  const parsed = safeJson(body);
+  if (!response.ok) {
+    return {
+      hash: args.hash,
+      status: "unknown",
+      changedOnChain: "unknown",
+      safeToRetry: false,
+      transport: "horizon",
+      detail: parsed ?? body
+    };
+  }
+  return {
+    hash: args.hash,
+    status: parsed?.successful === false ? "failed" : "confirmed",
+    changedOnChain: true,
+    safeToRetry: false,
+    ledger: parsed?.ledger,
+    transport: "horizon"
+  };
+}
+
+function parseTransactionXdr(rawXdr: string, networkPassphrase: string) {
+  try {
+    return TransactionBuilder.fromXdr(rawXdr, networkPassphrase);
+  } catch {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Signed transaction XDR is not valid for the selected network passphrase."
+    });
+  }
+}
+
 function assertSignedTransactionXdr(rawXdr: string): void {
   let envelope: xdr.TransactionEnvelope;
   try {
-    envelope = xdr.TransactionEnvelope.fromXDR(rawXdr, "base64");
+    envelope = xdr.TransactionEnvelope.fromXdr(rawXdr, "base64");
   } catch {
     throw new StellarAgentError({
       code: "INVALID_INPUT",
@@ -1065,16 +1219,9 @@ function assertSignedTransactionXdr(rawXdr: string): void {
       docs: "docs/mainnet-safety.md#signed-xdr-submission"
     });
   }
-  const type = xdrUnionType(envelope);
-  const envelopeValue =
-    type === "envelopeTypeTx"
-      ? xdrMember(envelope, "v1")
-      : type === "envelopeTypeTxV0"
-        ? xdrMember(envelope, "v0")
-        : type === "envelopeTypeTxFeeBump"
-          ? xdrMember(envelope, "feeBump")
-          : undefined;
-  const signatures = xdrMember<unknown[]>(envelopeValue, "signatures")?.length ?? 0;
+  const type = envelope.type;
+  const envelopeValue = type === "envelopeTypeTx" ? envelope.v1 : type === "envelopeTypeTxV0" ? envelope.v0 : type === "envelopeTypeTxFeeBump" ? envelope.feeBump : undefined;
+  const signatures = envelopeValue?.signatures.length ?? 0;
   if (signatures < 1) {
     throw new StellarAgentError({
       code: "INVALID_INPUT",
@@ -1084,25 +1231,12 @@ function assertSignedTransactionXdr(rawXdr: string): void {
   }
 }
 
-function xdrMember<T = unknown>(value: unknown, key: string): T | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const member = (value as Record<string, unknown>)[key];
-  return (typeof member === "function" ? member.call(value) : member) as T | undefined;
-}
-
-function xdrUnionType(value: unknown): string | undefined {
-  const directType = xdrMember<unknown>(value, "type");
-  if (typeof directType === "string") return directType;
-  const legacySwitch = xdrMember<{ name?: unknown }>(value, "switch");
-  return typeof legacySwitch?.name === "string" ? legacySwitch.name : undefined;
-}
-
-export async function listClaimableBalances(
-  claimant: string,
-  profile: NetworkProfile = TESTNET_PROFILE
-): Promise<ClaimableBalanceRecord[]> {
+export async function listClaimableBalances(claimant: string, profile: NetworkProfile = TESTNET_PROFILE): Promise<ClaimableBalanceRecord[]> {
   if (!profile.horizonUrl) {
-    throw new StellarAgentError({ code: "HORIZON_UNAVAILABLE", message: "Horizon is not configured." });
+    throw new StellarAgentError({
+      code: "HORIZON_UNAVAILABLE",
+      message: "Horizon is not configured."
+    });
   }
   const url = new URL(`${profile.horizonUrl.replace(/\/$/, "")}/claimable_balances`);
   url.searchParams.set("claimant", claimant);
@@ -1130,28 +1264,8 @@ export async function listClaimableBalances(
   }));
 }
 
-export async function invokeContractWithStellarCli(args: {
-  contractId: string;
-  source: string;
-  network?: string;
-  rpcUrl?: string | null;
-  networkPassphrase?: string;
-  functionName: string;
-  contractArgs?: Record<string, string>;
-  stellarBinary?: string;
-  stellarConfigDir?: string;
-  noCache?: boolean;
-}): Promise<StellarCliResult> {
-  const command = [
-    "contract",
-    "invoke",
-    "--id",
-    args.contractId,
-    "--source-account",
-    args.source,
-    "--network",
-    args.network ?? "testnet"
-  ];
+export async function invokeContractWithStellarCli(args: { contractId: string; source: string; network?: string; rpcUrl?: string | null; networkPassphrase?: string; functionName: string; contractArgs?: Record<string, string>; stellarBinary?: string; stellarConfigDir?: string; noCache?: boolean }): Promise<StellarCliResult> {
+  const command = ["contract", "invoke", "--id", args.contractId, "--source-account", args.source, "--network", args.network ?? "testnet"];
   addRpcArgs(command, args);
   command.push("--", args.functionName);
   for (const [key, value] of Object.entries(args.contractArgs ?? {})) {
@@ -1179,19 +1293,7 @@ export function parseStellarCliTransactionHash(output: string): string | undefin
   return hashMatch?.[1];
 }
 
-export async function deployContractWithStellarCli(args: {
-  source: string;
-  wasm?: string;
-  wasmHash?: string;
-  alias?: string;
-  network?: string;
-  rpcUrl?: string | null;
-  networkPassphrase?: string;
-  constructorArgs?: Record<string, string>;
-  stellarBinary?: string;
-  stellarConfigDir?: string;
-  noCache?: boolean;
-}): Promise<StellarCliResult> {
+export async function deployContractWithStellarCli(args: { source: string; wasm?: string; wasmHash?: string; alias?: string; network?: string; rpcUrl?: string | null; networkPassphrase?: string; constructorArgs?: Record<string, string>; stellarBinary?: string; stellarConfigDir?: string; noCache?: boolean }): Promise<StellarCliResult> {
   const command = ["contract", "deploy", "--source-account", args.source, "--network", args.network ?? "testnet"];
   if (args.wasm) command.push("--wasm", args.wasm);
   if (args.wasmHash) command.push("--wasm-hash", args.wasmHash);
@@ -1213,26 +1315,8 @@ export async function deployContractWithStellarCli(args: {
   });
 }
 
-export async function uploadContractWasmWithStellarCli(args: {
-  source: string;
-  wasm: string;
-  network?: string;
-  rpcUrl?: string | null;
-  networkPassphrase?: string;
-  stellarBinary?: string;
-  stellarConfigDir?: string;
-  noCache?: boolean;
-}): Promise<StellarCliResult> {
-  const command = [
-    "contract",
-    "upload",
-    "--source-account",
-    args.source,
-    "--network",
-    args.network ?? "testnet",
-    "--wasm",
-    args.wasm
-  ];
+export async function uploadContractWasmWithStellarCli(args: { source: string; wasm: string; network?: string; rpcUrl?: string | null; networkPassphrase?: string; stellarBinary?: string; stellarConfigDir?: string; noCache?: boolean }): Promise<StellarCliResult> {
+  const command = ["contract", "upload", "--source-account", args.source, "--network", args.network ?? "testnet", "--wasm", args.wasm];
   addRpcArgs(command, args);
   return runStellarCli({
     command,
@@ -1243,28 +1327,8 @@ export async function uploadContractWasmWithStellarCli(args: {
   });
 }
 
-export async function deployAssetContractWithStellarCli(args: {
-  source: string;
-  asset: string;
-  alias?: string;
-  network?: string;
-  rpcUrl?: string | null;
-  networkPassphrase?: string;
-  stellarBinary?: string;
-  stellarConfigDir?: string;
-  noCache?: boolean;
-}): Promise<StellarCliResult> {
-  const command = [
-    "contract",
-    "asset",
-    "deploy",
-    "--source-account",
-    args.source,
-    "--network",
-    args.network ?? "testnet",
-    "--asset",
-    args.asset
-  ];
+export async function deployAssetContractWithStellarCli(args: { source: string; asset: string; alias?: string; network?: string; rpcUrl?: string | null; networkPassphrase?: string; stellarBinary?: string; stellarConfigDir?: string; noCache?: boolean }): Promise<StellarCliResult> {
+  const command = ["contract", "asset", "deploy", "--source-account", args.source, "--network", args.network ?? "testnet", "--asset", args.asset];
   if (args.alias) command.push("--alias", args.alias);
   addRpcArgs(command, args);
   return runStellarCli({
@@ -1276,15 +1340,7 @@ export async function deployAssetContractWithStellarCli(args: {
   });
 }
 
-export async function assetContractIdWithStellarCli(args: {
-  asset: string;
-  network?: string;
-  rpcUrl?: string | null;
-  networkPassphrase?: string;
-  stellarBinary?: string;
-  stellarConfigDir?: string;
-  noCache?: boolean;
-}): Promise<StellarCliResult> {
+export async function assetContractIdWithStellarCli(args: { asset: string; network?: string; rpcUrl?: string | null; networkPassphrase?: string; stellarBinary?: string; stellarConfigDir?: string; noCache?: boolean }): Promise<StellarCliResult> {
   const command = ["contract", "id", "asset", "--asset", args.asset, "--network", args.network ?? "testnet"];
   addRpcArgs(command, args);
   return runStellarCli({
@@ -1296,18 +1352,7 @@ export async function assetContractIdWithStellarCli(args: {
   });
 }
 
-export async function contractInfoWithStellarCli(args: {
-  kind: "interface" | "meta" | "env-meta" | "build" | "hash";
-  contractId?: string;
-  wasm?: string;
-  wasmHash?: string;
-  network?: string;
-  rpcUrl?: string | null;
-  networkPassphrase?: string;
-  stellarBinary?: string;
-  stellarConfigDir?: string;
-  noCache?: boolean;
-}): Promise<StellarCliResult> {
+export async function contractInfoWithStellarCli(args: { kind: "interface" | "meta" | "env-meta" | "build" | "hash"; contractId?: string; wasm?: string; wasmHash?: string; network?: string; rpcUrl?: string | null; networkPassphrase?: string; stellarBinary?: string; stellarConfigDir?: string; noCache?: boolean }): Promise<StellarCliResult> {
   const command = ["contract", "info", args.kind];
   if (args.contractId) command.push("--contract-id", args.contractId);
   if (args.wasm) command.push("--wasm", args.wasm);
@@ -1323,21 +1368,7 @@ export async function contractInfoWithStellarCli(args: {
   });
 }
 
-export async function readContractWithStellarCli(args: {
-  contractId?: string;
-  key?: string;
-  keyXdr?: string;
-  wasm?: string;
-  wasmHash?: string;
-  durability?: "persistent" | "temporary";
-  output?: "string" | "json" | "xdr";
-  network?: string;
-  rpcUrl?: string | null;
-  networkPassphrase?: string;
-  stellarBinary?: string;
-  stellarConfigDir?: string;
-  noCache?: boolean;
-}): Promise<StellarCliResult> {
+export async function readContractWithStellarCli(args: { contractId?: string; key?: string; keyXdr?: string; wasm?: string; wasmHash?: string; durability?: "persistent" | "temporary"; output?: "string" | "json" | "xdr"; network?: string; rpcUrl?: string | null; networkPassphrase?: string; stellarBinary?: string; stellarConfigDir?: string; noCache?: boolean }): Promise<StellarCliResult> {
   validateContractFootprintArgs(args, "read");
   const command = ["contract", "read", "--network", args.network ?? "testnet"];
   addFootprintArgs(command, args);
@@ -1352,17 +1383,7 @@ export async function readContractWithStellarCli(args: {
   });
 }
 
-export async function fetchContractWasmWithStellarCli(args: {
-  contractId?: string;
-  wasmHash?: string;
-  outFile?: string;
-  network?: string;
-  rpcUrl?: string | null;
-  networkPassphrase?: string;
-  stellarBinary?: string;
-  stellarConfigDir?: string;
-  noCache?: boolean;
-}): Promise<StellarCliResult> {
+export async function fetchContractWasmWithStellarCli(args: { contractId?: string; wasmHash?: string; outFile?: string; network?: string; rpcUrl?: string | null; networkPassphrase?: string; stellarBinary?: string; stellarConfigDir?: string; noCache?: boolean }): Promise<StellarCliResult> {
   validateContractFetchArgs(args);
   const command = ["contract", "fetch", "--network", args.network ?? "testnet"];
   if (args.contractId) command.push("--id", args.contractId);
@@ -1378,35 +1399,10 @@ export async function fetchContractWasmWithStellarCli(args: {
   });
 }
 
-export async function extendContractWithStellarCli(args: {
-  source: string;
-  ledgersToExtend: number;
-  contractId?: string;
-  key?: string;
-  keyXdr?: string;
-  wasm?: string;
-  wasmHash?: string;
-  durability?: "persistent" | "temporary";
-  ttlLedgerOnly?: boolean;
-  network?: string;
-  rpcUrl?: string | null;
-  networkPassphrase?: string;
-  stellarBinary?: string;
-  stellarConfigDir?: string;
-  noCache?: boolean;
-}): Promise<StellarCliResult> {
+export async function extendContractWithStellarCli(args: { source: string; ledgersToExtend: number; contractId?: string; key?: string; keyXdr?: string; wasm?: string; wasmHash?: string; durability?: "persistent" | "temporary"; ttlLedgerOnly?: boolean; network?: string; rpcUrl?: string | null; networkPassphrase?: string; stellarBinary?: string; stellarConfigDir?: string; noCache?: boolean }): Promise<StellarCliResult> {
   validateLedgersToExtend(args.ledgersToExtend);
   validateContractFootprintArgs(args, "extend");
-  const command = [
-    "contract",
-    "extend",
-    "--source-account",
-    args.source,
-    "--network",
-    args.network ?? "testnet",
-    "--ledgers-to-extend",
-    String(args.ledgersToExtend)
-  ];
+  const command = ["contract", "extend", "--source-account", args.source, "--network", args.network ?? "testnet", "--ledgers-to-extend", String(args.ledgersToExtend)];
   addFootprintArgs(command, args);
   if (args.ttlLedgerOnly) command.push("--ttl-ledger-only");
   addRpcArgs(command, args);
@@ -1419,21 +1415,7 @@ export async function extendContractWithStellarCli(args: {
   });
 }
 
-export async function restoreContractWithStellarCli(args: {
-  source: string;
-  contractId?: string;
-  key?: string;
-  keyXdr?: string;
-  wasm?: string;
-  wasmHash?: string;
-  durability?: "persistent" | "temporary";
-  network?: string;
-  rpcUrl?: string | null;
-  networkPassphrase?: string;
-  stellarBinary?: string;
-  stellarConfigDir?: string;
-  noCache?: boolean;
-}): Promise<StellarCliResult> {
+export async function restoreContractWithStellarCli(args: { source: string; contractId?: string; key?: string; keyXdr?: string; wasm?: string; wasmHash?: string; durability?: "persistent" | "temporary"; network?: string; rpcUrl?: string | null; networkPassphrase?: string; stellarBinary?: string; stellarConfigDir?: string; noCache?: boolean }): Promise<StellarCliResult> {
   validateContractFootprintArgs(args, "restore");
   const command = ["contract", "restore", "--source-account", args.source, "--network", args.network ?? "testnet"];
   addFootprintArgs(command, args);
@@ -1542,19 +1524,10 @@ function validateContractFootprintArgs(
   }
 }
 
-async function runStellarCli(args: {
-  binary?: string;
-  command: string[];
-  action: string;
-  configDir?: string;
-  noCache?: boolean;
-}): Promise<StellarCliResult> {
+async function runStellarCli(args: { binary?: string; command: string[]; action: string; configDir?: string; noCache?: boolean }): Promise<StellarCliResult> {
   const binary = args.binary ?? "stellar";
   const command = [...args.command];
-  const runtimeArgs = [
-    ...(args.configDir ? ["--config-dir", args.configDir] : []),
-    ...(args.noCache ? ["--no-cache"] : [])
-  ];
+  const runtimeArgs = [...(args.configDir ? ["--config-dir", args.configDir] : []), ...(args.noCache ? ["--no-cache"] : [])];
   if (runtimeArgs.length > 0) {
     const separator = command.indexOf("--");
     command.splice(separator < 0 ? command.length : separator, 0, ...runtimeArgs);
@@ -1605,16 +1578,14 @@ export async function checkStellarCli(binary = "stellar"): Promise<StellarCliSta
   }
 }
 
-async function submitOperation(args: {
-  source: TestnetWallet | SigningWallet;
-  operation?: any;
-  operations?: any[];
-  memo?: string;
-  profile: NetworkProfile;
-  allowRealFunds?: boolean;
-  feeStrategy?: FeeStrategy;
-  noCache?: boolean;
-}): Promise<SubmittedOperation> {
+async function submitOperation(args: { source: TestnetWallet | SigningWallet; operation?: any; operations?: any[]; memo?: string; profile: NetworkProfile; allowRealFunds?: boolean; feeStrategy?: FeeStrategy; noCache?: boolean; lifecycle?: TransactionLifecycleHooks; executionLockPath?: string }): Promise<SubmittedOperation> {
+  if (args.executionLockPath) {
+    const { executionLockPath, ...unlockedArgs } = args;
+    return withFileLock(executionLockPath, () => submitOperation(unlockedArgs), {
+      timeoutMs: 180_000,
+      staleMs: 180_000
+    });
+  }
   const profile = args.profile;
   if (profile.realFunds && !args.allowRealFunds) {
     throw new StellarAgentError({
@@ -1659,10 +1630,11 @@ async function submitOperation(args: {
     const tx = builder.setTimeout(60).build();
     tx.sign(keypair);
     const result = await submitTransactionXdr({
-      xdr: tx.toXDR(),
+      xdr: tx.toXdr(),
       profile,
+      transport: "horizon",
       ...(args.allowRealFunds === undefined ? {} : { allowRealFunds: args.allowRealFunds }),
-      fetchImpl: fetch
+      ...(args.lifecycle === undefined ? {} : { lifecycle: args.lifecycle })
     });
     return {
       hash: result.hash,
@@ -1806,27 +1778,14 @@ function estimatePoolReserves(pool: LiquidityPoolSummary, shareOfPool: number): 
   }));
 }
 
-function estimateDepositShares(
-  pool: LiquidityPoolSummary,
-  maxAmountA: string,
-  maxAmountB: string
-): string | undefined {
+function estimateDepositShares(pool: LiquidityPoolSummary, maxAmountA: string, maxAmountB: string): string | undefined {
   const [reserveA, reserveB] = requireTwoPoolReserves(pool);
   const reserveAValue = Number(reserveA.amount);
   const reserveBValue = Number(reserveB.amount);
   const maxAValue = Number(maxAmountA);
   const maxBValue = Number(maxAmountB);
   const totalShares = Number(pool.totalShares);
-  if (
-    !Number.isFinite(reserveAValue) ||
-    !Number.isFinite(reserveBValue) ||
-    !Number.isFinite(maxAValue) ||
-    !Number.isFinite(maxBValue) ||
-    !Number.isFinite(totalShares) ||
-    reserveAValue <= 0 ||
-    reserveBValue <= 0 ||
-    totalShares <= 0
-  ) {
+  if (!Number.isFinite(reserveAValue) || !Number.isFinite(reserveBValue) || !Number.isFinite(maxAValue) || !Number.isFinite(maxBValue) || !Number.isFinite(totalShares) || reserveAValue <= 0 || reserveBValue <= 0 || totalShares <= 0) {
     return undefined;
   }
   return formatEstimatedAmount(Math.min(maxAValue / reserveAValue, maxBValue / reserveBValue) * totalShares);
@@ -1840,30 +1799,21 @@ function poolPrice(pool: LiquidityPoolSummary): string | undefined {
   return formatEstimatedAmount(reserveBValue / reserveAValue);
 }
 
-async function liquidityPoolTrustlineStatus(
-  accountId: string,
-  pool: LiquidityPoolSummary,
-  profile: NetworkProfile
-): Promise<NonNullable<LiquidityPoolPreflight["trustlines"]>> {
+async function liquidityPoolTrustlineStatus(accountId: string, pool: LiquidityPoolSummary, profile: NetworkProfile): Promise<NonNullable<LiquidityPoolPreflight["trustlines"]>> {
   if (!profile.horizonUrl) {
-    throw new StellarAgentError({ code: "HORIZON_UNAVAILABLE", message: "Horizon is not configured." });
+    throw new StellarAgentError({
+      code: "HORIZON_UNAVAILABLE",
+      message: "Horizon is not configured."
+    });
   }
-  const account: any = await horizonGet(
-    new URL(`${profile.horizonUrl.replace(/\/$/, "")}/accounts/${accountId}`),
-    "Could not load account trustlines from Horizon."
-  );
+  const account: any = await horizonGet(new URL(`${profile.horizonUrl.replace(/\/$/, "")}/accounts/${accountId}`), "Could not load account trustlines from Horizon.");
   const reserveAssets = requireTwoPoolReserves(pool).map((reserve) => reserve.asset);
   const reserveAssetsSatisfied = reserveAssets.every((asset) => asset === "XLM" || hasAssetBalanceOrTrustline(account, asset));
-  const poolShareSatisfied = account.balances.some(
-    (balance: any) => balance.asset_type === "liquidity_pool_shares" && balance.liquidity_pool_id === pool.id
-  );
+  const poolShareSatisfied = account.balances.some((balance: any) => balance.asset_type === "liquidity_pool_shares" && balance.liquidity_pool_id === pool.id);
   return {
     reserveAssetsSatisfied,
     poolShareSatisfied,
-    missing: [
-      ...reserveAssets.filter((asset) => asset !== "XLM" && !hasAssetBalanceOrTrustline(account, asset)),
-      ...(poolShareSatisfied ? [] : [`pool_shares:${pool.id}`])
-    ]
+    missing: [...reserveAssets.filter((asset) => asset !== "XLM" && !hasAssetBalanceOrTrustline(account, asset)), ...(poolShareSatisfied ? [] : [`pool_shares:${pool.id}`])]
   };
 }
 
@@ -1880,21 +1830,11 @@ function balanceLineAssetString(balance: any): string {
 
 function liquidityPoolRiskNotes(pool: LiquidityPoolSummary): LiquidityPoolPreflight["risk"] {
   return {
-    notes: [
-      "Liquidity pool fees are not guaranteed profit.",
-      "Pool share value can underperform simply holding the reserve assets.",
-      "Quotes, estimates, and Horizon snapshots can change before transaction submission.",
-      `Core pool fee is ${pool.feeBp} bps.`
-    ]
+    notes: ["Liquidity pool fees are not guaranteed profit.", "Pool share value can underperform simply holding the reserve assets.", "Quotes, estimates, and Horizon snapshots can change before transaction submission.", `Core pool fee is ${pool.feeBp} bps.`]
   };
 }
 
-async function resolveLiquidityPoolAssetForTrustline(args: {
-  poolId?: string;
-  assetA?: string;
-  assetB?: string;
-  profile?: NetworkProfile;
-}): Promise<{ poolId: string; asset: LiquidityPoolAsset }> {
+async function resolveLiquidityPoolAssetForTrustline(args: { poolId?: string; assetA?: string; assetB?: string; profile?: NetworkProfile }): Promise<{ poolId: string; asset: LiquidityPoolAsset }> {
   if (args.poolId) {
     const pool = await inspectLiquidityPool({
       poolId: args.poolId,
@@ -1913,7 +1853,11 @@ async function resolveLiquidityPoolAssetForTrustline(args: {
   }
   const [assetA, assetB] = sortedLiquidityPoolAssets(args.assetA, args.assetB);
   const asset = new LiquidityPoolAsset(assetA, assetB, LiquidityPoolFeeV18);
-  const poolIdBytes = getLiquidityPoolId("constant_product", { assetA, assetB, fee: LiquidityPoolFeeV18 });
+  const poolIdBytes = getLiquidityPoolId("constant_product", {
+    assetA,
+    assetB,
+    fee: LiquidityPoolFeeV18
+  });
   return { poolId: Buffer.from(poolIdBytes).toString("hex"), asset };
 }
 
@@ -2059,13 +2003,7 @@ function parseClaimableTimestamp(input: string | number | Date, field: string): 
   };
 }
 
-export async function estimateTransactionFee(args: {
-  profile?: NetworkProfile;
-  operationCount?: number;
-  strategy?: FeeStrategy;
-  noCache?: boolean;
-  fetchImpl?: typeof fetch;
-}): Promise<FeeStatsSummary> {
+export async function estimateTransactionFee(args: { profile?: NetworkProfile; operationCount?: number; strategy?: FeeStrategy; noCache?: boolean; fetchImpl?: typeof fetch }): Promise<FeeStatsSummary> {
   const profile = args.profile ?? TESTNET_PROFILE;
   const operationCount = args.operationCount ?? 1;
   if (!Number.isInteger(operationCount) || operationCount < 1 || operationCount > 100) {
@@ -2159,9 +2097,7 @@ async function horizonFeeStats(
       source: "horizon" as const,
       cached: false,
       lastLedgerBaseFee: String(parsed.last_ledger_base_fee ?? BASE_FEE),
-      ...(parsed.ledger_capacity_usage === undefined
-        ? {}
-        : { ledgerCapacityUsage: String(parsed.ledger_capacity_usage) }),
+      ...(parsed.ledger_capacity_usage === undefined ? {} : { ledgerCapacityUsage: String(parsed.ledger_capacity_usage) }),
       ...(feeCharged === undefined ? {} : { feeCharged })
     };
     sessionCache.set(key, { value, expiresAt: now + 30_000 });
@@ -2180,20 +2116,10 @@ function normalizeFeeCharged(input: unknown): Record<string, string> | undefined
   return output;
 }
 
-function selectFeeForStrategy(
-  stats: Awaited<ReturnType<typeof horizonFeeStats>>,
-  strategy: FeeStrategy
-): string {
+function selectFeeForStrategy(stats: Awaited<ReturnType<typeof horizonFeeStats>>, strategy: FeeStrategy): string {
   if (strategy === "base") return maxFeeString(BASE_FEE, stats.lastLedgerBaseFee);
   const charged = stats.feeCharged ?? {};
-  const candidate =
-    strategy === "low"
-      ? charged.p50 ?? charged.mode ?? charged.min
-      : strategy === "medium"
-        ? charged.p80 ?? charged.p70 ?? charged.p60 ?? charged.p50
-        : strategy === "high"
-          ? charged.p90 ?? charged.p95 ?? charged.max
-          : charged.p95 ?? charged.p90 ?? charged.max;
+  const candidate = strategy === "low" ? (charged.p50 ?? charged.mode ?? charged.min) : strategy === "medium" ? (charged.p80 ?? charged.p70 ?? charged.p60 ?? charged.p50) : strategy === "high" ? (charged.p90 ?? charged.p95 ?? charged.max) : (charged.p95 ?? charged.p90 ?? charged.max);
   return maxFeeString(BASE_FEE, stats.lastLedgerBaseFee, candidate ?? BASE_FEE);
 }
 
@@ -2204,10 +2130,12 @@ function maxFeeString(...values: string[]): string {
   }, BASE_FEE);
 }
 
-
 export async function lookupTransaction(hash: string, profile: NetworkProfile): Promise<unknown> {
   if (!profile.horizonUrl) {
-    throw new StellarAgentError({ code: "HORIZON_UNAVAILABLE", message: "Horizon is not configured." });
+    throw new StellarAgentError({
+      code: "HORIZON_UNAVAILABLE",
+      message: "Horizon is not configured."
+    });
   }
   const response = await fetch(`${profile.horizonUrl.replace(/\/$/, "")}/transactions/${hash}`, {
     signal: AbortSignal.timeout(15_000)
@@ -2222,11 +2150,7 @@ export async function lookupTransaction(hash: string, profile: NetworkProfile): 
   return response.json();
 }
 
-export async function accountPayments(args: {
-  address: string;
-  profile: NetworkProfile;
-  limit?: number;
-}): Promise<HorizonCollectionResult> {
+export async function accountPayments(args: { address: string; profile: NetworkProfile; limit?: number }): Promise<HorizonCollectionResult> {
   return horizonCollection({
     profile: args.profile,
     path: `/accounts/${args.address}/payments`,
@@ -2234,11 +2158,7 @@ export async function accountPayments(args: {
   });
 }
 
-export async function accountEffects(args: {
-  address: string;
-  profile: NetworkProfile;
-  limit?: number;
-}): Promise<HorizonCollectionResult> {
+export async function accountEffects(args: { address: string; profile: NetworkProfile; limit?: number }): Promise<HorizonCollectionResult> {
   return horizonCollection({
     profile: args.profile,
     path: `/accounts/${args.address}/effects`,
@@ -2246,11 +2166,7 @@ export async function accountEffects(args: {
   });
 }
 
-export async function transactionEffects(args: {
-  hash: string;
-  profile: NetworkProfile;
-  limit?: number;
-}): Promise<HorizonCollectionResult> {
+export async function transactionEffects(args: { hash: string; profile: NetworkProfile; limit?: number }): Promise<HorizonCollectionResult> {
   return horizonCollection({
     profile: args.profile,
     path: `/transactions/${args.hash}/effects`,
@@ -2260,7 +2176,10 @@ export async function transactionEffects(args: {
 
 export async function latestLedger(profile: NetworkProfile): Promise<unknown> {
   if (!profile.horizonUrl) {
-    throw new StellarAgentError({ code: "HORIZON_UNAVAILABLE", message: "Horizon is not configured." });
+    throw new StellarAgentError({
+      code: "HORIZON_UNAVAILABLE",
+      message: "Horizon is not configured."
+    });
   }
   const response = await fetch(`${profile.horizonUrl.replace(/\/$/, "")}/ledgers?order=desc&limit=1`, {
     signal: AbortSignal.timeout(15_000)
@@ -2275,13 +2194,12 @@ export async function latestLedger(profile: NetworkProfile): Promise<unknown> {
   return response.json();
 }
 
-async function horizonCollection(args: {
-  profile: NetworkProfile;
-  path: string;
-  limit?: number;
-}): Promise<HorizonCollectionResult> {
+async function horizonCollection(args: { profile: NetworkProfile; path: string; limit?: number }): Promise<HorizonCollectionResult> {
   if (!args.profile.horizonUrl) {
-    throw new StellarAgentError({ code: "HORIZON_UNAVAILABLE", message: "Horizon is not configured." });
+    throw new StellarAgentError({
+      code: "HORIZON_UNAVAILABLE",
+      message: "Horizon is not configured."
+    });
   }
   const url = new URL(`${args.profile.horizonUrl.replace(/\/$/, "")}${args.path}`);
   url.searchParams.set("order", "desc");
@@ -2316,13 +2234,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 function isHorizonNotFound(error: any): boolean {
-  return (
-    error?.response?.status === 404 ||
-    error?.response?.statusCode === 404 ||
-    error?.status === 404 ||
-    error?.statusCode === 404 ||
-    error?.message === "Not Found"
-  );
+  return error?.response?.status === 404 || error?.response?.statusCode === 404 || error?.status === 404 || error?.statusCode === 404 || error?.message === "Not Found";
 }
 
 function normalizeHorizonError(error: any): unknown {

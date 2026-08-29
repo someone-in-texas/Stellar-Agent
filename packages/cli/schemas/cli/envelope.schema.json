@@ -7,7 +7,8 @@
   "properties": {
     "ok": { "type": "boolean" },
     "data": {},
-    "error": { "$ref": "#/$defs/error" }
+    "error": { "$ref": "#/$defs/error" },
+    "continuation": { "$ref": "#/$defs/continuation" }
   },
   "additionalProperties": false,
   "oneOf": [
@@ -27,6 +28,21 @@
     }
   ],
   "$defs": {
+    "continuation": {
+      "type": "object",
+      "required": ["changedOnChain", "safeToRetry", "approvalRequired", "nextActions"],
+      "additionalProperties": false,
+      "properties": {
+        "intentId": { "type": "string" },
+        "transactionHash": { "type": "string" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "changedOnChain": { "enum": [true, false, "unknown"] },
+        "safeToRetry": { "type": "boolean" },
+        "approvalRequired": { "type": "boolean" },
+        "nextActions": { "type": "array", "items": { "type": "string" } },
+        "reason": { "type": "string" }
+      }
+    },
     "error": {
       "type": "object",
       "required": ["code", "message"],

@@ -1,6 +1,6 @@
 {
   "name": "@stellar-agent/cli",
-  "version": "0.5.4",
+  "version": "0.6.0",
   "description": "Testnet-first CLI for safe agentic payments, policies, receipts, approvals, and guarded Mainnet workflows on Stellar.",
   "type": "module",
   "license": "MIT",
@@ -14,7 +14,7 @@
   },
   "homepage": "https://github.com/someone-in-texas/Stellar-Agent/tree/main/packages/cli#readme",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12.0"
   },
   "bin": {
     "stellar-agent": "./dist/index.js"

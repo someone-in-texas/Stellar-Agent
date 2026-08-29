@@ -1,6 +1,6 @@
 {
   "name": "@stellar-agent/stellar",
-  "version": "0.5.4",
+  "version": "0.6.0",
   "description": "Stellar SDK and Stellar CLI adapters for Testnet-first agent payment workflows.",
   "type": "module",
   "license": "MIT",
@@ -14,7 +14,7 @@
   },
   "homepage": "https://github.com/someone-in-texas/Stellar-Agent/tree/main/packages/stellar#readme",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12.0"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -33,6 +33,6 @@
   },
   "dependencies": {
     "@stellar-agent/core": "workspace:*",
-    "@stellar/stellar-sdk": "16.3.0"
+    "@stellar/stellar-sdk": "17.0.1"
   }
 }

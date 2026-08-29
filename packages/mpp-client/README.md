@@ -1,13 +1,13 @@
 # @stellar-agent/mpp-client
 
-Local MPP one-time charge and session-budget client support for the Testnet demo.
+Local MPP Testnet demos plus durable cross-process session-budget accounting.
 
 This package implements concrete local flows:
 
 - one-time `402 -> policy -> Testnet payment -> retry with proof`
 - session-budget `402 -> policy -> Testnet budget payment -> repeated proof requests`
 
-Production facilitator flows are not implemented yet.
+`reserveMppSessionDebit` provides atomic persistent debits for production adapter sessions without selecting or endorsing a facilitator.
 
 ## Install
 
@@ -24,8 +24,8 @@ stellar-agent pay mpp http://127.0.0.1:PORT/mpp-report --allow-localhost-demo --
 
 ## Safety
 
-- This package is for local Testnet demos.
-- Production facilitator-backed MPP support is intentionally out of scope for this release.
+- CLI wire protocols are local Testnet demos.
+- Production adapters must bind durable state to the exact network, facilitator origin, recipient, asset, and approved budget, and independently reconcile settlement.
 - Payment policy and receipts are handled by the CLI flow before and after Testnet payment submission.
 
 ## Links

@@ -6,13 +6,7 @@ export type AquariusNetworkName = "testnet" | "mainnet";
 export type AquariusActionType = "deposit" | "withdraw" | "swap";
 export type AquariusLpActionType = "deposit" | "withdraw";
 export type AquariusSwapMode = "strict_send" | "strict_receive";
-export type BlendActionType =
-  | "supply"
-  | "withdraw"
-  | "supply_collateral"
-  | "withdraw_collateral"
-  | "borrow"
-  | "repay";
+export type BlendActionType = "supply" | "withdraw" | "supply_collateral" | "withdraw_collateral" | "borrow" | "repay";
 
 export interface BlendAssetDeployment {
   symbol: string;
@@ -228,11 +222,7 @@ const AQUARIUS_DEPLOYMENTS: Record<AquariusNetworkName, AquariusDeployment> = {
     apiBaseUrl: "https://amm-api-testnet.aqua.network/api/external/v1",
     sorobanRpcUrl: "https://soroban-testnet.stellar.org:443",
     horizonUrl: "https://horizon-testnet.stellar.org",
-    docs: [
-      "https://docs.aqua.network/developers/code-examples/prerequisites-and-basics",
-      "https://docs.aqua.network/developers/code-examples/get-pools-info",
-      "https://docs.aqua.network/developers/aquarius-soroban-functions"
-    ],
+    docs: ["https://docs.aqua.network/developers/code-examples/prerequisites-and-basics", "https://docs.aqua.network/developers/code-examples/get-pools-info", "https://docs.aqua.network/developers/aquarius-soroban-functions"],
     assets: [
       { symbol: "XLM", contractId: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC" },
       {
@@ -256,18 +246,9 @@ const AQUARIUS_DEPLOYMENTS: Record<AquariusNetworkName, AquariusDeployment> = {
     apiBaseUrl: "https://amm-api.aqua.network/api/external/v1",
     sorobanRpcUrl: "https://mainnet.sorobanrpc.com",
     horizonUrl: "https://horizon.stellar.org",
-    docs: [
-      "https://docs.aqua.network/developers/code-examples/prerequisites-and-basics",
-      "https://docs.aqua.network/developers/code-examples/get-pools-info",
-      "https://docs.aqua.network/developers/aquarius-soroban-functions"
-    ],
-    assets: [
-      { symbol: "XLM", contractId: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA" }
-    ],
-    notes: [
-      "Mainnet Aquarius mutation is not supported by stellar-agent local auto-signing.",
-      "Mainnet non-native asset aliases are intentionally not shipped as static constants; use live Aquarius API pool metadata or exact contract ids."
-    ]
+    docs: ["https://docs.aqua.network/developers/code-examples/prerequisites-and-basics", "https://docs.aqua.network/developers/code-examples/get-pools-info", "https://docs.aqua.network/developers/aquarius-soroban-functions"],
+    assets: [{ symbol: "XLM", contractId: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA" }],
+    notes: ["Mainnet Aquarius mutation is not supported by stellar-agent local auto-signing.", "Mainnet non-native asset aliases are intentionally not shipped as static constants; use live Aquarius API pool metadata or exact contract ids."]
   }
 };
 
@@ -427,12 +408,13 @@ export function aquariusDeployment(network: AquariusNetworkName): AquariusDeploy
   return structuredClone(AQUARIUS_DEPLOYMENTS[network]);
 }
 
-export async function fetchAquariusPools(args: {
+export async function fetchAquariusPools(args: { network: AquariusNetworkName; search?: string; limit?: number; fetchImpl?: typeof fetch }): Promise<{
   network: AquariusNetworkName;
-  search?: string;
-  limit?: number;
-  fetchImpl?: typeof fetch;
-}): Promise<{ network: AquariusNetworkName; apiBaseUrl: string; count?: number; pools: AquariusPoolSummary[]; raw: unknown }> {
+  apiBaseUrl: string;
+  count?: number;
+  pools: AquariusPoolSummary[];
+  raw: unknown;
+}> {
   const deployment = aquariusDeployment(args.network);
   const url = new URL(`${deployment.apiBaseUrl}/pools/`);
   if (args.search) url.searchParams.set("search", args.search);
@@ -460,11 +442,7 @@ export async function fetchAquariusPools(args: {
   };
 }
 
-export async function inspectAquariusPool(args: {
-  network: AquariusNetworkName;
-  pool: string;
-  fetchImpl?: typeof fetch;
-}): Promise<{ network: AquariusNetworkName; pool: AquariusPoolSummary; raw?: unknown }> {
+export async function inspectAquariusPool(args: { network: AquariusNetworkName; pool: string; fetchImpl?: typeof fetch }): Promise<{ network: AquariusNetworkName; pool: AquariusPoolSummary; raw?: unknown }> {
   const listed = await fetchAquariusPools({
     network: args.network,
     search: args.pool,
@@ -500,17 +478,7 @@ export async function inspectAquariusPool(args: {
   });
 }
 
-export async function preflightAquariusLp(args: {
-  network: AquariusNetworkName;
-  pool: string;
-  account: string;
-  action: AquariusLpActionType;
-  desiredAmounts?: string[];
-  minShares?: string;
-  shareAmount?: string;
-  minAmounts?: string[];
-  fetchImpl?: typeof fetch;
-}): Promise<AquariusLpPreflight> {
+export async function preflightAquariusLp(args: { network: AquariusNetworkName; pool: string; account: string; action: AquariusLpActionType; desiredAmounts?: string[]; minShares?: string; shareAmount?: string; minAmounts?: string[]; fetchImpl?: typeof fetch }): Promise<AquariusLpPreflight> {
   const { pool } = await inspectAquariusPool({
     network: args.network,
     pool: args.pool,
@@ -565,29 +533,16 @@ export async function preflightAquariusLp(args: {
     ...(args.minAmounts === undefined ? {} : { minAmounts: args.minAmounts }),
     assets,
     assetGroups,
-    nominalExposure:
-      args.action === "deposit" ? sumDecimalStrings(args.desiredAmounts!) : args.shareAmount!,
-    slippageBoundsProvided:
-      args.action === "deposit" ? args.minShares !== undefined : args.minAmounts?.length === assetCount,
+    nominalExposure: args.action === "deposit" ? sumDecimalStrings(args.desiredAmounts!) : args.shareAmount!,
+    slippageBoundsProvided: args.action === "deposit" ? args.minShares !== undefined : args.minAmounts?.length === assetCount,
     simulated: false,
     submitted: false,
     signing: false,
-    riskNotes: [
-      "Aquarius LP preflight is an API and input validation check, not a submitted transaction.",
-      "Pool state and reward eligibility can change before execution.",
-      "Mainnet Aquarius mutation requires an external signer flow and is not auto-signed locally."
-    ]
+    riskNotes: ["Aquarius LP preflight is an API and input validation check, not a submitted transaction.", "Pool state and reward eligibility can change before execution.", "Mainnet Aquarius mutation requires an external signer flow and is not auto-signed locally."]
   };
 }
 
-export async function quoteAquariusSwap(args: {
-  network: AquariusNetworkName;
-  inputAsset: string;
-  outputAsset: string;
-  amount: string;
-  mode: AquariusSwapMode;
-  fetchImpl?: typeof fetch;
-}): Promise<AquariusSwapQuote> {
+export async function quoteAquariusSwap(args: { network: AquariusNetworkName; inputAsset: string; outputAsset: string; amount: string; mode: AquariusSwapMode; fetchImpl?: typeof fetch }): Promise<AquariusSwapQuote> {
   validatePositiveDecimal(args.amount, "amount");
   const deployment = aquariusDeployment(args.network);
   const endpoint = args.mode === "strict_receive" ? "find-path-strict-receive" : "find-path";
@@ -612,15 +567,7 @@ export async function quoteAquariusSwap(args: {
   return aquariusQuoteFromApi(raw);
 }
 
-export async function preflightAquariusSwap(args: {
-  network: AquariusNetworkName;
-  inputAsset: string;
-  outputAsset: string;
-  amount: string;
-  mode: AquariusSwapMode;
-  slippageBps?: number;
-  fetchImpl?: typeof fetch;
-}): Promise<AquariusSwapPreflight> {
+export async function preflightAquariusSwap(args: { network: AquariusNetworkName; inputAsset: string; outputAsset: string; amount: string; mode: AquariusSwapMode; slippageBps?: number; fetchImpl?: typeof fetch }): Promise<AquariusSwapPreflight> {
   const quote = await quoteAquariusSwap(args);
   if (!quote.success) {
     throw new StellarAgentError({
@@ -640,11 +587,7 @@ export async function preflightAquariusSwap(args: {
   const deployment = aquariusDeployment(args.network);
   const inputAsset = resolveAquariusAsset(deployment, args.inputAsset);
   const outputAsset = resolveAquariusAsset(deployment, args.outputAsset);
-  const assetGroups = [
-    uniqueAquariusAssetIdentifiers([args.inputAsset, inputAsset.symbol, inputAsset.contractId]),
-    uniqueAquariusAssetIdentifiers([args.outputAsset, outputAsset.symbol, outputAsset.contractId]),
-    ...aquariusAssetGroupsFromParallel(quote.assetLabels, quote.assetContractIds)
-  ];
+  const assetGroups = [uniqueAquariusAssetIdentifiers([args.inputAsset, inputAsset.symbol, inputAsset.contractId]), uniqueAquariusAssetIdentifiers([args.outputAsset, outputAsset.symbol, outputAsset.contractId]), ...aquariusAssetGroupsFromParallel(quote.assetLabels, quote.assetContractIds)];
   return {
     network: args.network,
     mode: args.mode,
@@ -660,20 +603,11 @@ export async function preflightAquariusSwap(args: {
     simulated: false,
     submitted: false,
     signing: false,
-    riskNotes: [
-      "Aquarius swap preflight quotes an API-generated route and XDR but does not sign or submit it.",
-      "Set explicit slippage bounds before any future submitted swap.",
-      "Routes can change between quote and execution."
-    ]
+    riskNotes: ["Aquarius swap preflight quotes an API-generated route and XDR but does not sign or submit it.", "Set explicit slippage bounds before any future submitted swap.", "Routes can change between quote and execution."]
   };
 }
 
-export async function inspectAquariusAccountPosition(args: {
-  network: AquariusNetworkName;
-  account: string;
-  pool?: string;
-  fetchImpl?: typeof fetch;
-}): Promise<AquariusAccountPosition> {
+export async function inspectAquariusAccountPosition(args: { network: AquariusNetworkName; account: string; pool?: string; fetchImpl?: typeof fetch }): Promise<AquariusAccountPosition> {
   const deployment = aquariusDeployment(args.network);
   const response = await (args.fetchImpl ?? fetch)(`${deployment.horizonUrl}/accounts/${args.account}`);
   if (!response.ok) {
@@ -695,9 +629,7 @@ export async function inspectAquariusAccountPosition(args: {
         })
       ).pool
     : undefined;
-  const matchedBalances = pool
-    ? balances.filter((balance: any) => JSON.stringify(balance).includes(pool.address) || pool.assetLabels.some((asset) => JSON.stringify(balance).includes(asset)))
-    : balances;
+  const matchedBalances = pool ? balances.filter((balance: any) => JSON.stringify(balance).includes(pool.address) || pool.assetLabels.some((asset) => JSON.stringify(balance).includes(asset))) : balances;
   return {
     network: args.network,
     account: args.account,
@@ -706,19 +638,11 @@ export async function inspectAquariusAccountPosition(args: {
     matchedBalances,
     submitted: false,
     signing: false,
-    notes: [
-      "Position inspection is read-only and does not prove future LP withdrawal eligibility.",
-      "Soroban pool share and reward state can differ from classic Horizon balances."
-    ]
+    notes: ["Position inspection is read-only and does not prove future LP withdrawal eligibility.", "Soroban pool share and reward state can differ from classic Horizon balances."]
   };
 }
 
-export async function inspectAquariusRewards(args: {
-  network: AquariusNetworkName;
-  account: string;
-  pool: string;
-  fetchImpl?: typeof fetch;
-}): Promise<AquariusRewardsInspection> {
+export async function inspectAquariusRewards(args: { network: AquariusNetworkName; account: string; pool: string; fetchImpl?: typeof fetch }): Promise<AquariusRewardsInspection> {
   const { pool } = await inspectAquariusPool({
     network: args.network,
     pool: args.pool,
@@ -731,18 +655,12 @@ export async function inspectAquariusRewards(args: {
     claimSupported: true,
     claimSubmitted: false,
     signing: false,
-    notes: [
-      "Aquarius rewards are claimed through the pool claim(user) contract method.",
-      "This command is read-only and does not sign or submit a claim transaction.",
-      "Run LP preflight and use an external signer for any future Mainnet reward claim."
-    ]
+    notes: ["Aquarius rewards are claimed through the pool claim(user) contract method.", "This command is read-only and does not sign or submit a claim transaction.", "Run LP preflight and use an external signer for any future Mainnet reward claim."]
   };
 }
 
 export function resolveAquariusAsset(deployment: AquariusDeployment, asset: string): AquariusAssetDeployment {
-  const found = deployment.assets.find(
-    (candidate) => candidate.symbol.toLowerCase() === asset.toLowerCase() || candidate.contractId === asset
-  );
+  const found = deployment.assets.find((candidate) => candidate.symbol.toLowerCase() === asset.toLowerCase() || candidate.contractId === asset);
   if (found) return found;
   if (isContractId(asset)) return { symbol: asset, contractId: asset };
   throw new StellarAgentError({
@@ -753,15 +671,9 @@ export function resolveAquariusAsset(deployment: AquariusDeployment, asset: stri
   });
 }
 
-export async function fetchBlendDeployment(
-  network: BlendNetworkName,
-  fetchImpl: typeof fetch = fetch
-): Promise<BlendDeployment> {
+export async function fetchBlendDeployment(network: BlendNetworkName, fetchImpl: typeof fetch = fetch): Promise<BlendDeployment> {
   const base = blendDeployment(network);
-  const [contractsResponse, envResponse] = await Promise.all([
-    fetchImpl(base.source.contractsUrl),
-    fetchImpl(base.source.envUrl)
-  ]);
+  const [contractsResponse, envResponse] = await Promise.all([fetchImpl(base.source.contractsUrl), fetchImpl(base.source.envUrl)]);
   if (!contractsResponse.ok) {
     throw new StellarAgentError({
       code: "RPC_UNAVAILABLE",
@@ -776,15 +688,16 @@ export async function fetchBlendDeployment(
       details: { url: base.source.envUrl, status: envResponse.status }
     });
   }
-  const contracts = (await contractsResponse.json()) as { ids?: Record<string, string>; hashes?: Record<string, string> };
+  const contracts = (await contractsResponse.json()) as {
+    ids?: Record<string, string>;
+    hashes?: Record<string, string>;
+  };
   const env = parseEnv(await envResponse.text());
   return buildDeployment(network, base.source, contracts.ids ?? {}, contracts.hashes ?? {}, env);
 }
 
 export function resolveBlendPool(deployment: BlendDeployment, pool: string): BlendPoolDeployment {
-  const found = deployment.pools.find(
-    (candidate) => candidate.name.toLowerCase() === pool.toLowerCase() || candidate.contractId === pool
-  );
+  const found = deployment.pools.find((candidate) => candidate.name.toLowerCase() === pool.toLowerCase() || candidate.contractId === pool);
   if (found) return found;
   if (/^C[A-Z2-7]{55}$/.test(pool)) return { name: pool, contractId: pool, version: "v2" };
   throw new StellarAgentError({
@@ -796,9 +709,7 @@ export function resolveBlendPool(deployment: BlendDeployment, pool: string): Ble
 }
 
 export function resolveBlendAsset(deployment: BlendDeployment, asset: string): BlendAssetDeployment {
-  const found = deployment.assets.find(
-    (candidate) => candidate.symbol.toLowerCase() === asset.toLowerCase() || candidate.contractId === asset
-  );
+  const found = deployment.assets.find((candidate) => candidate.symbol.toLowerCase() === asset.toLowerCase() || candidate.contractId === asset);
   if (found) return found;
   if (/^C[A-Z2-7]{55}$/.test(asset)) return { symbol: asset, contractId: asset };
   throw new StellarAgentError({
@@ -809,11 +720,7 @@ export function resolveBlendAsset(deployment: BlendDeployment, asset: string): B
   });
 }
 
-export async function inspectBlendPool(args: {
-  profile: NetworkProfile;
-  poolId: string;
-  poolVersion?: BlendPoolVersion;
-}): Promise<unknown> {
+export async function inspectBlendPool(args: { profile: NetworkProfile; poolId: string; poolVersion?: BlendPoolVersion }): Promise<unknown> {
   const pool = await loadPool(args.profile, args.poolId, args.poolVersion);
   const oracle = await tryLoadOracle(pool);
   const estimate = oracle ? await tryBuildPoolEstimate(pool, oracle) : undefined;
@@ -829,12 +736,7 @@ export async function inspectBlendPool(args: {
   });
 }
 
-export async function inspectBlendPosition(args: {
-  profile: NetworkProfile;
-  poolId: string;
-  userId: string;
-  poolVersion?: BlendPoolVersion;
-}): Promise<unknown> {
+export async function inspectBlendPosition(args: { profile: NetworkProfile; poolId: string; userId: string; poolVersion?: BlendPoolVersion }): Promise<unknown> {
   const pool = await loadPool(args.profile, args.poolId, args.poolVersion);
   const user = await pool.loadUser(args.userId);
   const oracle = await tryLoadOracle(pool);
@@ -923,9 +825,11 @@ export async function submitBlendActions(args: BlendPreflightInput & { sourceSec
     }))
   });
 
-  const server = new stellar.rpc.Server(args.profile.rpcUrl, { allowHttp: args.profile.name === "local" });
+  const server = new stellar.rpc.Server(args.profile.rpcUrl, {
+    allowHttp: args.profile.name === "local"
+  });
   const account = await server.getAccount(sourcePublicKey);
-  const operation = stellar.xdr.Operation.fromXDR(operationXdr, "base64");
+  const operation = stellar.xdr.Operation.fromXdr(operationXdr, "base64");
   const rawTransaction = new stellar.TransactionBuilder(account, {
     fee: stellar.BASE_FEE,
     networkPassphrase: args.profile.networkPassphrase
@@ -1025,13 +929,7 @@ function networkForProfile(profile: NetworkProfile): BlendNetworkName {
   return "testnet";
 }
 
-function buildDeployment(
-  network: BlendNetworkName,
-  source: BlendDeployment["source"],
-  ids: Record<string, string>,
-  hashes: Record<string, string>,
-  env: Record<string, string>
-): BlendDeployment {
+function buildDeployment(network: BlendNetworkName, source: BlendDeployment["source"], ids: Record<string, string>, hashes: Record<string, string>, env: Record<string, string>): BlendDeployment {
   const usdcIssuer = env.NEXT_PUBLIC_USDC_ISSUER;
   const blndIssuer = env.NEXT_PUBLIC_BLND_ISSUER;
   const blockedPools = parseBlockedPools(env.NEXT_PUBLIC_BLOCKED_POOLS);
@@ -1072,22 +970,7 @@ function buildDeployment(
 }
 
 function isDeploymentPoolName(name: string): boolean {
-  const reserved = new Set([
-    "XLM",
-    "BLND",
-    "USDC",
-    "wETH",
-    "wBTC",
-    "bootstrapper",
-    "emitter",
-    "poolFactory",
-    "poolFactoryV2",
-    "backstop",
-    "backstopV2",
-    "comet",
-    "cometFactory",
-    "oraclemock"
-  ]);
+  const reserved = new Set(["XLM", "BLND", "USDC", "wETH", "wBTC", "bootstrapper", "emitter", "poolFactory", "poolFactoryV2", "backstop", "backstopV2", "comet", "cometFactory", "oraclemock"]);
   return !reserved.has(name) && /^[A-Z][A-Za-z0-9]+(V2)?$/.test(name);
 }
 
@@ -1385,10 +1268,7 @@ function expectedTokensForAction(reserve: any, type: BlendActionType, amountRaw:
   return undefined;
 }
 
-function projectPositionEstimate(
-  before: BlendPositionEstimate,
-  actions: BlendPreflight["actions"]
-): BlendPositionEstimate {
+function projectPositionEstimate(before: BlendPositionEstimate, actions: BlendPreflight["actions"]): BlendPositionEstimate {
   let totalSupplied = before.totalSupplied;
   let totalBorrowed = before.totalBorrowed;
   let totalEffectiveCollateral = before.totalEffectiveCollateral;
@@ -1454,7 +1334,10 @@ function decimalToFixed(input: string, decimals: number): bigint {
 function toPlainJson(value: unknown): any {
   if (typeof value === "bigint") return value.toString();
   if (value instanceof Map) {
-    return Array.from(value.entries()).map(([key, entry]) => ({ key: toPlainJson(key), value: toPlainJson(entry) }));
+    return Array.from(value.entries()).map(([key, entry]) => ({
+      key: toPlainJson(key),
+      value: toPlainJson(entry)
+    }));
   }
   if (Array.isArray(value)) return value.map((entry) => toPlainJson(entry));
   if (value && typeof value === "object") {
@@ -1492,7 +1375,7 @@ function decodeRpcEvents(transaction: any): unknown[] {
 function xdrLikeToString(value: any): string | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value === "string") return value;
-  if (value && typeof value.toXDR === "function") return value.toXDR("base64");
+  if (value && typeof value.toXdr === "function") return value.toXdr("base64");
   return undefined;
 }
 
@@ -1507,9 +1390,7 @@ function summarizeEvent(input: any): Record<string, unknown> {
   const body = eventAttributes?.body?._value?._attributes ?? eventAttributes?.body?.v0?._attributes;
   const topics = body?.topics ?? [];
   return {
-    ...(input?._attributes?.inSuccessfulContractCall === undefined
-      ? {}
-      : { inSuccessfulContractCall: Boolean(input._attributes.inSuccessfulContractCall) }),
+    ...(input?._attributes?.inSuccessfulContractCall === undefined ? {} : { inSuccessfulContractCall: Boolean(input._attributes.inSuccessfulContractCall) }),
     ...(eventAttributes?.type === undefined ? {} : { type: eventAttributes.type.name ?? eventAttributes.type.value ?? eventAttributes.type }),
     topics: Array.isArray(topics) ? topics.map((topic) => summarizeScVal(topic)) : [],
     data: summarizeScVal(body?.data)

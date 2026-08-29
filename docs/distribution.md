@@ -18,10 +18,10 @@ The release preflight builds, lints, tests, smoke-tests, checks release metadata
 Generated artifacts:
 
 - `.release/artifacts/npm/*.tgz` for scoped npm packages.
-- `.release/artifacts/codex/stellar-agent-codex-plugin-v0.5.4.tgz` for Codex plugin installation.
+- `.release/artifacts/codex/stellar-agent-codex-plugin-v0.6.0.tgz` for Codex plugin installation.
 - `.release/artifacts/release-manifest.json` for checksums and source commit evidence.
 
-The npm artifact `stellar-agent-codex-plugin-0.5.4.tgz` is only the `@stellar-agent/codex-plugin` validator/tooling package. Install the Codex plugin from the versioned bundle under `.release/artifacts/codex/`, which contains `.codex-plugin/plugin.json` plus the bundled skills.
+The npm artifact `stellar-agent-codex-plugin-0.6.0.tgz` is only the `@stellar-agent/codex-plugin` validator/tooling package. Install the Codex plugin from the versioned bundle under `.release/artifacts/codex/`, which contains `.codex-plugin/plugin.json` plus the bundled skills.
 
 The public package set is:
 
@@ -49,7 +49,7 @@ Preview npm README content before publishing:
 
 ```bash
 pnpm release:pack
-tar -xOf .release/artifacts/npm/stellar-agent-cli-0.5.4.tgz package/README.md
+tar -xOf .release/artifacts/npm/stellar-agent-cli-0.6.0.tgz package/README.md
 pnpm release:verify-readmes
 ```
 
@@ -85,7 +85,7 @@ Trusted publishing through GitHub Actions OIDC provides npm provenance for publi
 
 ## Versioning and Changelog
 
-- `0.5.x` means installable Testnet-first release artifacts with fee-aware transaction submission, guarded bundled payments, local x402/MPP demos, Mainnet agent-wallet workflows, Blend inspection and guarded Testnet mutation, Aquarius AMM inspection/preflight, core Stellar market-liquidity inspection/preflight, market alerts, strategy investigation, and stable CLI/JSON behavior for agent integration.
+- `0.6.x` means installable Testnet-first release artifacts with SDK 17, durable execution intents, explicit transaction reconciliation, signer capabilities, hash-chained audit records, and guarded x402/MPP adapter foundations.
 - Patch releases fix defects, documentation, packaging, and safety checks without broad command-shape churn.
 - Breaking command, JSON envelope, policy schema, or receipt schema changes should wait for the next minor release unless they repair a safety bug.
 - `CHANGELOG.md` is the source for GitHub release notes.

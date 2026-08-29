@@ -7,7 +7,7 @@ Build payment-capable agents on Stellar from Testnet prototypes to risk-budgeted
 
 ## Status
 
-This repository is a `0.5.4` Testnet-first release. Core primitives, policy evaluation, local receipt logging, Testnet wallet creation, Friendbot funding, fee-aware Testnet payment submission, bundled Testnet payments, issued-asset trustlines, claimable balances, local approval bridge requests, local x402-style and MPP Testnet demos, agent-to-agent service-market examples, Blend DeFi inspection and guarded Testnet mutation, Aquarius AMM inspection and policy-gated preflight, core Stellar liquidity-pool inspection/preflight/Testnet mutation, market listeners, strategy investigation, MCP tools, Codex plugin packaging, cache controls, and the CLI command surface are present. Mainnet local auto-signing remains blocked except for explicitly enabled, armed, risk-budgeted agent-wallet payments; other guarded Mainnet submission is limited to externally signed XDR and explicitly acknowledged real-funds contract operations.
+This repository is a `0.6.0` Testnet-first release. It adds SDK 17, durable idempotent execution intents, RPC-aware transaction outcomes and reconciliation, signer capability discovery, one-use intent-bound approvals, machine-readable continuation guidance, hash-chained receipts/events, a pinned x402 facilitator adapter, and durable MPP session budgets. Mainnet local auto-signing remains blocked except for explicitly enabled, armed, risk-budgeted agent-wallet payments; other guarded Mainnet submission is limited to externally signed XDR and explicitly acknowledged real-funds contract operations.
 
 ## Safety First
 
@@ -133,7 +133,7 @@ JSON Schema files for agent/tool integrations ship with `@stellar-agent/cli` und
 Safe demo bundle commands are documented in [docs/demo-bundles.md](docs/demo-bundles.md).
 Typed direct-import examples for `@stellar-agent/defi`, `@stellar-agent/stellar`, and `@stellar-agent/freighter-bridge` live under [examples/sdk-typescript](examples/sdk-typescript).
 
-Stellar Agent 0.5.4 targets the `@stellar/stellar-sdk` 16.3 LTS line. Internal signed-XDR and liquidity-pool byte handling also accepts the SDK 17 union and `Uint8Array` shapes, but SDK 17 remains a deliberate future migration because it raises the Node.js floor and changes the broader XDR API. Direct package consumers should review the [SDK 17 migration notice](docs/stellar-sdk-17-migration.md).
+Stellar Agent 0.6.0 targets `@stellar/stellar-sdk` 17.0.1 and requires Node.js 22.12 or newer. XDR code now uses SDK 17 property-style unions and byte-returning APIs are treated as `Uint8Array`; direct package consumers should review the [SDK 17 migration guide](docs/stellar-sdk-17-migration.md).
 
 ## Agent Integration
 
@@ -145,11 +145,11 @@ For composable workflow examples, see [docs/agent-recipes.md](docs/agent-recipes
 
 ## Release Artifacts
 
-`v0.5.4` GitHub releases contain:
+`v0.6.0` GitHub releases contain:
 
 - npm tarballs for the scoped `@stellar-agent/*` packages.
-- `stellar-agent-codex-plugin-0.5.4.tgz`, the npm package tarball for `@stellar-agent/codex-plugin` validation tooling.
-- `stellar-agent-codex-plugin-v0.5.4.tgz`, the installable Codex plugin bundle. This tarball includes `.codex-plugin/plugin.json`, `plugin.yaml`, `plugin-manifest.json`, and the bundled skills.
+- `stellar-agent-codex-plugin-0.6.0.tgz`, the npm package tarball for `@stellar-agent/codex-plugin` validation tooling.
+- `stellar-agent-codex-plugin-v0.6.0.tgz`, the installable Codex plugin bundle. This tarball includes `.codex-plugin/plugin.json`, `plugin.yaml`, `plugin-manifest.json`, and the bundled skills.
 - `release-manifest.json` with artifact SHA-256 checksums and source commit metadata.
 
 The generated tarballs are verified by `pnpm release:preflight` through a fresh temporary install before release.
@@ -160,21 +160,21 @@ Most users should install [`@stellar-agent/cli`](https://www.npmjs.com/package/@
 
 The public npm packages are:
 
-| Package | Purpose |
-| --- | --- |
-| [`@stellar-agent/cli`](https://www.npmjs.com/package/@stellar-agent/cli) | End-user `stellar-agent` command line interface. |
-| [`@stellar-agent/core`](https://www.npmjs.com/package/@stellar-agent/core) | Shared config, types, amounts, errors, and redaction helpers. |
-| [`@stellar-agent/policy`](https://www.npmjs.com/package/@stellar-agent/policy) | Deterministic policy parsing and decision logic. |
-| [`@stellar-agent/stellar`](https://www.npmjs.com/package/@stellar-agent/stellar) | Stellar SDK and Stellar CLI adapters. |
-| [`@stellar-agent/defi`](https://www.npmjs.com/package/@stellar-agent/defi) | Blend and Aquarius DeFi inspection and preflight helpers. |
-| [`@stellar-agent/ledger-logger`](https://www.npmjs.com/package/@stellar-agent/ledger-logger) | Receipts, JSONL event logs, and spend-history helpers. |
-| [`@stellar-agent/freighter-bridge`](https://www.npmjs.com/package/@stellar-agent/freighter-bridge) | Local approval and Freighter-compatible signing bridge primitives. |
+| Package                                                                                                    | Purpose                                                                           |
+| ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| [`@stellar-agent/cli`](https://www.npmjs.com/package/@stellar-agent/cli)                                   | End-user `stellar-agent` command line interface.                                  |
+| [`@stellar-agent/core`](https://www.npmjs.com/package/@stellar-agent/core)                                 | Shared config, types, amounts, errors, and redaction helpers.                     |
+| [`@stellar-agent/policy`](https://www.npmjs.com/package/@stellar-agent/policy)                             | Deterministic policy parsing and decision logic.                                  |
+| [`@stellar-agent/stellar`](https://www.npmjs.com/package/@stellar-agent/stellar)                           | Stellar SDK and Stellar CLI adapters.                                             |
+| [`@stellar-agent/defi`](https://www.npmjs.com/package/@stellar-agent/defi)                                 | Blend and Aquarius DeFi inspection and preflight helpers.                         |
+| [`@stellar-agent/ledger-logger`](https://www.npmjs.com/package/@stellar-agent/ledger-logger)               | Receipts, JSONL event logs, and spend-history helpers.                            |
+| [`@stellar-agent/freighter-bridge`](https://www.npmjs.com/package/@stellar-agent/freighter-bridge)         | Local approval and Freighter-compatible signing bridge primitives.                |
 | [`@stellar-agent/walletconnect-bridge`](https://www.npmjs.com/package/@stellar-agent/walletconnect-bridge) | WalletConnect external-signing adapter for LOBSTR and compatible Stellar wallets. |
-| [`@stellar-agent/mcp-server`](https://www.npmjs.com/package/@stellar-agent/mcp-server) | MCP stdio server that delegates to `stellar-agent --json`. |
-| [`@stellar-agent/testnet-suite`](https://www.npmjs.com/package/@stellar-agent/testnet-suite) | Reusable Testnet wallet, Friendbot, and smoke-test workflows. |
-| [`@stellar-agent/x402-client`](https://www.npmjs.com/package/@stellar-agent/x402-client) | Local Testnet x402-style demo client and server helpers. |
-| [`@stellar-agent/mpp-client`](https://www.npmjs.com/package/@stellar-agent/mpp-client) | Local Testnet MPP one-time and session-budget demo helpers. |
-| [`@stellar-agent/codex-plugin`](https://www.npmjs.com/package/@stellar-agent/codex-plugin) | Codex plugin validation and manifest tooling. |
+| [`@stellar-agent/mcp-server`](https://www.npmjs.com/package/@stellar-agent/mcp-server)                     | MCP stdio server that delegates to `stellar-agent --json`.                        |
+| [`@stellar-agent/testnet-suite`](https://www.npmjs.com/package/@stellar-agent/testnet-suite)               | Reusable Testnet wallet, Friendbot, and smoke-test workflows.                     |
+| [`@stellar-agent/x402-client`](https://www.npmjs.com/package/@stellar-agent/x402-client)                   | Local Testnet x402-style demo client and server helpers.                          |
+| [`@stellar-agent/mpp-client`](https://www.npmjs.com/package/@stellar-agent/mpp-client)                     | Local Testnet MPP one-time and session-budget demo helpers.                       |
+| [`@stellar-agent/codex-plugin`](https://www.npmjs.com/package/@stellar-agent/codex-plugin)                 | Codex plugin validation and manifest tooling.                                     |
 
 ## Architecture
 
@@ -183,7 +183,7 @@ The project is CLI-first with shared packages underneath:
 - `@stellar-agent/core` for types, amounts, errors, config, and redaction.
 - `@stellar-agent/policy` for policy schema and deterministic decisions.
 - `@stellar-agent/stellar` for Friendbot, Horizon, wallets, and Testnet payments.
-- DeFi helpers for Blend lending workflows and Aquarius AMM inspection/preflight.
+- DeFi helpers for Blend lending workflows and Aquarius AMM inspection and policy-gated preflight.
 - Core Stellar AMM helpers for read-only pool inspection, LP preflight, and guarded Testnet pool operations.
 - `@stellar-agent/freighter-bridge` for local approval request storage and HTTP bridge APIs.
 - Stellar CLI integration for Soroban contract invocation when `stellar` is installed.

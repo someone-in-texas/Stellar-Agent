@@ -13,7 +13,11 @@ npm install @stellar-agent/stellar
 ## Example
 
 ```js
-import { createTestnetWallet, fundWithFriendbot, resolveNetworkProfile } from "@stellar-agent/stellar";
+import {
+  createTestnetWallet,
+  fundWithFriendbot,
+  resolveNetworkProfile
+} from "@stellar-agent/stellar";
 import { createDefaultConfig } from "@stellar-agent/core";
 
 const config = createDefaultConfig();
@@ -31,7 +35,7 @@ await fundWithFriendbot(wallet.publicKey, profile);
 
 ## Stellar SDK compatibility
 
-Version 0.5.4 targets `@stellar/stellar-sdk` 16.3.0. Signed transaction-envelope inspection and liquidity-pool byte encoding are prepared for SDK 17's property-style XDR unions and `Uint8Array` results, but SDK 17 is not the supported dependency yet. Direct consumers should review the [SDK 17 migration notice](https://github.com/someone-in-texas/Stellar-Agent/blob/main/docs/stellar-sdk-17-migration.md) before overriding the SDK dependency.
+Version 0.6.0 targets `@stellar/stellar-sdk` 17.0.1 and Node.js 22.12+. It uses property-style XDR unions and treats byte results as `Uint8Array`. Direct consumers should review the [SDK 17 migration guide](https://github.com/someone-in-texas/Stellar-Agent/blob/main/docs/stellar-sdk-17-migration.md).
 
 ## Links
 

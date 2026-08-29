@@ -1,6 +1,6 @@
 {
   "name": "stellar-agent-bridge",
-  "version": "0.5.4",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@9.15.4",
@@ -13,7 +13,7 @@
   "description": "CLI-first toolkit for safe agentic payments on Stellar.",
   "scripts": {
     "build": "tsc -b",
-    "clean": "find packages -type d \\( -name dist -o -name .tsbuildinfo \\) -prune -exec rm -rf {} +",
+    "clean": "find packages -type d -name dist -prune -exec rm -rf {} + && find packages -type f -name .tsbuildinfo -delete",
     "cli": "tsx packages/cli/src/index.ts",
     "lint": "eslint .",
     "format": "prettier --write .",

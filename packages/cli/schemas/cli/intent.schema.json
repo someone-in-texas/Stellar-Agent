@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stellar-agent.dev/schemas/cli/intent.schema.json",
+  "title": "stellar-agent durable execution intent",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "id",
+    "revision",
+    "createdAt",
+    "updatedAt",
+    "command",
+    "profile",
+    "network",
+    "status",
+    "semanticHash",
+    "operation"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "schemaVersion": { "const": "stellar-agent.intent.v1" },
+    "id": { "type": "string", "pattern": "^int_" },
+    "revision": { "type": "integer", "minimum": 1 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "profile": { "enum": ["testnet", "mainnet", "local"] },
+    "status": {
+      "enum": [
+        "proposed",
+        "policy_checked",
+        "simulated",
+        "awaiting_approval",
+        "approved",
+        "signed",
+        "submitted",
+        "confirmation_unknown",
+        "confirmed",
+        "denied",
+        "expired",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "semanticHash": { "type": "string" },
+    "operation": { "type": "object", "required": ["type"], "additionalProperties": true },
+    "outcome": { "type": "object", "additionalProperties": true }
+  }
+}

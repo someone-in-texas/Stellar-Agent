@@ -1,5 +1,17 @@
 # Agent Integration
 
+## Continuations and Ambiguous Outcomes
+
+JSON success and error envelopes may include `continuation` with `intentId`, `transactionHash`, `changedOnChain`, `safeToRetry`, `approvalRequired`, and `nextActions`. Treat `safeToRetry: false` as authoritative. When `changedOnChain` is `"unknown"`, run `intent reconcile`; never infer that submission failed from a timeout or `NOT_FOUND` observation.
+
+For durable jobs, pass a stable `--idempotency-key`, persist the returned intent id, and record the continuation instead of inferring retry safety from process exit alone.
+
+## Signer and Soroban Capabilities
+
+`@stellar-agent/core` exposes a provider-neutral `SignerCapabilities` shape. Freighter advertises transaction and Soroban authorization-entry signing; WalletConnect currently advertises transaction signing only. Capability discovery is descriptive, not proof that an account threshold is satisfied: signed envelopes are still cryptographically checked and the network remains authoritative for account thresholds.
+
+Direct SDK consumers can use `signSorobanAuthorizationEntries` and must run `enforceSorobanTransaction` after inserting signed auth entries. Enforcing simulation is bound to the selected network passphrase and returns a transaction fingerprint and latest ledger. Rebuild, re-simulate, and obtain fresh authorization when the transaction or expiration changes.
+
 Agents should use JSON mode:
 
 ```bash
@@ -36,7 +48,15 @@ The standard success envelope is:
 The standard error envelope is:
 
 ```json
-{ "ok": false, "error": { "code": "POLICY_DENIED", "message": "...", "hint": "...", "docs": "docs/troubleshooting.md#policy-denied" } }
+{
+  "ok": false,
+  "error": {
+    "code": "POLICY_DENIED",
+    "message": "...",
+    "hint": "...",
+    "docs": "docs/troubleshooting.md#policy-denied"
+  }
+}
 ```
 
 Exit codes are stable: `0` success, `2` usage, `3` config or policy validation, `4` policy denied, `5` approval required or denied, `6` network unavailable, `7` transaction failed or timed out, and `8` not implemented.

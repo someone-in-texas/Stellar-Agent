@@ -3,14 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_TESTNET_POLICY } from "@stellar-agent/policy";
-import {
-  parseMppCharge,
-  parseMppSessionRequirement,
-  runMppPayment,
-  runMppSession,
-  startMppDemo,
-  startMppSessionDemo
-} from "../src/index.js";
+import { mppSessionStatePath, parseMppCharge, parseMppSessionRequirement, runMppPayment, runMppSession, readDurableMppSession, reserveMppSessionDebit, startMppDemo, startMppSessionDemo } from "../src/index.js";
 
 const recipient = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 const source = {
@@ -35,6 +28,55 @@ const profile = {
 };
 
 describe("mpp client", () => {
+  it("hashes untrusted session ids instead of using them as path components", () => {
+    const root = "/safe/session-state";
+    const path = mppSessionStatePath(root, "../../approvals/appr_target");
+    expect(path).toMatch(/^\/safe\/session-state\/[a-f0-9]{64}\.json$/);
+    expect(path).not.toContain("approvals");
+  });
+  it("atomically enforces a durable MPP session budget", async () => {
+    const root = await mkdtemp(join(tmpdir(), "stellar-agent-mpp-budget-"));
+    const path = join(root, "session.json");
+    const session = {
+      sessionId: "session_atomic",
+      networkPassphraseHash: "network_hash",
+      asset: "XLM",
+      budget: "0.0000002",
+      recipient,
+      facilitatorOrigin: "https://facilitator.example"
+    };
+    const results = await Promise.allSettled([reserveMppSessionDebit({ path, session, amount: "0.0000002" }), reserveMppSessionDebit({ path, session, amount: "0.0000002" })]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    await expect(readDurableMppSession(path)).resolves.toMatchObject({
+      spent: "0.0000002",
+      revision: 1
+    });
+  });
+
+  it("persists a confirmed intent for an MPP payment before returning the resource", async () => {
+    const root = await mkdtemp(join(tmpdir(), "stellar-agent-mpp-intent-"));
+    const url = "https://merchant.example/mpp";
+    let calls = 0;
+    const redirectModes: Array<RequestRedirect | undefined> = [];
+    const policy = { ...DEFAULT_TESTNET_POLICY, x402: { ...DEFAULT_TESTNET_POLICY.x402, enabled: true, allowDomains: [new URL(url).host] } };
+    const result = await runMppPayment({
+      url, source, policy, profile,
+      receiptsDir: join(root, "receipts"), eventLog: join(root, "events.jsonl"), intentsDir: join(root, "intents"),
+      idempotencyKey: "mpp-job-1", command: "test mpp",
+      sendPaymentImpl: async () => ({ hash: "f".repeat(64), successful: true, ledger: 321 }),
+      fetchImpl: async (_input, init) => {
+        redirectModes.push(init?.redirect);
+        calls += 1;
+        return calls === 1
+          ? new Response(JSON.stringify({ protocol: "stellar-agent-local-mpp", version: 1, chargeId: "charge_intent", network: "testnet", asset: "XLM", amount: "0.0000001", recipient, resource: url }), { status: 402 })
+          : new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+    });
+    expect(result).toMatchObject({ finalStatus: 200, intent: { status: "confirmed", receiptPath: expect.any(String) } });
+    expect(redirectModes).toEqual(["error", "error"]);
+  });
+
   it("parses charges from 402 headers", async () => {
     const charge = {
       protocol: "stellar-agent-local-mpp",
@@ -109,7 +151,10 @@ describe("mpp client", () => {
     const server = await startMppDemo({ recipient });
     try {
       const response = await fetch(server.url, { headers: { "X-MPP-Payment": "{" } });
-      await expect(response.json()).resolves.toEqual({ ok: false, error: "invalid_mpp_payment_proof" });
+      await expect(response.json()).resolves.toEqual({
+        ok: false,
+        error: "invalid_mpp_payment_proof"
+      });
       expect(response.status).toBe(402);
     } finally {
       await server.close();
@@ -123,12 +168,19 @@ describe("mpp client", () => {
       const charge = await parseMppCharge(challenge);
       const proof = proofForCharge(charge, "a".repeat(64));
 
-      const first = await fetch(server.url, { headers: { "X-MPP-Payment": JSON.stringify(proof) } });
+      const first = await fetch(server.url, {
+        headers: { "X-MPP-Payment": JSON.stringify(proof) }
+      });
       expect(first.status).toBe(200);
 
-      const replay = await fetch(server.url, { headers: { "X-MPP-Payment": JSON.stringify(proof) } });
+      const replay = await fetch(server.url, {
+        headers: { "X-MPP-Payment": JSON.stringify(proof) }
+      });
       expect(replay.status).toBe(402);
-      await expect(replay.json()).resolves.toEqual({ ok: false, error: "mpp_payment_proof_replayed" });
+      await expect(replay.json()).resolves.toEqual({
+        ok: false,
+        error: "mpp_payment_proof_replayed"
+      });
     } finally {
       await server.close();
     }
@@ -140,9 +192,14 @@ describe("mpp client", () => {
       const firstCharge = await parseMppCharge(await fetch(server.url));
       const invented = proofForCharge(firstCharge, "b".repeat(64), "invented_mpp_charge");
 
-      const inventedResponse = await fetch(server.url, { headers: { "X-MPP-Payment": JSON.stringify(invented) } });
+      const inventedResponse = await fetch(server.url, {
+        headers: { "X-MPP-Payment": JSON.stringify(invented) }
+      });
       expect(inventedResponse.status).toBe(402);
-      await expect(inventedResponse.json()).resolves.toEqual({ ok: false, error: "mpp_charge_not_issued" });
+      await expect(inventedResponse.json()).resolves.toEqual({
+        ok: false,
+        error: "mpp_charge_not_issued"
+      });
 
       const first = await fetch(server.url, {
         headers: { "X-MPP-Payment": JSON.stringify(proofForCharge(firstCharge, "c".repeat(64))) }
@@ -263,7 +320,10 @@ describe("mpp client", () => {
     const server = await startMppSessionDemo({ recipient });
     try {
       const response = await fetch(server.url, { headers: { "X-MPP-Session": "{" } });
-      await expect(response.json()).resolves.toEqual({ ok: false, error: "invalid_mpp_session_proof" });
+      await expect(response.json()).resolves.toEqual({
+        ok: false,
+        error: "invalid_mpp_session_proof"
+      });
       expect(response.status).toBe(402);
     } finally {
       await server.close();
@@ -271,27 +331,43 @@ describe("mpp client", () => {
   });
 
   it("binds issued MPP session IDs to one funded transaction", async () => {
-    const server = await startMppSessionDemo({ recipient, budget: "0.0000003", pricePerRequest: "0.0000001" });
+    const server = await startMppSessionDemo({
+      recipient,
+      budget: "0.0000003",
+      pricePerRequest: "0.0000001"
+    });
     try {
       const session = await parseMppSessionRequirement(await fetch(server.url));
       const invented = proofForSession(session, "b".repeat(64), "invented_mpp_session");
 
-      const inventedResponse = await fetch(server.url, { headers: { "X-MPP-Session": JSON.stringify(invented) } });
+      const inventedResponse = await fetch(server.url, {
+        headers: { "X-MPP-Session": JSON.stringify(invented) }
+      });
       expect(inventedResponse.status).toBe(402);
-      await expect(inventedResponse.json()).resolves.toEqual({ ok: false, error: "mpp_session_not_issued" });
+      await expect(inventedResponse.json()).resolves.toEqual({
+        ok: false,
+        error: "mpp_session_not_issued"
+      });
 
       const proof = proofForSession(session, "c".repeat(64));
-      const first = await fetch(server.url, { headers: { "X-MPP-Session": JSON.stringify(proof) } });
+      const first = await fetch(server.url, {
+        headers: { "X-MPP-Session": JSON.stringify(proof) }
+      });
       expect(first.status).toBe(200);
 
-      const secondSameSession = await fetch(server.url, { headers: { "X-MPP-Session": JSON.stringify(proof) } });
+      const secondSameSession = await fetch(server.url, {
+        headers: { "X-MPP-Session": JSON.stringify(proof) }
+      });
       expect(secondSameSession.status).toBe(200);
 
       const staleDifferentTransaction = await fetch(server.url, {
         headers: { "X-MPP-Session": JSON.stringify(proofForSession(session, "d".repeat(64))) }
       });
       expect(staleDifferentTransaction.status).toBe(402);
-      await expect(staleDifferentTransaction.json()).resolves.toEqual({ ok: false, error: "mpp_session_not_issued" });
+      await expect(staleDifferentTransaction.json()).resolves.toEqual({
+        ok: false,
+        error: "mpp_session_not_issued"
+      });
 
       const nextSession = await parseMppSessionRequirement(await fetch(server.url));
       expect(nextSession.sessionId).not.toBe(session.sessionId);
@@ -350,11 +426,7 @@ describe("mpp client", () => {
   });
 });
 
-function proofForCharge(
-  charge: Awaited<ReturnType<typeof parseMppCharge>>,
-  transactionHash: string,
-  chargeId = charge.chargeId
-) {
+function proofForCharge(charge: Awaited<ReturnType<typeof parseMppCharge>>, transactionHash: string, chargeId = charge.chargeId) {
   return {
     protocol: "stellar-agent-local-mpp",
     version: 1,
@@ -368,11 +440,7 @@ function proofForCharge(
   };
 }
 
-function proofForSession(
-  session: Awaited<ReturnType<typeof parseMppSessionRequirement>>,
-  transactionHash: string,
-  sessionId = session.sessionId
-) {
+function proofForSession(session: Awaited<ReturnType<typeof parseMppSessionRequirement>>, transactionHash: string, sessionId = session.sessionId) {
   return {
     protocol: "stellar-agent-local-mpp-session",
     version: 1,

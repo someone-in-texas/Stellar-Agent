@@ -12,6 +12,7 @@
     "approvalList": "approval-list.schema.json",
     "receipt": "receipt.schema.json",
     "receiptsLatest": "receipts-latest.schema.json",
-    "receiptsSummary": "receipts-summary.schema.json"
+    "receiptsSummary": "receipts-summary.schema.json",
+    "intent": "intent.schema.json"
   }
 }

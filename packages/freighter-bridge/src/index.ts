@@ -1,22 +1,11 @@
-import {
-  EXIT_CODES,
-  NetworkName,
-  PaymentRequest,
-  StellarAgentError,
-  makeId,
-  nowIso,
-  paymentRequestSchema,
-  redactSensitive,
-  resolvePath,
-  writeFileAtomic
-} from "@stellar-agent/core";
+import { EXIT_CODES, NetworkName, PaymentRequest, SignerCapabilities, StellarAgentError, makeId, nowIso, paymentRequestSchema, redactSensitive, resolvePath, withFileLock, writeFileAtomic } from "@stellar-agent/core";
 import { createHash, randomBytes } from "node:crypto";
 import { createServer, IncomingMessage, Server, ServerResponse } from "node:http";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { xdr } from "@stellar/stellar-sdk";
+import { Keypair, Networks, TransactionBuilder, xdr } from "@stellar/stellar-sdk";
 
-export type ApprovalStatus = "pending" | "approved" | "denied" | "signed";
+export type ApprovalStatus = "pending" | "approved" | "denied" | "signed" | "claimed" | "consumed";
 export type ApprovalKind = "payment" | "transaction_xdr" | "freighter_connection";
 
 export interface ApprovalRequest {
@@ -26,8 +15,11 @@ export interface ApprovalRequest {
   status: ApprovalStatus;
   createdAt: string;
   updatedAt: string;
+  revision?: number;
+  expiresAt?: string;
   network: NetworkName;
   requestHash: string;
+  boundIntentId?: string;
   summary: string;
   payment?: PaymentRequest;
   transactionXdr?: string;
@@ -37,6 +29,11 @@ export interface ApprovalRequest {
     reason?: string;
     signerPublicKey?: string;
     signedTransactionXdr?: string;
+  };
+  claim?: {
+    intentId: string;
+    claimedAt: string;
+    consumedAt?: string;
   };
   redactions: {
     secretKeysIncluded: false;
@@ -55,34 +52,57 @@ export interface ApprovalBridge {
   close(): Promise<void>;
 }
 
-export async function createPaymentApprovalRequest(args: {
-  approvalsDir: string;
-  payment: PaymentRequest;
-  summary?: string;
-}): Promise<ApprovalRequest> {
+export function freighterSignerCapabilities(account: string, network: NetworkName): SignerCapabilities {
+  return {
+    provider: "freighter",
+    accounts: [account],
+    networks: [network],
+    signTransaction: true,
+    signAuthEntry: true,
+    submitTransaction: false
+  };
+}
+
+export async function createPaymentApprovalRequest(args: { approvalsDir: string; payment: PaymentRequest; summary?: string; expiresAt?: string; intentId?: string }): Promise<ApprovalRequest> {
   const payment = paymentRequestSchema.parse(args.payment);
-  return writeApproval(args.approvalsDir, {
-    schemaVersion: "stellar-agent.approval.v1",
-    id: makeId("appr"),
-    kind: "payment",
-    status: "pending",
-    createdAt: nowIso(),
-    updatedAt: nowIso(),
-    network: payment.network,
-    requestHash: hashApprovalPayload({ kind: "payment", payment }),
-    summary: args.summary ?? summarizePayment(payment),
-    payment,
-    redactions: { secretKeysIncluded: false }
+  const id = args.intentId === undefined ? makeId("appr") : `appr_${args.intentId}`;
+  const create = async () => {
+    const at = nowIso();
+    return writeApproval(args.approvalsDir, {
+      schemaVersion: "stellar-agent.approval.v1",
+      id,
+      kind: "payment",
+      status: "pending",
+      createdAt: at,
+      updatedAt: at,
+      revision: 1,
+      expiresAt: args.expiresAt ?? new Date(Date.now() + 15 * 60_000).toISOString(),
+      network: payment.network,
+      requestHash: hashApprovalPayload({ kind: "payment", payment, ...(args.intentId === undefined ? {} : { intentId: args.intentId }) }),
+      ...(args.intentId === undefined ? {} : { boundIntentId: args.intentId }),
+      summary: args.summary ?? summarizePayment(payment),
+      payment,
+      redactions: { secretKeysIncluded: false }
+    });
+  };
+  if (args.intentId === undefined) return create();
+  const path = approvalPath(args.approvalsDir, id);
+  return withFileLock(path, async () => {
+    try {
+      const existing = parseApproval(JSON.parse(await readFile(path, "utf8")));
+      const expectedHash = hashApprovalPayload({ kind: "payment", payment, intentId: args.intentId });
+      if (existing.kind !== "payment" || existing.boundIntentId !== args.intentId || existing.requestHash !== expectedHash) {
+        throw new StellarAgentError({ code: "APPROVAL_DENIED", message: "Existing intent-bound approval does not match the payment request." });
+      }
+      return existing;
+    } catch (error: any) {
+      if (error?.code !== "ENOENT") throw error;
+      return create();
+    }
   });
 }
 
-export async function createTransactionXdrApprovalRequest(args: {
-  approvalsDir: string;
-  network: NetworkName;
-  transactionXdr: string;
-  summary: string;
-  payment?: PaymentRequest;
-}): Promise<ApprovalRequest> {
+export async function createTransactionXdrApprovalRequest(args: { approvalsDir: string; network: NetworkName; transactionXdr: string; summary: string; payment?: PaymentRequest; expiresAt?: string }): Promise<ApprovalRequest> {
   const payment = args.payment ? paymentRequestSchema.parse(args.payment) : undefined;
   return writeApproval(args.approvalsDir, {
     schemaVersion: "stellar-agent.approval.v1",
@@ -91,6 +111,8 @@ export async function createTransactionXdrApprovalRequest(args: {
     status: "pending",
     createdAt: nowIso(),
     updatedAt: nowIso(),
+    revision: 1,
+    expiresAt: args.expiresAt ?? new Date(Date.now() + 15 * 60_000).toISOString(),
     network: args.network,
     requestHash: hashApprovalPayload({
       kind: "transaction_xdr",
@@ -109,11 +131,7 @@ export async function listApprovalRequests(approvalsDir: string): Promise<Approv
   const dir = resolvePath(approvalsDir);
   try {
     const entries = await readdir(dir);
-    const approvals = await Promise.all(
-      entries
-        .filter((entry) => entry.endsWith(".json"))
-        .map((entry) => readApprovalRequest(approvalsDir, entry.slice(0, -".json".length)))
-    );
+    const approvals = await Promise.all(entries.filter((entry) => entry.endsWith(".json")).map((entry) => readApprovalRequest(approvalsDir, entry.slice(0, -".json".length))));
     return approvals.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   } catch (error: any) {
     if (error?.code === "ENOENT") return [];
@@ -138,60 +156,59 @@ export async function readApprovalRequest(approvalsDir: string, id: string): Pro
   }
 }
 
-export async function decideApprovalRequest(args: {
-  approvalsDir: string;
-  id: string;
-  approved: boolean;
-  reason?: string;
-  signerPublicKey?: string;
-  signedTransactionXdr?: string;
-}): Promise<ApprovalRequest> {
-  const current = await readApprovalRequest(args.approvalsDir, args.id);
-  if (current.status !== "pending") {
-    throw new StellarAgentError({
-      code: "INVALID_INPUT",
-      message: `Approval request '${args.id}' is already ${current.status}.`,
-      docs: "docs/mainnet-safety.md#local-approval-bridge"
-    });
-  }
-  if (args.signedTransactionXdr && current.kind !== "transaction_xdr") {
-    throw new StellarAgentError({
-      code: "INVALID_INPUT",
-      message: "Signed transaction XDR can only be attached to transaction_xdr approval requests.",
-      docs: "docs/mainnet-safety.md#local-approval-bridge"
-    });
-  }
-  if (args.signedTransactionXdr && !args.signerPublicKey) {
-    throw new StellarAgentError({
-      code: "INVALID_INPUT",
-      message: "Signer public key is required when recording signed transaction XDR.",
-      docs: "docs/mainnet-safety.md#local-approval-bridge"
-    });
-  }
-  if (args.signedTransactionXdr && current.transactionXdr) {
-    assertSignedTransactionMatchesApproval({
-      originalTransactionXdr: current.transactionXdr,
-      signedTransactionXdr: args.signedTransactionXdr
-    });
-  }
-  return writeApproval(args.approvalsDir, {
-    ...current,
-    status: args.signedTransactionXdr ? "signed" : args.approved ? "approved" : "denied",
-    updatedAt: nowIso(),
-    decision: {
-      decidedAt: nowIso(),
-      approved: args.signedTransactionXdr ? true : args.approved,
-      ...(args.reason === undefined ? {} : { reason: args.reason }),
-      ...(args.signerPublicKey === undefined ? {} : { signerPublicKey: args.signerPublicKey }),
-      ...(args.signedTransactionXdr === undefined ? {} : { signedTransactionXdr: args.signedTransactionXdr })
+export async function decideApprovalRequest(args: { approvalsDir: string; id: string; approved: boolean; reason?: string; signerPublicKey?: string; signedTransactionXdr?: string }): Promise<ApprovalRequest> {
+  const path = approvalPath(args.approvalsDir, args.id);
+  return withFileLock(path, async () => {
+    const current = await readApprovalRequest(args.approvalsDir, args.id);
+    if (current.status !== "pending") {
+      throw new StellarAgentError({
+        code: "INVALID_INPUT",
+        message: `Approval request '${args.id}' is already ${current.status}.`,
+        docs: "docs/mainnet-safety.md#local-approval-bridge"
+      });
     }
+    if (args.signedTransactionXdr && current.kind !== "transaction_xdr") {
+      throw new StellarAgentError({
+        code: "INVALID_INPUT",
+        message: "Signed transaction XDR can only be attached to transaction_xdr approval requests.",
+        docs: "docs/mainnet-safety.md#local-approval-bridge"
+      });
+    }
+    if (args.signedTransactionXdr && !args.signerPublicKey) {
+      throw new StellarAgentError({
+        code: "INVALID_INPUT",
+        message: "Signer public key is required when recording signed transaction XDR.",
+        docs: "docs/mainnet-safety.md#local-approval-bridge"
+      });
+    }
+    if (args.signedTransactionXdr && current.transactionXdr) {
+      assertSignedTransactionMatchesApproval({
+        originalTransactionXdr: current.transactionXdr,
+        signedTransactionXdr: args.signedTransactionXdr
+      });
+      assertSignerSignedTransaction({
+        signedTransactionXdr: args.signedTransactionXdr,
+        signerPublicKey: args.signerPublicKey!,
+        network: current.network
+      });
+    }
+    return writeApproval(args.approvalsDir, {
+      ...current,
+      status: args.signedTransactionXdr ? "signed" : args.approved ? "approved" : "denied",
+      updatedAt: nowIso(),
+      revision: (current.revision ?? 1) + 1,
+      decision: {
+        decidedAt: nowIso(),
+        approved: args.signedTransactionXdr ? true : args.approved,
+        ...(args.reason === undefined ? {} : { reason: args.reason }),
+        ...(args.signerPublicKey === undefined ? {} : { signerPublicKey: args.signerPublicKey }),
+        ...(args.signedTransactionXdr === undefined ? {} : { signedTransactionXdr: args.signedTransactionXdr })
+      }
+    });
   });
 }
 
-export function assertSignedTransactionMatchesApproval(args: {
-  originalTransactionXdr: string;
-  signedTransactionXdr: string;
-}): true {
+export function assertSignedTransactionMatchesApproval(args: { originalTransactionXdr: string; signedTransactionXdr: string }): true {
   const original = comparableEnvelope(args.originalTransactionXdr, "approval transaction XDR");
   const signed = comparableEnvelope(args.signedTransactionXdr, "signed transaction XDR");
   if (signed.signatures < 1) {
@@ -212,32 +229,150 @@ export function assertSignedTransactionMatchesApproval(args: {
   return true;
 }
 
-export async function assertPaymentApproval(args: {
-  approvalsDir: string;
-  approvalId: string;
-  payment: PaymentRequest;
-}): Promise<ApprovalRequest> {
-  const approval = await readApprovalRequest(args.approvalsDir, args.approvalId);
-  const expectedHash = hashApprovalPayload({ kind: "payment", payment: paymentRequestSchema.parse(args.payment) });
-  if (approval.kind !== "payment" || approval.requestHash !== expectedHash || approval.status !== "approved") {
+export function assertSignerSignedTransaction(args: { signedTransactionXdr: string; signerPublicKey: string; network: NetworkName }): true {
+  const passphrase = args.network === "mainnet" ? Networks.PUBLIC : args.network === "testnet" ? Networks.TESTNET : "Standalone Network ; February 2017";
+  try {
+    const transaction = TransactionBuilder.fromXdr(args.signedTransactionXdr, passphrase);
+    const payload = transaction.hash();
+    const keypair = Keypair.fromPublicKey(args.signerPublicKey);
+    const valid = transaction.signatures.some((signature) => keypair.verify(payload, signature.signature.toBytes()));
+    if (!valid) throw new Error("no matching signature");
+    return true;
+  } catch {
     throw new StellarAgentError({
-      code: "APPROVAL_REQUIRED",
-      message: "Payment requires a matching approved approval request.",
-      hint: "Create and approve an approval request, then pass --approval-id.",
+      code: "APPROVAL_DENIED",
+      message: "Signed transaction does not contain a valid signature from the declared signer on the selected network.",
       docs: "docs/mainnet-safety.md#local-approval-bridge"
     });
   }
-  return approval;
 }
 
-export async function startApprovalBridge(args: {
-  approvalsDir: string;
-  host?: string;
-  port?: number;
-  authToken?: string;
-  maxBodyBytes?: number;
-  allowRemoteAccess?: boolean;
-}): Promise<ApprovalBridge> {
+export function assertSignedTransactionMeetsThreshold(args: { signedTransactionXdr: string; network: NetworkName; signerWeights: Array<{ publicKey: string; weight: number }>; requiredWeight: number }): true {
+  const passphrase = args.network === "mainnet" ? Networks.PUBLIC : args.network === "testnet" ? Networks.TESTNET : "Standalone Network ; February 2017";
+  const transaction = TransactionBuilder.fromXdr(args.signedTransactionXdr, passphrase);
+  if ("innerTransaction" in transaction) {
+    throw new StellarAgentError({
+      code: "INVALID_INPUT",
+      message: "Fee-bump approval threshold verification requires separate inner and outer signer checks and is not supported by this flow."
+    });
+  }
+  const hash = transaction.hash();
+  const verified = new Set<string>();
+  let weight = 0;
+  for (const signer of args.signerWeights) {
+    if (!Number.isInteger(signer.weight) || signer.weight <= 0 || verified.has(signer.publicKey)) continue;
+    const keypair = Keypair.fromPublicKey(signer.publicKey);
+    if (transaction.signatures.some((signature) => keypair.verify(hash, signature.signature.toBytes()))) {
+      verified.add(signer.publicKey);
+      weight += signer.weight;
+    }
+  }
+  if (weight < args.requiredWeight) {
+    throw new StellarAgentError({
+      code: "APPROVAL_DENIED",
+      message: "Signed transaction does not satisfy the source account threshold.",
+      details: { verifiedWeight: weight, requiredWeight: args.requiredWeight }
+    });
+  }
+  return true;
+}
+
+export async function assertPaymentApproval(args: { approvalsDir: string; approvalId: string; payment: PaymentRequest; intentId: string }): Promise<ApprovalRequest> {
+  return claimPaymentApproval(args);
+}
+
+export async function claimPaymentApproval(args: { approvalsDir: string; approvalId: string; payment: PaymentRequest; intentId: string }): Promise<ApprovalRequest> {
+  const path = approvalPath(args.approvalsDir, args.approvalId);
+  return withFileLock(path, async () => {
+    const approval = await readApprovalRequest(args.approvalsDir, args.approvalId);
+    if (approval.boundIntentId !== undefined && approval.boundIntentId !== args.intentId) {
+      throw new StellarAgentError({ code: "APPROVAL_REQUIRED", message: "Approval is bound to a different execution intent.", details: { approvalId: args.approvalId, intentId: args.intentId } });
+    }
+    const expectedHash = hashApprovalPayload({
+      kind: "payment",
+      payment: paymentRequestSchema.parse(args.payment),
+      ...(approval.boundIntentId === undefined ? {} : { intentId: args.intentId })
+    });
+    const expired = approval.expiresAt !== undefined && Date.parse(approval.expiresAt) <= Date.now();
+    const reusableClaim = approval.status === "claimed" && approval.claim?.intentId === args.intentId;
+    if (approval.kind !== "payment" || approval.requestHash !== expectedHash || expired || (approval.status !== "approved" && !reusableClaim)) {
+      throw new StellarAgentError({
+        code: "APPROVAL_REQUIRED",
+        message: "Payment requires an unexpired, unconsumed matching approval request.",
+        hint: "Create and approve a new request, then bind it to this execution intent.",
+        docs: "docs/mainnet-safety.md#local-approval-bridge",
+        details: {
+          approvalId: args.approvalId,
+          intentId: args.intentId,
+          status: approval.status,
+          expired
+        }
+      });
+    }
+    if (reusableClaim) return approval;
+    return writeApproval(args.approvalsDir, {
+      ...approval,
+      status: "claimed",
+      updatedAt: nowIso(),
+      revision: (approval.revision ?? 1) + 1,
+      claim: { intentId: args.intentId, claimedAt: nowIso() }
+    });
+  });
+}
+
+export async function claimSignedTransactionApproval(args: { approvalsDir: string; approvalId: string; intentId: string }): Promise<ApprovalRequest> {
+  const path = approvalPath(args.approvalsDir, args.approvalId);
+  return withFileLock(path, async () => {
+    const approval = await readApprovalRequest(args.approvalsDir, args.approvalId);
+    const expired = approval.expiresAt !== undefined && Date.parse(approval.expiresAt) <= Date.now();
+    const reusableClaim = approval.status === "claimed" && approval.claim?.intentId === args.intentId;
+    if (approval.kind !== "transaction_xdr" || !approval.decision?.signedTransactionXdr || expired || (approval.status !== "signed" && !reusableClaim)) {
+      throw new StellarAgentError({
+        code: "APPROVAL_REQUIRED",
+        message: "Transaction requires an unexpired, unconsumed signed approval request.",
+        docs: "docs/mainnet-safety.md#local-approval-bridge",
+        details: {
+          approvalId: args.approvalId,
+          intentId: args.intentId,
+          status: approval.status,
+          expired
+        }
+      });
+    }
+    if (reusableClaim) return approval;
+    return writeApproval(args.approvalsDir, {
+      ...approval,
+      status: "claimed",
+      updatedAt: nowIso(),
+      revision: (approval.revision ?? 1) + 1,
+      claim: { intentId: args.intentId, claimedAt: nowIso() }
+    });
+  });
+}
+
+export async function consumeApprovalRequest(args: { approvalsDir: string; approvalId: string; intentId: string }): Promise<ApprovalRequest> {
+  const path = approvalPath(args.approvalsDir, args.approvalId);
+  return withFileLock(path, async () => {
+    const approval = await readApprovalRequest(args.approvalsDir, args.approvalId);
+    if (approval.status === "consumed" && approval.claim?.intentId === args.intentId) return approval;
+    if (approval.status !== "claimed" || approval.claim?.intentId !== args.intentId) {
+      throw new StellarAgentError({
+        code: "APPROVAL_DENIED",
+        message: "Approval cannot be consumed by a different or unbound execution intent.",
+        details: { approvalId: args.approvalId, intentId: args.intentId, status: approval.status }
+      });
+    }
+    return writeApproval(args.approvalsDir, {
+      ...approval,
+      status: "consumed",
+      updatedAt: nowIso(),
+      revision: (approval.revision ?? 1) + 1,
+      claim: { ...approval.claim, consumedAt: nowIso() }
+    });
+  });
+}
+
+export async function startApprovalBridge(args: { approvalsDir: string; host?: string; port?: number; authToken?: string; maxBodyBytes?: number; allowRemoteAccess?: boolean }): Promise<ApprovalBridge> {
   const host = args.host ?? "127.0.0.1";
   if (!isLoopbackHost(host) && !args.allowRemoteAccess) {
     throw new StellarAgentError({
@@ -270,19 +405,16 @@ export async function startApprovalBridge(args: {
 }
 
 export function hashApprovalPayload(payload: unknown): string {
-  return createHash("sha256").update(JSON.stringify(sortJson(payload))).digest("hex");
+  return createHash("sha256")
+    .update(JSON.stringify(sortJson(payload)))
+    .digest("hex");
 }
 
 function summarizePayment(payment: PaymentRequest): string {
   return `Approve ${payment.amount} ${payment.asset} payment to ${payment.destination} on ${payment.network}`;
 }
 
-async function handleRequest(
-  approvalsDir: string,
-  request: IncomingMessage,
-  response: ServerResponse,
-  options: { authToken: string; maxBodyBytes: number }
-): Promise<void> {
+async function handleRequest(approvalsDir: string, request: IncomingMessage, response: ServerResponse, options: { authToken: string; maxBodyBytes: number }): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   try {
     if (request.method === "GET" && url.pathname === "/health") return json(response, { ok: true });
@@ -301,7 +433,11 @@ async function handleRequest(
             summary: body.summary ?? "Approve transaction",
             ...(body.payment === undefined ? {} : { payment: body.payment })
           })
-        : await createPaymentApprovalRequest({ approvalsDir, payment: body.payment, summary: body.summary });
+        : await createPaymentApprovalRequest({
+            approvalsDir,
+            payment: body.payment,
+            summary: body.summary
+          });
       return json(response, approval, 201);
     }
     const match = /^\/api\/requests\/([^/]+)(?:\/decision)?$/.exec(url.pathname);
@@ -390,12 +526,18 @@ async function readJson(request: IncomingMessage, maxBodyBytes: number): Promise
 
 function json(response: ServerResponse, payload: unknown, status = 200): void {
   const body = JSON.stringify(redactSensitive(payload));
-  response.writeHead(status, { "content-type": "application/json", "content-length": Buffer.byteLength(body) });
+  response.writeHead(status, {
+    "content-type": "application/json",
+    "content-length": Buffer.byteLength(body)
+  });
   response.end(body);
 }
 
 function html(response: ServerResponse, body: string): void {
-  response.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-length": Buffer.byteLength(body) });
+  response.writeHead(200, {
+    "content-type": "text/html; charset=utf-8",
+    "content-length": Buffer.byteLength(body)
+  });
   response.end(body);
 }
 
@@ -406,13 +548,17 @@ function closeServer(server: Server): Promise<void> {
 function sortJson(value: any): any {
   if (Array.isArray(value)) return value.map(sortJson);
   if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, sortJson(child)]));
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, child]) => [key, sortJson(child)])
+  );
 }
 
 function comparableEnvelope(rawXdr: string, label: string): { type: string; transactionXdr: string; signatures: number } {
   let envelope: xdr.TransactionEnvelope;
   try {
-    envelope = xdr.TransactionEnvelope.fromXDR(rawXdr, "base64");
+    envelope = xdr.TransactionEnvelope.fromXdr(rawXdr, "base64");
   } catch {
     throw new StellarAgentError({
       code: "INVALID_INPUT",
@@ -421,29 +567,29 @@ function comparableEnvelope(rawXdr: string, label: string): { type: string; tran
     });
   }
 
-  const type = xdrUnionType(envelope);
+  const type = envelope.type;
   if (type === "envelopeTypeTx") {
-    const value = xdrMember(envelope, "v1");
+    const value = envelope.v1;
     return {
       type,
-      transactionXdr: xdrToBase64(xdrMember(value, "tx")),
-      signatures: xdrMember<unknown[]>(value, "signatures")?.length ?? 0
+      transactionXdr: value.tx.toXdr("base64"),
+      signatures: value.signatures.length
     };
   }
   if (type === "envelopeTypeTxV0") {
-    const value = xdrMember(envelope, "v0");
+    const value = envelope.v0;
     return {
       type,
-      transactionXdr: xdrToBase64(xdrMember(value, "tx")),
-      signatures: xdrMember<unknown[]>(value, "signatures")?.length ?? 0
+      transactionXdr: value.tx.toXdr("base64"),
+      signatures: value.signatures.length
     };
   }
   if (type === "envelopeTypeTxFeeBump") {
-    const value = xdrMember(envelope, "feeBump");
+    const value = envelope.feeBump;
     return {
       type,
-      transactionXdr: xdrToBase64(xdrMember(value, "tx")),
-      signatures: xdrMember<unknown[]>(value, "signatures")?.length ?? 0
+      transactionXdr: value.tx.toXdr("base64"),
+      signatures: value.signatures.length
     };
   }
 
@@ -452,40 +598,6 @@ function comparableEnvelope(rawXdr: string, label: string): { type: string; tran
     message: `Unsupported ${label} envelope type: ${type}.`,
     docs: "docs/mainnet-safety.md#local-approval-bridge"
   });
-}
-
-function xdrMember<T = unknown>(value: unknown, key: string): T | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const member = (value as Record<string, unknown>)[key];
-  return (typeof member === "function" ? member.call(value) : member) as T | undefined;
-}
-
-function xdrUnionType(value: unknown): string | undefined {
-  const directType = xdrMember<unknown>(value, "type");
-  if (typeof directType === "string") return directType;
-  const legacySwitch = xdrMember<{ name?: unknown }>(value, "switch");
-  return typeof legacySwitch?.name === "string" ? legacySwitch.name : undefined;
-}
-
-function xdrToBase64(value: unknown): string {
-  if (!value || typeof value !== "object") {
-    throw new StellarAgentError({
-      code: "INVALID_INPUT",
-      message: "Transaction envelope is missing its transaction body.",
-      docs: "docs/mainnet-safety.md#local-approval-bridge"
-    });
-  }
-  const record = value as Record<string, unknown>;
-  const encode = record.toXDR ?? record.toXdr;
-  if (typeof encode !== "function") {
-    throw new StellarAgentError({
-      code: "INVALID_INPUT",
-      message: "Transaction envelope body cannot be encoded as XDR.",
-      docs: "docs/mainnet-safety.md#local-approval-bridge"
-    });
-  }
-  const encoded = encode.call(value, "base64");
-  return typeof encoded === "string" ? encoded : Buffer.from(encoded as Uint8Array).toString("base64");
 }
 
 function isLoopbackHost(host: string): boolean {

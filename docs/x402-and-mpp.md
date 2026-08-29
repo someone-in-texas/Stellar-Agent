@@ -18,7 +18,7 @@ It starts a local paid API, receives HTTP 402, evaluates policy, submits a Testn
 stellar-agent pay x402 http://127.0.0.1:PORT/paid-report --allow-localhost-demo --json
 ```
 
-This is not yet a full facilitator-backed Soroban auth-entry x402 implementation.
+The local protocol remains a Testnet fixture. For production integration, `@stellar-agent/x402-client` also exports a versioned facilitator adapter; it is intentionally separate from the local wire format.
 
 The receipt records the ledger payment. The command result also includes `paidResourceDelivered`, which is `true` only when the paid-resource retry returns a 2xx HTTP status. If payment succeeds but the paid API still fails, the event log marks the receipt write as `paid_resource_failed` so agents do not confuse settlement with content delivery.
 
@@ -34,7 +34,15 @@ stellar-agent pay mpp http://127.0.0.1:PORT/mpp-report --allow-localhost-demo --
 stellar-agent pay mpp-session http://127.0.0.1:PORT/mpp-session --requests 2 --allow-localhost-demo --json
 ```
 
-The local MPP flows are not production facilitator implementations.
+The local MPP wire format remains a demo. `@stellar-agent/mpp-client` provides durable cross-process session-budget accounting for production adapters.
+
+## Facilitator Adapters
+
+`verifyWithX402Facilitator` implements the `stellar-agent-facilitated-x402` version 1 verification contract. Callers pin the facilitator URL, network-passphrase hash, challenge id, and local proof. It requires HTTPS except for explicitly enabled loopback tests, disables redirects, independently matches settlement fields, and records accepted challenge/transaction pairs in an atomic persistent replay store. Corrupt replay state fails closed.
+
+This is an adapter contract, not an endorsement of a specific facilitator. A deployment must still authenticate its facilitator, reconcile the returned hash against Stellar RPC or Horizon, and keep Mainnet behind normal real-funds and signer controls.
+
+`reserveMppSessionDebit` persists `stellar-agent.mpp-session.v1` state and atomically checks and increments session spend. Bind each session to the exact network-passphrase hash, asset, recipient, facilitator origin, and budget; do not reuse state across those boundaries.
 
 ## Local x402 Demo
 
@@ -46,7 +54,7 @@ Flow:
 2. Receive HTTP 402 payment requirements.
 3. Parse and bind payment to URL/domain.
 4. Evaluate policy.
-5. Request approval if needed.
+5. Stop without payment and release the reservation if interactive approval would be required; approve a direct payment workflow first.
 6. Pay on Testnet.
 7. Retry request.
 8. Write receipt.
@@ -98,4 +106,6 @@ The demo paid API under `examples/paid-api-demo` starts x402, one-time MPP, and 
 
 For MPP sessions, `paidResourceDelivered` is `true` only when every requested session call returns a 2xx status after the budget payment.
 
-Production facilitator support is still future work. A production session flow should add facilitator verification, stronger anti-replay guarantees, explicit session budget approval, and per-request spending logs across processes.
+Production deployments should combine the facilitator contract, independent ledger reconciliation, durable debit state, explicit session-budget approval, and per-request receipt/event logging. The included local demo server does not become production-grade merely by supplying a public URL.
+
+Stable idempotency keys identify the payment job independently of ephemeral x402 nonces, MPP charge ids, and MPP session ids. A confirmed retry never resubmits payment and reports `paidResourceDelivered: false` unless the resource was actually fetched in that invocation. Pre-sign recovery is lease-protected; signed, submitted, or ambiguous intents require reconciliation instead of rebuilding.

@@ -2,14 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  loadX402PaymentFromHorizon,
-  parseX402Requirement,
-  runX402Payment,
-  startPaidApiDemo,
-  verifyX402PaymentProof,
-  x402ChallengeMemo
-} from "../src/index.js";
+import { loadX402PaymentFromHorizon, parseX402Requirement, runX402Payment, startPaidApiDemo, verifyWithX402Facilitator, verifyX402PaymentProof, x402ChallengeMemo } from "../src/index.js";
 import { DEFAULT_TESTNET_POLICY } from "@stellar-agent/policy";
 
 const recipient = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
@@ -24,6 +17,110 @@ const source = {
 };
 
 describe("x402 client", () => {
+  it("pins facilitator settlements and rejects replayed proofs atomically", async () => {
+    const root = await mkdtemp(join(tmpdir(), "stellar-agent-x402-facilitator-"));
+    const proof = {
+      protocol: "stellar-agent-local-x402" as const,
+      version: 1 as const,
+      transactionHash: "a".repeat(64),
+      payer: source.publicKey,
+      recipient,
+      asset: "XLM",
+      amount: "0.0000001",
+      resource: "https://merchant.example/report",
+      nonce: "nonce_1"
+    };
+    const fetchImpl = async () =>
+      new Response(
+        JSON.stringify({
+          protocol: "stellar-agent-facilitated-x402",
+          version: 1,
+          verified: true,
+          transactionHash: proof.transactionHash,
+          networkPassphraseHash: "network_hash",
+          recipient,
+          asset: "XLM",
+          amount: "0.0000001",
+          challengeId: "challenge_1",
+          ledger: 123
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    const args = {
+      facilitator: {
+        protocol: "stellar-agent-facilitated-x402" as const,
+        version: 1 as const,
+        url: "https://facilitator.example",
+        networkPassphraseHash: "network_hash"
+      },
+      proof,
+      challengeId: "challenge_1",
+      replayStorePath: join(root, "replays.json"),
+      fetchImpl: fetchImpl as typeof fetch
+    };
+    await expect(verifyWithX402Facilitator(args)).resolves.toMatchObject({
+      verified: true,
+      ledger: 123
+    });
+    await expect(verifyWithX402Facilitator(args)).rejects.toThrow("already been accepted");
+  });
+
+  it("rejects insecure remote facilitators and mismatched settlements", async () => {
+    const root = await mkdtemp(join(tmpdir(), "stellar-agent-x402-facilitator-"));
+    const proof = {
+      protocol: "stellar-agent-local-x402" as const,
+      version: 1 as const,
+      transactionHash: "b".repeat(64),
+      payer: source.publicKey,
+      recipient,
+      asset: "XLM",
+      amount: "0.0000001",
+      resource: "https://merchant.example/report",
+      nonce: "nonce_2"
+    };
+    await expect(
+      verifyWithX402Facilitator({
+        facilitator: {
+          protocol: "stellar-agent-facilitated-x402",
+          version: 1,
+          url: "http://facilitator.example",
+          networkPassphraseHash: "network_hash"
+        },
+        proof,
+        challengeId: "challenge_2",
+        replayStorePath: join(root, "replays.json")
+      })
+    ).rejects.toThrow("must use HTTPS");
+    await expect(
+      verifyWithX402Facilitator({
+        facilitator: {
+          protocol: "stellar-agent-facilitated-x402",
+          version: 1,
+          url: "https://facilitator.example",
+          networkPassphraseHash: "network_hash"
+        },
+        proof,
+        challengeId: "challenge_2",
+        replayStorePath: join(root, "replays.json"),
+        fetchImpl: (async () =>
+          new Response(
+            JSON.stringify({
+              protocol: "stellar-agent-facilitated-x402",
+              version: 1,
+              verified: true,
+              transactionHash: "c".repeat(64),
+              networkPassphraseHash: "network_hash",
+              recipient,
+              asset: "XLM",
+              amount: "0.0000001",
+              challengeId: "challenge_2"
+            }),
+            { status: 200 }
+          )) as typeof fetch
+      })
+    ).rejects.toThrow("does not match");
+  });
+
   it("parses payment requirements from 402 headers", async () => {
     const requirement = {
       protocol: "stellar-agent-local-x402",
@@ -373,17 +470,26 @@ describe("x402 client", () => {
       const firstRequirement = await parseX402Requirement(firstChallenge);
       const invented = proofForRequirement(firstRequirement, "b".repeat(64), "invented_x402_nonce");
 
-      const inventedResponse = await fetch(server.url, { headers: { "X-Payment": JSON.stringify(invented) } });
+      const inventedResponse = await fetch(server.url, {
+        headers: { "X-Payment": JSON.stringify(invented) }
+      });
       expect(inventedResponse.status).toBe(402);
-      await expect(inventedResponse.json()).resolves.toEqual({ ok: false, error: "payment_nonce_not_issued" });
+      await expect(inventedResponse.json()).resolves.toEqual({
+        ok: false,
+        error: "payment_nonce_not_issued"
+      });
 
       const first = await fetch(server.url, {
-        headers: { "X-Payment": JSON.stringify(proofForRequirement(firstRequirement, "c".repeat(64))) }
+        headers: {
+          "X-Payment": JSON.stringify(proofForRequirement(firstRequirement, "c".repeat(64)))
+        }
       });
       expect(first.status).toBe(200);
 
       const stale = await fetch(server.url, {
-        headers: { "X-Payment": JSON.stringify(proofForRequirement(firstRequirement, "d".repeat(64))) }
+        headers: {
+          "X-Payment": JSON.stringify(proofForRequirement(firstRequirement, "d".repeat(64)))
+        }
       });
       expect(stale.status).toBe(402);
       await expect(stale.json()).resolves.toEqual({ ok: false, error: "payment_nonce_not_issued" });
@@ -391,7 +497,9 @@ describe("x402 client", () => {
       const secondRequirement = await parseX402Requirement(await fetch(server.url));
       expect(secondRequirement.nonce).not.toBe(firstRequirement.nonce);
       const second = await fetch(server.url, {
-        headers: { "X-Payment": JSON.stringify(proofForRequirement(secondRequirement, "e".repeat(64))) }
+        headers: {
+          "X-Payment": JSON.stringify(proofForRequirement(secondRequirement, "e".repeat(64)))
+        }
       });
       expect(second.status).toBe(200);
     } finally {
@@ -442,6 +550,8 @@ describe("x402 client", () => {
       },
       receiptsDir: join(root, "receipts"),
       eventLog: join(root, "logs", "events.jsonl"),
+      intentsDir: join(root, "intents"),
+      idempotencyKey: "delivery-failure-job",
       command: "test",
       sendPaymentImpl: async () => ({ hash: "a".repeat(64), successful: true, ledger: 123 }),
       fetchImpl: async () => {
@@ -468,9 +578,34 @@ describe("x402 client", () => {
     expect(result).toMatchObject({
       finalStatus: 500,
       paidResourceDelivered: false,
+      intent: { status: "confirmed", receiptPath: expect.any(String) },
       transaction: { hash: "a".repeat(64), successful: true },
       receiptPath: expect.any(String)
     });
+  });
+
+  it("treats fresh challenge nonces as the same idempotent payment job without pretending delivery", async () => {
+    const root = await mkdtemp(join(tmpdir(), "stellar-agent-x402-idempotent-"));
+    const url = "https://merchant.example/report";
+    const policy = { ...DEFAULT_TESTNET_POLICY, x402: { ...DEFAULT_TESTNET_POLICY.x402, enabled: true, allowDomains: [new URL(url).host] } };
+    let challenge = 0;
+    let sends = 0;
+    const redirectModes: Array<RequestRedirect | undefined> = [];
+    const invoke = () => runX402Payment({
+      url, source, policy, profile: { name: "testnet", network: "testnet", networkPassphrase: "Test SDF Network ; September 2015", horizonUrl: "https://horizon-testnet.stellar.org", rpcUrl: "https://soroban-testnet.stellar.org", friendbotUrl: "https://friendbot.stellar.org", defaultAsset: "XLM", realFunds: false },
+      receiptsDir: join(root, "receipts"), eventLog: join(root, "events.jsonl"), intentsDir: join(root, "intents"), idempotencyKey: "stable-job", command: "test",
+      sendPaymentImpl: async () => { sends += 1; return { hash: "b".repeat(64), successful: true, ledger: 456 }; },
+      fetchImpl: async (_input, init) => {
+        redirectModes.push(init?.redirect);
+        if (init?.headers) return new Response("delivered", { status: 200 });
+        challenge += 1;
+        return new Response(JSON.stringify({ protocol: "stellar-agent-local-x402", version: 1, network: "testnet", asset: "XLM", amount: "0.0000001", recipient, resource: url, nonce: `nonce_${challenge}` }), { status: 402 });
+      }
+    });
+    await expect(invoke()).resolves.toMatchObject({ finalStatus: 200, paidResourceDelivered: true });
+    await expect(invoke()).resolves.toMatchObject({ finalStatus: 402, paidResourceDelivered: false, intent: { status: "confirmed" } });
+    expect(sends).toBe(1);
+    expect(redirectModes.every((mode) => mode === "error")).toBe(true);
   });
 
   it("rejects payment requirements for a different resource", async () => {
@@ -574,11 +709,7 @@ describe("x402 client", () => {
   });
 });
 
-function proofForRequirement(
-  requirement: Awaited<ReturnType<typeof parseX402Requirement>>,
-  transactionHash: string,
-  nonce = requirement.nonce
-) {
+function proofForRequirement(requirement: Awaited<ReturnType<typeof parseX402Requirement>>, transactionHash: string, nonce = requirement.nonce) {
   return {
     protocol: "stellar-agent-local-x402",
     version: 1,
